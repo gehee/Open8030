@@ -607,6 +607,16 @@ effects are not isolated, and the intermittent loss remains open. See
 [flow measurements](parity.md#video-receive-flow-measurements) and the
 [diagnostic layout](architecture.md#host-protocol).
 
+Stage 216 compares queued internal destination writing against 159 original
+cases, including 96 event-bridge cases. It checks mutex/callback/release ordering,
+deferred accounting, failures and already queued work after disabling a
+destination. Three sanitizer suites and 18 Python tests pass. The helper remains
+source-only and the build reproduces stage 215. A fresh 30-second direct HDMI
+capture shows the camera scene with all 33 samples linked; a separate ten-minute
+check has 600 flow samples with zero socket drops and SDIO errors. Stage 215
+remains running in RAM. The earlier intermittent loss and runtime internal
+service integration remain open. See [queued writer coverage](parity.md#queued-internal-destination-writer).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host

@@ -35,4 +35,32 @@ struct ar_data_route_ops {
 int ar_data_route_deliver(struct ar_data_route *, struct ar_data_packet *,
 	uint8_t metadata, uint16_t source, struct ar_data_route_stats *,
 	const struct ar_data_route_ops *, void *context);
+
+struct ar_data_message {
+	struct ar_data_packet *packet;
+	struct ar_data_route *route;
+	uint8_t metadata;
+	uint16_t source;
+};
+struct ar_data_writer {
+	struct ar_data_destination *destination;
+	uint64_t failures;
+};
+struct ar_data_writer_ops {
+	void (*lock)(void *context);
+	/* A successful receive transfers one packet reference into message. The
+	 * original waits with its interface lock held; scheduling is the adapter's
+	 * responsibility. Nonzero means no message was acquired. */
+	int (*receive)(struct ar_data_message *, void *context);
+	void (*unlock)(void *context);
+	void (*release)(struct ar_data_packet *, void *context);
+	void (*diagnose)(struct ar_data_destination *, void *context);
+};
+/* One iteration of a constructed destination writer. Returns 1 after consuming
+ * a message, including a failed write; 0 after a receive failure; -22 for native
+ * adapter/message guards. A received nonnull packet is released before unlock,
+ * including on guard failure. This does not recheck destination enabled/queued:
+ * the original processes work already transferred to its writer. */
+int ar_data_writer_step(struct ar_data_writer *, const struct ar_data_writer_ops *,
+	void *context);
 #endif

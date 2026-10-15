@@ -46,6 +46,7 @@ TESTS = {
     'data_event': ('data_event', [], []),
     'data_framing': ('data_framing data_event', [], []),
     'data_route': ('data_route data_event', [], []),
+    'data_writer': ('data_route data_event', [], []),
     'json': ('json', [], []),
     'config': ('config json power_config power dev_mcs', [], []),
     'power': ('power', [], []),

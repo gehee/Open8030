@@ -69,7 +69,7 @@ and scenario; they must be repeated after relevant changes.
 | Host lifecycle | Explicit stop/start and stop/deinit/init/start tested historically | Every wrong-state/repeated operation, cancellation, pending DMA, failure recovery and complete reset semantics. |
 | Events | All twelve original host subscriptions and declared payload sizes; copied FIFO transport; producers for IDs 0 and 1 | Integrate other producers and internal routes; compare their payload meaning, scheduling, overflow and lifecycle behavior. Subscription success alone does not establish a working producer. |
 | Host sockets | Slot-0 copy-mode data path, deferred close and active-write cancellation; normal backend video/control; stream/handle admission and queue factories compared offline | Stock host ports 0/1 reject opens because their streams already exist; native admission differs. Heap/RTOS internals, table initialization, worker startup, runtime ownership, other modes/slots, retained-descriptor TX, saturation, teardown races and complete capacity/error behavior remain open. |
-| Internal data interfaces | Stock stream occupancy observed; mode-3 graph, source-only event forwarding, socket-port-1 framing and selected route delivery compared offline | Integrate UART/SBUS, parsers, event producers, shared stream ownership and payload routing; compare other framing profiles, route actions, queued writer completion, modes, timing, teardown and failure recovery. A reserved-port rejection alone does not implement these services. |
+| Internal data interfaces | Stock stream occupancy observed; mode-3 graph, source-only event forwarding, socket-port-1 framing, selected route delivery and queued writer completion compared offline | Integrate UART/SBUS, parsers, event producers, shared stream ownership and payload routing; compare other framing profiles, route actions, real packet ownership, scheduling, modes, timing, teardown and failure recovery. A reserved-port rejection alone does not implement these services. |
 | MAC framing | Header/descriptor parser and DEV encoder | Other formats/flags, receive ordering, duplicate handling and all original rejection rules. |
 | AP full/compact controls | Selected mode-0/slot-0 admission and connected control | All extensions, remote synchronization effects, changed channels, slots, stale/duplicate controls and unsupported modes. |
 | Internal port-0 commands | Stream parsing; login checksum ACK transmission | Receiving a command currently mainly records it. Inventory and implement each original command's effects, responses and retries. |
@@ -2900,3 +2900,77 @@ future natural overflows, compare service/host delays when they recur, and test
 the resulting correction against stock and the accepted image. Increasing queue
 capacity or changing scheduling without that evidence would not establish full
 streaming parity. Other original-system coverage gaps remain unchanged.
+
+### Queued internal destination writer
+
+Stage 216 extends the source-only route helper with one iteration of a
+constructed destination writer, compared with original worker `0x20db02`.
+The original holds its interface mutex while receiving a queued message,
+invoking the writer, accounting the result and releasing the packet. It unlocks
+only afterward. A failed queue receive unlocks and starts another iteration;
+it neither consumes a packet nor increments the write-failure counter.
+
+A queued message carries its packet, route/action object, source ID and metadata
+byte. The callback receives the entire packet data span. Its return is compared
+with packet length read again after the callback. Exact-length success updates
+route bytes/packets and destination bytes. A short or failed write invokes the
+diagnostic adapter and increments the **destination writer's** failure counter,
+whereas the direct routing path counts failures in the route worker. Both paths
+release their owned packet reference after the attempt and do not retry it.
+Counters use wrapping unsigned 64-bit arithmetic.
+
+The queued worker **does not recheck the destination's enabled flag**. A message
+already transferred to that worker is still attempted after the flag changes;
+proper teardown therefore needs an explicit ownership/lifecycle sequence.
+Discarding such work solely because the destination was disabled would differ
+from this original path. The bridge's allocation-failure behavior also carries
+through: reporting the input length can increment delivery accounting without
+emitting an event.
+
+**159 original cases** match interface lock/receive/write/diagnostic/release/
+unlock ordering, callback arguments, payload bytes, reference balance and
+counters. They cover failed receives, disabled destinations, direct return
+values, selected lengths from 0 to 1,022, callback-time length mutation and
+counter wrap. **96 cases** execute the original event bridge and produce
+**48 emissions** at the intercepted hub boundary. **252 executed instruction
+locations** match the reference payload, container and analysis ELF.
+
+The fixture executes the constructed original worker through one iteration and
+stops before its next interface lock. Queue receive, interface/global mutexes,
+packet release, ordinary destination writes, heap, event hub and diagnostic
+endpoints are intercepted. The original packet-length getter and event bridge
+execute. This checks adapter ordering, not actual RTOS blocking, mutex
+contention, allocator/reference internals or subscriber fanout. Startup with a
+missing interface, callback or queue is outside this comparison. Synthetic ELF,
+pointers, ABI and partial ISA remain analysis metadata.
+
+The native step returns 1 for a consumed message and 0 for a failed receive;
+these are adapter results, not original thread return values. Native `-22`
+guards additionally reject incomplete adapters, corrupt messages, oversized
+packet views or an invalidated callback. A received nonnull packet is released
+before unlock even on a guard failure. Invalid adapters take no ownership.
+These guards have sanitizer tests, not original-error parity; the original can
+dereference invalid pointers on those paths.
+
+Three ASan/UBSan suites and 18 Python tests pass. The native composition test
+queues one shared packet for two destinations, confirms deferred accounting,
+disables a recipient after enqueue, exercises one success and one failure, and
+checks that each writer releases exactly its own reference. Other tests check
+receive failure, full-frame event composition, allocation failure and cleanup
+on the additional guards. The helpers remain outside CMake; the standard build
+reproduces stage 215. They do not yet provision internal streams, implement
+physical UART/SBUS, connect the host-to-radio direction or close runtime
+shutdown and scheduling parity.
+
+A fresh 30-second host `/dev/video0` HDMI-to-USB capture at MJPEG
+1920×1080/nominal 30 fps shows the dark textured camera scene and right-side
+features. All 33 status samples are linked, AP time advances and sampled socket
+drops stay zero. A separate ten-minute observation completes **600 flow samples**
+with no dropped socket bytes, SDIO errors, invalid RX or attempted full-queue
+TX rejections. The lifetime video queue high-water mark is 13,734 bytes; maximum
+finished descriptor duration remains 545,783 ticks. The retained stage-215
+image/configuration and boot identity match, and that image remains running in
+RAM. This extends the bounded no-drop observation without resolving the earlier
+intermittent stage-213 loss or isolating restart/instrumentation effects. It is
+not hardware execution of the source-only writer, a new stock comparison or a
+controlled scene-freshness/latency test.
