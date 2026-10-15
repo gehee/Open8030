@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 /* Independently implemented receive policy from Ascent VRX 18.21.10 instruction
  * evidence. Native state/layout and synchronous calls replace vendor queues.
- * See docs/native-mcs-policy.md for scope and validation limitations. */
+ * See docs/configuration.md for policy parameters and validation limitations. */
 #include "ar_dev_mcs.h"
 #include <string.h>
 

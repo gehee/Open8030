@@ -46,8 +46,13 @@ RF behavior changes require fresh hardware video validation against this baselin
 
 ## Video verification
 
-For a Linux host with receiver output connected as `/dev/video0`, install
-`v4l-utils` and `ffmpeg`, then record the capture device and available modes:
+Connect the VRX's HDMI output to an **HDMI-to-USB capture adapter**, then connect
+the adapter to the Linux host. In the tested setup, the adapter appears as
+`/dev/video0`; this is the captured HDMI output, not a direct USB camera connection
+to the radio. Device numbering may differ on another host.
+
+Install `v4l-utils` and `ffmpeg`, then record the capture device and available modes
+(replace `/dev/video0` below if your adapter uses a different device):
 
 ```sh
 mkdir -p .local

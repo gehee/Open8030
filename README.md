@@ -93,6 +93,13 @@ Sources are in `src/` and `include/`; platform support is in `boards/`, `soc/` a
 `dts/`; the bootstrap is in `bootstrap/`; tests are in `tests/`. `tools/` contains
 the internal build and VRX control implementation. Generated outputs stay in `.local/`.
 
+## Documentation
+
+- [Architecture](docs/architecture.md): components, startup, memory layout and data flow.
+- [Configuration and parameters](docs/configuration.md): inputs, supported JSON fields and CLI options.
+- [Operation and troubleshooting](docs/operation.md): session behavior, logs, status and testing.
+- [Validation status](docs/status.md): hardware coverage, limitations and HDMI capture instructions.
+
 ## License
 
 Original code and documentation use the [MIT License](LICENSE).
