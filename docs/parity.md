@@ -196,7 +196,7 @@ commands. Equal command numbers across those layers have no implied relationship
 | 1 | Unsupported | Original callback and hardware effects |
 | 2 | Unsupported | Original callback and hardware effects |
 | 3 | Limited TX-MCS update; outgoing RX-MCS request | Decrease/drain and full timing/acknowledgement behavior |
-| 4 | Unsupported | Channel transition, confirmation and rollback |
+| 4 | Unsupported at runtime; callback, transaction and monitor helpers compared offline | Integrate PHY transport, channel transition, confirmation and rollback; verify physical retuning and failure recovery |
 | 5 | Unsupported | Original callback and hardware effects |
 | 6 | Selected RX/TX identity fields | All user/state combinations and shared-field effects |
 | 7 | DEV AP-time offset and host getter | Physical peer-loss/stale time, long-run hardware wrap and other roles/modes |
@@ -903,6 +903,74 @@ channels versus stock's four and excludes ambiguous polling events. Active
 catalog, physical sample attribution, PHY transport, monitor completion and
 runtime channel policy remain open; the three host catalog commands are still
 unsupported.
+
+### Channel-change monitor completion and hopping
+
+[The monitor helper](../src/channel_monitor.c) implements the original observation
+and periodic channel-monitor state transitions. It remains outside the runtime
+build. It complements the compared channel-change callback and transaction
+completion handler; the existing runtime loss monitor has not been replaced.
+
+The ten users retain enabled/locked, forced-loss, two-bit acquisition streak,
+band-hold and pending-completion flags. Success and automatic-unlock counters
+are shared across users. An unlocked observation of a user that has not acquired
+lock resets its streak and requests an RX reset immediately. Successful
+observations advance the streak with two-bit wrap. Gaining lock clears the
+pending-completion bit as well as the streak. This is distinct from observing
+an already locked user with a pending channel change.
+
+A successful observation releases a pending band hold before counting completion
+successes. The third counted success clears the pending bit and posts worker
+message `0x109` with success 1, selector 1 and the low channel byte. Byte wrap and
+counter resets are preserved. Queue-post failure does not restore pending state.
+The periodic path increments each enabled user's missed count with byte wrap.
+A still-locked pending user posts failure when that count equals its deadline.
+Forced loss or reaching the saved threshold invokes the optional loss callback;
+cleanup then clears forced/locked/pending flags and the missed count, while
+preserving other callback changes. Failure posting precedes the loss callback
+when both conditions occur in one tick.
+
+Periodic RX resets occur every ten misses after 19 for AP or 50 for DEV, subject
+to the original reset-suppression condition. Other role values do not enter that
+reset path. Mode 0 resets globally; other modes reset the selected user. These
+callbacks and the loss callback are caller-owned operations, not hardware
+implementations in this module.
+
+Automatic policy clears the shared unlock counter on a successful observation.
+Otherwise, after ten counted unlocked observations and without a pending request,
+it queries the current and preferred channels. A different preferred channel
+can trigger a hop immediately. If there is no alternative, more than forty
+observations permit the original group-iteration and endpoint fallback logic.
+The fallback retains signed comparison of wrapped 32-bit distances and narrows
+the chosen endpoint to a byte. A hop records the band's timestamp and clears the
+unlock counter before invoking its execution callback. Channel queries, group
+iterators and actual hopping remain comparison boundaries.
+
+Fresh original-instruction comparison passes **5,784 observation cases and 7,200
+periodic cases**. It covers every flag byte, all ten user positions, multiple
+enabled users, counter/deadline wrap, both roles and other role values, modes,
+suppression, null/mutating loss callbacks, band holds, completion-post errors,
+preferred-channel boundaries and blind-hop decisions. All 567 executed
+instruction locations are checked against the matched payload, container and
+analysis ELF bytes. Comparison includes complete monitor state at each effect:
+941 reset requests, 934 field writes, 1,665 completion posts, 2,577 loss callbacks,
+292 current-channel queries, 292 preferred-channel queries, 309 iterator calls
+and 252 hop requests.
+
+The original periodic handler's diagnostic reads use synthetic inputs; its
+diagnostic history writes are excluded from the native state comparison. The
+clock supplies a fixed millisecond value. Timer scheduling, diagnostic history,
+physical resets/retuning, queue delivery and selection-helper internals are not
+established by these tests. Original unwritten completion padding is excluded;
+the native helper clears it. Synthetic layouts and ABI remain analysis metadata.
+
+The dedicated address/undefined-behavior sanitizer suite passes. A fresh
+20-second HDMI-to-USB capture rechecks the unchanged accepted image, with the
+reference dark textured scene, 23 linked/AP-time samples and zero sampled socket
+drops. It is not hardware validation of the new monitor. No new stock capture or
+controlled freshness/latency test was performed. PHY transport, worker and
+policy integration, diagnostic history and physical channel-change timing remain
+open; the three host catalog commands remain unsupported.
 
 Next, extend the core inventory through the transport dispatchers and indirect
 callbacks, and bind each command's behavior to its comparison tests. Then cover

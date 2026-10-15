@@ -109,6 +109,7 @@ are implementation limits, not CLI tuning parameters.
 | `src/channel_policy.c` | Offline-tested selector-1 manual/hopping policy and send/timer decisions; pending runtime integration |
 | `src/channel_transaction.c` | Offline-tested queued channel requests, completion and rollback; pending PHY transport and runtime integration |
 | `src/channel_link.c` | Offline-tested PHY channel-change callback and monitor preparation; pending link-tuning/transport/runtime integration |
+| `src/channel_monitor.c` | Offline-tested monitor completion, loss and hopping decisions; pending timer/PHY/worker integration |
 | `src/tune.c` | Compared channel resolution and per-user tuning; runtime use limited to measurement RX11 |
 | `src/scan.c`, `scan_scores.c` | Independent measurement scheduling and base-channel averaging; full automatic selection remains unintegrated |
 | `src/main.c`, `frame.c`, `dispatch.c` | Polling loop, framing, request dispatch and diagnostics |

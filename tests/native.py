@@ -16,6 +16,7 @@ TESTS = {
     'channel_policy': ('channel_policy channel_work', [], []),
     'channel_transaction': ('channel_transaction channel_work', [], []),
     'channel_link': ('channel_link', [], []),
+    'channel_monitor': ('channel_monitor', [], []),
     'tune': ('tune', [], []),
     'socket_rx': ('socket_rx', [], []),
     'sdio_device': ('sdio_device', ['AR_SDIO_SIMULATED', 'AR_SDIO_STOCK_MEMORY_ATTRIBUTES=1'], []),

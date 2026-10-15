@@ -204,6 +204,16 @@ unresolved; these captures do not establish controlled freshness or latency.
 The active-catalog mismatch and ambiguous polling events also remain. See
 [channel resolution and tuning](parity.md#channel-resolution-and-generic-tuning).
 
+A new source-only monitor helper matches 5,784 original observation cases and
+7,200 periodic cases. It covers channel-change success/timeout posts, shared
+counters, band-hold release, AP/DEV reset thresholds, loss-callback cleanup and
+automatic-hop decisions. Its dedicated sanitizer suite passes. It is not yet
+connected to the runtime loss monitor, PHY transport or workers. A fresh
+20-second HDMI-to-USB capture of the unchanged accepted image shows the reference
+dark camera scene, with 23 linked/AP-time samples and zero sampled socket drops.
+The accepted image remains in RAM. See
+[monitor completion and its boundaries](parity.md#channel-change-monitor-completion-and-hopping).
+
 A separate configuration-only test reproduced acquisition failure at initial
 power level 11 using the accepted AP-time image. No video was delivered;
 restoring the original level-25 configuration restored the stream. This failure
