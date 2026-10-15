@@ -22,6 +22,7 @@ TESTS = {
     'interleaver': ('interleaver', [], []),
     'tx_mcs': ('tx_mcs interleaver', [], []),
     'tx_irq': ('tx_irq', [], []),
+    'tx_retire': ('tx_retire', [], []),
     'tune': ('tune', [], []),
     'socket_rx': ('socket_rx', [], []),
     'sdio_device': ('sdio_device', ['AR_SDIO_SIMULATED', 'AR_SDIO_STOCK_MEMORY_ATTRIBUTES=1'], []),

@@ -1511,8 +1511,61 @@ frames show the dark textured camera scene and camera OSD. This verifies the
 retained image, not hardware execution of the new helper or controlled scene
 freshness/latency. Original traces, tool provenance and captures remain private.
 
-Next, compare packet retirement and connect the compared TX helpers to runtime
-ownership, and isolate low-power acquisition before retrying host power integration. Extend the core
+### Retained-descriptor retirement
+
+Source-only `tx_retire.c` implements the retirement loop at `0x230a80` using
+bounded native packet views. The original first resolves a user context; an
+absent context is a no-op. While its owned count exceeds the retention limit,
+it releases each descriptor in the oldest packet, then advances the tail modulo
+ten and decrements ownership. It preserves packet bytes, ring pointers and head.
+These are local ownership events, not peer acknowledgements.
+
+Each release receives context bits 24..27, the descriptor's low byte, a zero
+direction and descriptor bits 12..31. The release return is ignored. The selected
+packet pointer stays held across callbacks, while its descriptor count, later
+descriptor words and context selector are reloaded. The native helper preserves
+these mutation effects. The caller must serialize ownership and keep packet
+storage alive throughout the call.
+
+Fresh original execution compares **2,588 scenarios** and **9,857 ordered release
+calls**, checking context and packet memory as well as arguments. Coverage includes
+all ten tail positions and ownership depths zero through ten, retention limits
+0/1/5/10/11/`UINT32_MAX`, all sixteen selectors, all twelve user lookup slots,
+absent contexts, zero/multiple/255 descriptors, ring wrap and 384 callback-mutation
+cases. All 49 executed instruction locations match the reference payload,
+container and analysis ELF. The callback at `0x248998` is intercepted; this does
+**not** establish its underlying stream queue consumption, callbacks or locking.
+
+The native helper rejects invalid ring state and truncated packet storage. An
+error can follow earlier releases and leaves the failing packet owned; blindly
+retrying could release a descriptor twice. These bounds guards are deliberate
+native behavior, not original error parity. The original accepts retention limits
+larger than ten as a no-op on valid rings; this helper does too.
+
+The current runtime uses a different, copy-owned packet representation with no
+external stream buffers to release at retirement. Its existing
+`ar_dev_tx_retire` bookkeeping matches **440 valid original zero-descriptor
+scenarios** with all other native state preserved. Its rejection of limits above
+ten differs deliberately in another 220 cases. This comparison establishes ring
+bookkeeping, not equivalence of stream-buffer lifetime or backpressure.
+
+Byte-checking the original pre-encode caller confirms that it reads the retention
+limit from context bits 28..31. The current runtime uses a fixed limit of one;
+TX-end uses zero. The earlier header's unconditional claim that stock retains
+one has been corrected. Broader context configuration and ownership producers
+remain integration dependencies.
+
+Three sanitizer suites cover descriptor retirement, the existing copy-owned TX
+path and interrupt bookkeeping; 18 Python tests pass. The standard build remains
+byte-identical to accepted stage 189. A fresh 30-second `/dev/video0` HDMI-to-USB
+capture has 33 linked samples, advancing AP time and zero sampled socket drops.
+Inspected frames show the dark textured scene and camera OSD. This verifies the
+retained runtime, not hardware execution of the new descriptor helper or
+controlled scene freshness/latency. Detailed evidence remains private.
+
+Next, compare the stream-release consumer and remaining ownership producers,
+connect the compared TX helpers to the runtime, and isolate low-power acquisition
+before retrying host power integration. Extend the core
 inventory through transport dispatchers
 and indirect callbacks, binding each contract to its comparison tests. Then cover
 radio messages, timers and state transitions in the same way. Dynamic power still

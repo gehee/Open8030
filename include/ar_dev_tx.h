@@ -48,9 +48,12 @@ int ar_dev_tx_prepare_payload(struct ar_dev_tx_context *context,
  * checksum is XOR of the entire packet with byte 3 logically zero. */
 int ar_dev_command_encode(uint8_t *output, size_t capacity, uint8_t command,
 	const uint8_t *payload, size_t length);
-/* Release oldest packets until at most retain_limit remain (0x230a80). Stock
- * retains one at pre-encode and zero at TX-end. These are ownership events,
+/* Release oldest copied packets until at most retain_limit remain (0x230a80
+ * ring bookkeeping). Original pre-encode uses context bits 28..31 as its limit;
+ * this runtime retains one. TX-end retains zero. These are ownership events,
  * not a pending DMA count, packet sequence number or inferred over-air ACK.
+ * Original retirement also releases each retained stream descriptor; our copied
+ * packets hold no external stream buffers and need no such release callback.
  * Call only after the corresponding completion/retention contract is met. */
 int ar_dev_tx_retire(struct ar_dev_tx_context *context, unsigned retain_limit);
 #endif

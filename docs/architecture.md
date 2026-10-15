@@ -115,6 +115,7 @@ are implementation limits, not CLI tuning parameters.
 | `src/interleaver.c` | Compared source-only drain/retry service and conditional clock correction; ownership and runtime integration pending |
 | `src/tx_mcs.c` | Compared source-only MCS requests, initialization, register application and retry-failure events; connected to the interleaver in offline sequence comparisons |
 | `src/tx_irq.c` | Compared source-only pre-encode attempt history and TX-end release notification; actual queue delivery, packet retirement and runtime integration pending |
+| `src/tx_retire.c` | Compared source-only retained-descriptor retirement and release-call ordering; underlying stream consumption and runtime integration pending |
 | `src/tune.c` | Compared channel resolution and per-user tuning; runtime use limited to measurement RX11 |
 | `src/scan.c`, `scan_scores.c` | Independent measurement scheduling and base-channel averaging; full automatic selection remains unintegrated |
 | `src/main.c`, `frame.c`, `dispatch.c` | Polling loop, framing, request dispatch and diagnostics |

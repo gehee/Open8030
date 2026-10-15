@@ -363,6 +363,16 @@ linked samples and zero sampled socket drops. Queue delivery, packet ownership
 and integration of the compared TX helpers remain open. See
 [TX interrupt coverage](parity.md#tx-pre-encode-history-and-end-notification).
 
+Stage 194 compares retained-descriptor retirement in 2,588 original-instruction
+scenarios, including 9,857 release calls. It separately confirms the current
+copy-ring bookkeeping in 440 valid cases. Original pre-encode retention comes
+from context bits 28..31; the current runtime uses one. The new descriptor helper
+is source-only, and the underlying stream-release consumer remains unverified.
+Three sanitizer suites and 18 Python tests pass. The standard build remains
+identical to accepted stage 189; a fresh 30-second HDMI-to-USB capture shows the
+camera scene with 33 linked samples and zero sampled socket drops. See
+[retirement coverage](parity.md#retained-descriptor-retirement).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host
