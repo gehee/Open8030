@@ -336,6 +336,14 @@ samples, advancing AP time and zero sampled socket drops. It remains running in
 RAM, and the standard build reproduces its exact image. The power commands remain
 unsupported at runtime; see [the comparison and failed trial](parity.md#manual-power-commands-compared-helpers-failed-integration).
 
+Stage 191 adds a source-only interleaver service with 9,760 original-instruction
+comparison cases, including drain/retry sequencing, clock-correction boundaries
+and callback mutation. It does not yet execute in the runtime or fix low-power
+acquisition. The accepted stage-189 image remains byte-identical and running;
+a fresh 30-second HDMI-to-USB capture shows the camera scene with 33 linked
+samples and zero sampled socket drops. See [interleaver coverage](parity.md#interleaver-service-and-low-power-investigation)
+for intercepted callbacks and intentional validation differences.
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host

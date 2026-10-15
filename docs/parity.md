@@ -74,7 +74,7 @@ and scenario; they must be repeated after relevant changes.
 | Internal port-0 commands | Stream parsing; login checksum ACK transmission | Receiving a command currently mainly records it. Inventory and implement each original command's effects, responses and retries. |
 | PHY commands | See command table below | Exact callbacks, TTL/replacement ordering and side effects for every command. |
 | Hardware command preparation | Command builder, metadata updates and preparation selection; fixed DEV frame, cached board/TX calibration and TX look-ahead | Independent sweep and base-channel score arithmetic are integrated; active-catalog policy, auxiliary scans, PA-sleep policy, retained-buffer ownership and actual interrupt ordering remain open. Helper comparisons do not establish the complete original handler. |
-| MCS adaptation | RX adaptation and limited TX increase | TX decrease/interleaver drain, all PHY keys, retry/expiry, loss interactions and sustained adaptation. |
+| MCS adaptation | RX adaptation and limited TX increase; interleaver service compared offline | Integrate TX decrease/drain producers and callbacks, all PHY keys, retry/expiry, loss interactions and sustained adaptation. |
 | Power and calibration | Initial user-0 setup at level 25; calibration writes, cache ordering and band-offset helpers compared offline | Level 11 also fails acquisition in the accepted image with only its loader setting changed. Resolve the low-power transmit path, then normal backend power writes, all users, peer policy and calibration effects. |
 | Channel/band selection | Configured link search, independent measurement sweep and base-channel averaging | Match the original active catalog and sampling cadence; integrate automatic selection, independent uplink changes, subchannels, hopping, rollback and cross-band operation. |
 | Time synchronization | DEV AP-time decoding/getter; original-instruction comparison and hardware startup/restart checks | Physical peer-loss/stale time, long-run hardware wrap and other roles/modes. |
@@ -1356,9 +1356,60 @@ evidence includes the failed source/image, comparison receipts, stock checks,
 device settings, captures and rollback provenance. Controlled scene freshness,
 latency and physical transmit power remain unmeasured.
 
-Next, isolate low-power acquisition before retrying host power integration and
-the remaining
-channel-tuning callbacks. Extend the core inventory through transport dispatchers
+### Interleaver service and low-power investigation
+
+The source-only `interleaver.c` helper models the original service at `0x227d58`:
+conditional distance-clock correction, B4C publication, request-ID extraction,
+per-user drain/retry bookkeeping, MCS-application and reset callbacks, queue
+message `0x202`, then observer notification. The first hardware user identifies
+the published request; a separately sampled second user selects the bookkeeping
+entry. Treating them as necessarily identical would lose an original read boundary.
+
+Drain value 6 starts a previously idle retry count without incrementing it twice.
+Subsequent events reduce the drain counter; reaching zero invokes the application
+callback on the following event. Callback changes to the active/retry state are
+visible before the remaining retry checks. Retry counters retain byte wrap.
+The clock path reconstructs two timestamps, uses their signed low-16-bit
+difference, detects a change greater than 2,000, and schedules a correction or
+return-to-neutral through its callback. Both clock scaling settings, signed wrap,
+strict threshold boundaries and pending-correction ordering are compared.
+
+Fresh original execution covers **9,760 cases** and **253 instruction locations**,
+bound to the matched payload/container/analysis ELF. Comparison checks ordered
+effects, per-effect user/drift snapshots and final state, with varied first/second
+users, all byte-sized request values, drain/retry boundaries, random timestamp
+words and selected callback mutations. It includes 14,407 field writes, 1,549
+field exchanges, 276 application callbacks, 2,692 retry-reset callbacks, 854
+correction callbacks, 477 reset callbacks and 9,760 paired queue/observer events.
+The original leaves two posted stack bytes uninitialized. Native clears them;
+48 notification effects with nonzero original suffixes are recorded as deliberate
+differences. Native also rejects invalid users/sources before effects.
+
+Field operations, reset, MCS application, correction scheduling, queue posting
+and observer callbacks are intercepted. Their transitive behavior is not proved
+by this comparison. Log/time helpers are excluded. Timestamp snapshots do not
+establish physical read ordering; most register races, callback failures and
+actual IRQ/clock/RF timing remain open. Sanitizer tests exercise a multi-event
+drain sequence, callback mutation, counter wrap, signed drift, reserved bytes
+and invalid-input isolation.
+
+Rechecking the matched original loader/dispatcher ranges and initial state
+supports a disabled distance-correction gate on the static DEV loader path.
+This is not a live read of the original globals and does not identify the cause
+of low-power acquisition failure. The new service remains outside the runtime
+until its producers, MCS/reset callbacks and ownership are compared and integrated.
+
+Stage 191 leaves accepted stage 189 running. The standard build reproduces its
+runtime/container hashes exactly; 18 Python tests pass. A fresh 30-second
+`/dev/video0` HDMI-to-USB capture has 33 linked samples, advancing AP time and zero
+sampled socket drops. Inspected frames show the dark textured camera scene and
+OSD. This verifies the retained runtime, not hardware execution of the new helper
+or controlled scene freshness/latency. Detailed comparison and capture records
+remain in ignored `.local/`.
+
+Next, complete the interleaver producers and callback contracts, and isolate
+low-power acquisition before retrying host power integration. Extend the core
+inventory through transport dispatchers
 and indirect callbacks, binding each contract to its comparison tests. Then cover
 radio messages, timers and state transitions in the same way. Dynamic power still
 needs a separately isolated acquisition fix. Neither a large synthetic test count

@@ -19,6 +19,7 @@ TESTS = {
     'channel_monitor': ('channel_monitor', [], []),
     'phy_control': ('phy_control mac', [], []),
     'phy_receive': ('phy_receive phy_control mac ap_time', [], []),
+    'interleaver': ('interleaver', [], []),
     'tune': ('tune', [], []),
     'socket_rx': ('socket_rx', [], []),
     'sdio_device': ('sdio_device', ['AR_SDIO_SIMULATED', 'AR_SDIO_STOCK_MEMORY_ATTRIBUTES=1'], []),
