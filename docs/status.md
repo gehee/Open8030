@@ -728,6 +728,17 @@ source-only; the build reproduces stage 215. See
 Fresh HDMI-to-USB video shows the camera scene with 33 linked samples; 60 flow
 samples show no socket drops or SDIO errors. Stage 215 remains running.
 
+Stage 228 adds native interface publication and reader/writer resource
+construction. All 660 original scenarios match, including partial allocation
+cleanup, failures after publication, ignored reader-task errors and ID wrap.
+Four sanitizer suites and 18 Python tests pass; the 1,698 pipeline cases now use
+reader-allocated storage. Type-specific setup, task execution, complete teardown
+and runtime integration remain open. The helper stays source-only and the build
+reproduces stage 215. See
+[service construction](parity.md#interface-publication-and-readerwriter-resources).
+Fresh HDMI-to-USB video shows the camera scene with 33 linked samples; 60 flow
+samples show no socket drops or SDIO errors. Stage 215 remains running.
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host

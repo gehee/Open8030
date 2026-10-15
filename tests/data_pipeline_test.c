@@ -1,15 +1,22 @@
 /* SPDX-License-Identifier: MIT */
 #include "ar_data_framing.h"
 #include "ar_data_preflight.h"
+#include "ar_data_service.h"
+#include <stdlib.h>
 #include "data_mode3_fixture.h"
 #include "ar_data_route.h"
 #include "ar_data_event.h"
 #include <assert.h>
 #include <string.h>
 
-/* Native preflight, construction, parsing, filtering, dispatch and worker delivery are
- * composed here. Registry, packet/queue storage and scheduling are adapters. */
+/* Native preflight, reader allocation, route construction, parsing and delivery
+ * are composed here. Only the tested source reader is instantiated; the full
+ * identity registry, packet/queue storage and scheduling remain adapters. */
 struct fixture {
+	struct ar_data_services services;
+	struct ar_data_service_interface service_interface;
+	void *service_storage[3];
+	unsigned service_allocations;
 	unsigned source, role, writes, emissions, allocations, segments;
 	int destination, queued, references;
 	uint8_t packet_bytes[257], written[257], event_bytes[1024];
@@ -26,6 +33,29 @@ struct fixture {
 	struct ar_data_destination output;
 	struct ar_data_event event;
 };
+static void *service_allocate(enum ar_data_service_allocation kind, size_t size, void *context)
+{
+	struct fixture *f = context;
+	assert(f->service_allocations < 3 && (unsigned)kind == f->service_allocations);
+	void *p = malloc(size); assert(p);
+	f->service_storage[f->service_allocations++] = p; return p;
+}
+static void service_release(void *p, void *context)
+{
+	(void)p; (void)context; assert(0 && "unexpected service allocation failure");
+}
+static void *service_mutex(void *context) { return context; }
+static int service_lock(void *mutex, int32_t timeout, void *context)
+{ assert(mutex == context && timeout == -1); return 0; }
+static int service_unlock(void *mutex, void *context) { assert(mutex == context); return 0; }
+static void *service_queue(uint16_t capacity, uint32_t size, void *context)
+{ (void)capacity; (void)size; (void)context; assert(0 && "unexpected writer queue"); return NULL; }
+static int service_task(enum ar_data_service_task task, void *argument, uint32_t priority,
+	uint32_t stack, void **handle, void *context)
+{
+	(void)task; (void)argument; (void)priority; (void)stack; (void)handle; (void)context;
+	assert(0 && "pipeline scheduling is synchronous"); return -1;
+}
 static uint8_t *allocate(size_t size, void *context)
 {
 	struct fixture *f = context;
@@ -198,7 +228,7 @@ int main(void)
 			for (unsigned s = 0; s < 3; ++s) {
 				const size_t length = sizes[s] + 3;
 				for (size_t split = 1; split < length; ++split) {
-					uint8_t ring[1043] = {0}, frame[257] = {0xc8};
+					uint8_t frame[257] = {0xc8};
 					struct fixture f = {.source = type ? 4 : 2, .role = role, .destination = -1};
 					const struct ar_data_builder_ops build = {{identity, framed}, node, action};
 					struct ar_data_route_spec routes[6];
@@ -208,6 +238,17 @@ int main(void)
 					const uint8_t uart_at[3] = {0};
 					assert(!ar_data_preflight(interfaces, 5, routes, 6, 0, uart_at));
 					for (unsigned i = 0; i < 5; ++i) { assert(!interfaces[i].disabled); }
+					const struct ar_data_service_config service_config = {.read_capacity = (uint16_t)capacities[type]};
+					const struct ar_data_service_ops service_ops = {service_allocate, service_release,
+						service_mutex, service_lock, service_unlock, service_queue, service_task};
+					f.service_interface.type = type ? 2 : 3;
+					f.services.next_id = (uint16_t)f.source;
+					assert(!ar_data_service_publish(&f.services, &f.service_interface,
+						&service_config, &service_ops, &f));
+					assert(f.service_interface.id == f.source && f.service_interface.read_enabled);
+					assert(f.services.readers && f.services.readers->ring);
+					uint8_t *ring = f.services.readers->ring->bytes;
+					assert(f.services.readers->ring->capacity == capacities[type]);
 					assert(ar_data_routes_build(&f.head, routes, 6, (uint8_t)role, &build, &f) == 0);
 					assert(f.node_count == (role < 2 ? 4u : 2u));
 					for (unsigned w = 0; w < 2; ++w) {
@@ -228,7 +269,7 @@ int main(void)
 					assert(parser.stats.packets == 1 && parser.stats.packet_bytes == length);
 					assert(f.writes == 0 && f.emissions == 0);
 					/* Deferred delivery must own a copy, independent of the ring. */
-					memset(ring, 0xa5, sizeof ring);
+					memset(ring, 0xa5, capacities[type]);
 					if (f.queued) {
 						assert(f.references == 1 && f.selected_worker == (role == 0 ? 1u : 0u));
 						f.output.enabled = 1;
@@ -256,6 +297,7 @@ int main(void)
 						assert(f.writes == 0 && f.emissions == 0 && f.allocations == 0);
 					}
 					assert(f.references == 0 && !f.locked);
+					for (unsigned i = 0; i < f.service_allocations; ++i) { free(f.service_storage[i]); }
 					for (unsigned w = 0; w < 2; ++w) {
 						assert(!f.workers[w].delivery.delivery_failures && !f.workers[w].delivery.missing_destinations);
 					}

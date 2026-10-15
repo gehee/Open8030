@@ -69,7 +69,7 @@ and scenario; they must be repeated after relevant changes.
 | Host lifecycle | Explicit stop/start and stop/deinit/init/start tested historically | Every wrong-state/repeated operation, cancellation, pending DMA, failure recovery and complete reset semantics. |
 | Events | All twelve original host subscriptions and declared payload sizes; copied FIFO transport; producers for IDs 0 and 1 | Integrate other producers and internal routes; compare their payload meaning, scheduling, overflow and lifecycle behavior. Subscription success alone does not establish a working producer. |
 | Host sockets | Slot-0 copy-mode data path, deferred close and active-write cancellation; normal backend video/control; stream/handle admission and queue factories compared offline | Stock host ports 0/1 reject opens because their streams already exist; native admission differs. Heap/RTOS internals, table initialization, worker startup, runtime ownership, other modes/slots, retained-descriptor TX, saturation, teardown races and complete capacity/error behavior remain open. |
-| Internal data interfaces | Stock stream occupancy observed; mode-3 graph, event forwarding, framing, route delivery, queued writer, ingress and socket write gate compared offline; constructed parser-to-route composition, native predicates, route-list submission and worker transformations compared; submission-to-worker composition executes original pool allocation/recycling; worker discard, age, errors, route construction/merging and configuration preflight compared; five built-in mode tables inventoried | Integrate UART/SBUS, parsers, event producers, shared stream ownership and payload routing; integrate the compared preflight and route builder with real interface provisioning and production pool/queue ownership; integrate the full parser and transformed delivery at runtime; establish copying-action reachability and cleanup, other framing profiles, scheduling, modes, timing, teardown and failure recovery. A reserved-port rejection alone does not implement these services. |
+| Internal data interfaces | Stock stream occupancy observed; mode-3 graph, event forwarding, framing, route delivery, queued writer, ingress and socket write gate compared offline; constructed parser-to-route composition, native predicates, route-list submission and worker transformations compared; submission-to-worker composition executes original pool allocation/recycling; worker discard, age, errors, route construction/merging and configuration preflight compared; five built-in mode tables inventoried; interface publication and reader/writer resource construction compared | Integrate UART/SBUS, parsers, event producers, shared stream ownership and payload routing; integrate the compared preflight and route builder with real interface provisioning and production pool/queue ownership and the compared service constructor; integrate the full parser and transformed delivery at runtime; establish copying-action reachability and cleanup, other framing profiles, scheduling, modes, timing, teardown and failure recovery. A reserved-port rejection alone does not implement these services. |
 | MAC framing | Header/descriptor parser and DEV encoder | Other formats/flags, receive ordering, duplicate handling and all original rejection rules. |
 | AP full/compact controls | Selected mode-0/slot-0 admission and connected control | All extensions, remote synchronization effects, changed channels, slots, stale/duplicate controls and unsupported modes. |
 | Internal port-0 commands | Stream parsing; login checksum ACK transmission | Receiving a command currently mainly records it. Inventory and implement each original command's effects, responses and retries. |
@@ -3766,6 +3766,89 @@ A fresh 30-second `/dev/video0` HDMI-to-USB capture shows the dark textured came
 scene and right-side objects. All 33 samples remain linked with advancing AP time
 and zero socket drops; video delivery increases by 13,118,660 bytes. A separate
 60-sample flow check records zero socket drops or SDIO errors and 24,540,582
+delivered bytes over 59.01 seconds. Image, configuration and boot identity
+match the retained baseline. Open8030 remains running. This unchanged-runtime
+check does not establish fresh stock parity, controlled freshness/latency or a
+fix for the earlier intermittent receive loss.
+
+
+### Interface publication and reader/writer resources
+
+Stage 228 adds source-only [service construction](../src/data_service.c). It starts
+after admission and type-specific setup, taking an already prepared native
+interface and creating its registry entry and reader/writer resources. The earlier
+preflight and route builder do not supply UART, socket or event type setup yet.
+These remain separate integration requirements.
+
+**660 original-instruction scenarios match** in results, ordered allocation,
+release, mutex, queue and task effects, plus known initialized fields and list
+state. The comparison covers zero/nonzero reader capacity, optional reader and
+writer tasks, writer queue capacities, failures at each of three reader
+allocations, null mutex handles, queue failure, task errors, task-handle writes,
+existing registry lists, UART AT bypass and 16-bit ID wrap. There are 1,470
+allocation attempts, 168 allocation failures, 108 partial-cleanup releases,
+702 task requests and 462 published readers. Results are zero in 426 cases,
+`-9999` in 168 and `-9998` in 66. Thirty cases take the UART AT path.
+
+The tested construction order matters:
+
+1. Assign the next 16-bit interface ID, increment it modulo 65,536 and prepend
+   the interface to the registry. Later resource failures do not undo publication.
+2. A UART interface with AT enabled requests its dedicated task (priority 3,
+   stack argument 4,096), ignores the task result and returns zero. It skips
+   ordinary reader/writer construction and leaves the enable bytes unchanged.
+3. Otherwise allocate a reader, and, when its configured capacity is nonzero,
+   allocate ring metadata and payload storage. Initialize cursors under the new
+   mutex. The payload bytes themselves are not cleared. Mutex creation and
+   lock/unlock errors do not stop construction at these tested boundaries.
+4. Request the optional reader task (priority 18, configured stack argument),
+   ignore its result, then prepend the reader to the reader list. A reader
+   allocation failure frees that reader's partial allocations, returns a local
+   `-9999` result and still proceeds to writer setup.
+5. When a writer stack is configured, create its queue with the configured
+   capacity and 32-byte messages, create its mutex and request its task (priority
+   19). Queue failure returns `-9999`; writer-task failure returns `-9998`.
+   Already published/created state remains. The normal tail enables both
+   directions, even when an earlier reader allocation failed, then returns the
+   reader result.
+
+The native API retains that partial state rather than inventing rollback or
+interpreting success as proof that every requested task exists. Its caller owns
+all surviving allocations and must serialize construction. Duplicate publication
+and invalid pointer/callback inputs are separate atomic `-22` safety guards;
+unsafe original re-publication is not executed as a matching case.
+
+The original slice starts at `0x210f92` with a synthetic prepared interface,
+configuration, registry and stack, and executes publication through the original
+return. All **223 executed instruction locations** match the original payload,
+container and analysis-ELF bytes. Allocation/free, mutex/lock/unlock, queue creation,
+task creation and formatting/logging are adapters. Allocation comparisons use
+semantic resource kinds because native structures have different sizes; payload
+capacity is compared directly. The queue adapter records the original 32-byte
+message request; that is not a declaration of the native worker-message layout.
+Known initialized state is compared, not padding
+or arbitrary stale memory. The 1,128 original formatting/diagnostic calls are
+counted privately; their text is not reproduced or included in native effect
+matching. Synthetic ELF, pointers, ABI and partial ISA remain analysis metadata.
+Evidence stays in ignored `.local/stage228-interface-factory/`.
+
+Four ASan/UBSan suites and 18 Python tests pass. The **1,698 split/wrap pipeline
+cases** now parse from storage allocated by the native reader constructor after
+preflight. Only the tested source reader is instantiated; the complete interface
+registry, packet ownership, queue transfer and scheduling remain adapters. This
+composes the source-only helpers without claiming a full original boot or live
+service execution.
+
+Type-specific provisioning, actual task execution and scheduling races, real
+queue/mutex/pool ownership, complete teardown and runtime backend integration
+remain open. In particular, the ignored mutex/task errors above do not establish
+safe behavior of the real RTOS beyond the adapter boundary. The helper remains
+outside the standard firmware build, which reproduces stage 215.
+
+A fresh 30-second `/dev/video0` HDMI-to-USB capture shows the dark textured camera
+scene and right-side objects. All 33 samples remain linked with advancing AP time
+and zero socket drops; video delivery increases by 13,372,956 bytes. A separate
+60-sample flow check records zero socket drops or SDIO errors and 24,559,216
 delivered bytes over 59.01 seconds. Image, configuration and boot identity
 match the retained baseline. Open8030 remains running. This unchanged-runtime
 check does not establish fresh stock parity, controlled freshness/latency or a
