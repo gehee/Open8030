@@ -237,12 +237,12 @@ sequenceDiagram
     participant DEV as Open8030 receiver
     participant AP as Original transmitter
     Linux->>DEV: Candidate list through host control
-    Note over DEV: Start prepared receiver; search if configured
+    Note over DEV: Start prepared receiver and search if configured
     AP->>DEV: Full MAC outband broadcast
     Note over DEV: Validate channel, peer, local position and slot
     DEV->>AP: State-1 report, assigned slot still 8
     AP->>DEV: Matching login record for slot 0, AP state 2
-    Note over DEV: Accept supported sync fields; enter local state 2
+    Note over DEV: Accept supported sync fields and enter local state 2
     DEV->>AP: Port-0 command 4: synchronization checksum ACK
     AP->>DEV: Connected traffic and full/compact control
     DEV->>Linux: Accepted external payload streams and link events
