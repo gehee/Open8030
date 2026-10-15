@@ -2,12 +2,12 @@
   "baseline": "working-video",
   "target": "VRX/GND Ascent VRX; matched 18.21.10 inputs",
   "runtime": {
-    "bytes": 66304,
-    "sha256": "036f1fe817f803d476fedd3ed9768538188c818433157aa4a36d7de979295d94",
+    "bytes": 66792,
+    "sha256": "b1e0d67df001fae9a4d982ca82be9afd00f2f1b95ea1d689bdfa8ece40a8990e",
     "load_address": "0x204000"
   },
   "ram": {
-    "used_bytes": 670304,
+    "used_bytes": 670816,
     "capacity_bytes": 704512
   },
   "private_board_profile": {
@@ -19,20 +19,20 @@
     "sha256": "c69e46c57bbb3e5fc7fe0c5581e59fb5735dcf8a97bf0e05ae7aaa0273657768"
   },
   "container": {
-    "bytes": 84480,
-    "sha256": "b5417bc57b45d51b2827632382d931aa4d364aa8cd350904215e5f8d61c3f832",
+    "bytes": 84992,
+    "sha256": "c351fb40d7b9e1e7a9511b7151f5233619d92eab945216d91675a2570b8fa40c",
     "payload_alignment": 512
   },
   "original_stock_sha256": "dc58247910af564376350404383c5c411cbec21663873fba24e70c61a3584e3c",
   "external_config_sha256": "5cf0cd31645d4786c6b04399c6c609386d427ffc4c6d7f6e42d81e3e770c2a74",
   "scope": "Experimental Ascent VRX 18.21.10 native video baseline; private inputs not distributed",
   "generated_container": {
-    "bytes": 84480,
-    "sha256": "b5417bc57b45d51b2827632382d931aa4d364aa8cd350904215e5f8d61c3f832",
+    "bytes": 84992,
+    "sha256": "c351fb40d7b9e1e7a9511b7151f5233619d92eab945216d91675a2570b8fa40c",
     "payload_alignment": 512,
     "configuration": "zero-filled 16 KiB; external loader JSON required",
     "hardware_verified": true,
-    "verification_scope": "Ascent VRX 18.21.10: original-compared base-channel averaging/conversion on guarded measurement events; independent sweep with stable link PLLs; startup, stop/start, deinit/init/start and candidate removal/readmission; 90 seconds direct HDMI capture matching fresh stock dark scene, 102 linked/AP-time samples and zero sampled socket drops; active catalog, sample timing, automatic selection and full protocol parity remain open",
+    "verification_scope": "Ascent VRX 18.21.10: original-compared generic tuning applied to measurement RX11; stable link PLLs; startup, stop/start, deinit/init/start and candidate removal/readmission; 90 seconds inspected direct HDMI capture matching the initial fresh-stock dark scene, 102 linked/AP-time samples and zero sampled socket drops. A second stock boot showed fallback background despite link, while native recovered the scene; startup reliability, active catalog, sample timing and full protocol parity remain open",
     "verified_utc_date": "2026-10-15"
   }
 }

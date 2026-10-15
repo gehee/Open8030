@@ -12,6 +12,7 @@
 #include "ar_command.h"
 #include "ar_scan.h"
 #include "ar_scan_scores.h"
+#include "ar_tune.h"
 #include <string.h>
 #ifndef AR_RF_SIMULATED
 #include "ar_sdio_device.h"
@@ -1416,6 +1417,12 @@ static void command_byte(uint32_t offset, uint32_t value, void *context)
 	unsigned shift = (offset & 3) * 8;
 	update(BB + (offset & ~3u),255u << shift,value << shift);
 }
+static void tune_metadata(unsigned user, unsigned direction, unsigned property,
+	uint32_t value, void *context)
+{
+	(void)context;
+	(void)ar_command_update(&command_program,1,user,direction,property,value,0);
+}
 static void tune_measurement(void)
 {
 	unsigned channel = scan_info.channel;
@@ -1424,9 +1431,12 @@ static void tune_measurement(void)
 	scan_info.phase = 0;
 	/* Supported loader uses band_single. Original user11 skips the ordinary
 	 * users' gain hints and frequency/2000 register fields. */
-	(void)ar_scan_tune(frequency,scan_plls[channel],0,command_write,command_byte,NULL);
-	(void)ar_command_update(&command_program,1,11,1,1,2,0);
-	(void)ar_command_update(&command_program,1,11,1,3,frequency,0);
+	const struct ar_tune_config config = {0};
+	const struct ar_tune_ops ops = {.field = command_write, .byte = command_byte,
+		.metadata = tune_metadata};
+	if (ar_tune_apply(11,1,frequency,scan_plls[channel],0,&config,NULL,&ops,NULL)) {
+		scan_info.errors++; return;
+	}
 	scan_info.frequency_khz = frequency; scan_info.tunes++;
 }
 static void scan_drop_pending(void)

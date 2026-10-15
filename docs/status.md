@@ -132,7 +132,7 @@ capture of the unchanged accepted image passes with 23 linked/AP-time samples
 and zero sampled socket drops. See [catalog contracts](parity.md#channel-catalog-command-contracts)
 for the exact scope and remaining integration work.
 
-The current image feeds confirmed measurement events into original base-channel
+The preceding image feeds confirmed measurement events into original base-channel
 averaging and integer score conversion. The helper matches 1,426 conversion
 inputs and 3,726 processing cases, including ranking and startup decisions.
 Runtime automatic selection and group policy remain unintegrated. The version-2
@@ -186,6 +186,23 @@ transport and monitor-driven completion are still unintegrated. A fresh
 20-second capture of the unchanged baseline through the HDMI-to-USB adapter
 again shows the reference dark scene, with 23 linked/AP-time samples and zero
 sampled socket drops. See [channel-change callbacks](parity.md#phy-channel-change-callback).
+
+The current image uses the compared generic tuner for measurement RX user 11.
+Channel resolution and tuning match 2,328 and 11,184 original-instruction cases
+respectively. Other users, TX power callbacks, subchannels and channel-policy
+integration remain open. All 30 native C suites and 18 Python tests pass; the
+standard build reproduces the hardware-tested image. Startup, restart, reinit
+and candidate readmission preserve compensation and camera video: 90 seconds
+of inspected HDMI-to-USB capture, 102 linked/AP-time samples and zero sampled
+socket drops. The image remains running in RAM.
+
+The initial fresh-stock capture showed the same dark textured camera scene.
+After the first native window expired, a second receiver reboot produced a stock
+fallback background despite a reported link. Native loading restored the scene,
+and the complete validation sequence was repeated. Startup reliability remains
+unresolved; these captures do not establish controlled freshness or latency.
+The active-catalog mismatch and ambiguous polling events also remain. See
+[channel resolution and tuning](parity.md#channel-resolution-and-generic-tuning).
 
 A separate configuration-only test reproduced acquisition failure at initial
 power level 11 using the accepted AP-time image. No video was delivered;

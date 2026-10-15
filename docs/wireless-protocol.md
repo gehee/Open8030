@@ -465,6 +465,13 @@ notification advances its channel and writes a separate five-byte PLL shadow.
 This sweep can continue while the link's receive and transmit frequencies stay
 fixed. Preparation metadata tracks the measurement frequency independently.
 
+The measurement path now uses the generic per-user tuner: five PLL bytes, RF
+band/path fields, then retained bank/frequency metadata. Logical RX user 11 skips
+the gain-hint fields used by ordinary receive users. The helper also has compared
+TX and subchannel-resolution behavior, but those paths are not connected to
+runtime channel policy. PLL arithmetic and physical retune timing are separate
+comparison boundaries; see [tuning coverage](parity.md#channel-resolution-and-generic-tuning).
+
 Open8030 currently sweeps all 42 configured channels in the tested setup; stock
 reports four enabled channels from the same catalog. The original Linux backend
 selects that work list after reading the firmware's channel-information getter.

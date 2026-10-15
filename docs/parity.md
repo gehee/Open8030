@@ -841,6 +841,69 @@ controlled freshness/latency test was performed. Channel resolution/MMIO tuning,
 PHY command transport, monitor completion and runtime integration remain open;
 the normal backend catalog/work-list workflow is still unsupported.
 
+### Channel resolution and generic tuning
+
+[The tuning helper](../src/tune.c) implements channel-to-frequency resolution and
+per-user TX/RX tuning. The runtime now uses it for measurement RX user 11 on the
+existing single-band sweep. Other users, channel-change callbacks, subchannels
+and TX power effects remain unintegrated.
+
+The resolver uses the low channel byte as the catalog index and all remaining
+bits as the subchannel number. It masks catalog frequencies to 24 bits, returns
+zero for an invalid index and applies the configured offset and subchannel
+spacing only for a nonzero subchannel within the configured count. Bandwidth
+codes 0–5 select `1250 << code` kHz; other codes use zero width. Arithmetic retains
+the original unsigned wrap. The separate subchannel-bandwidth setting does not
+participate in this calculation.
+
+Tuning writes five PLL bytes in order, then the user's RF band/path fields.
+TX optionally dispatches the dual-band offset and refreshes power under its
+mutex when the stored signed-byte offset differs from the requested integer.
+The offset is narrowed before the power callback, whose failure does not undo
+the state change. RX users below 11 receive frequency and gain-hint fields;
+user 10 always uses the default hint. Gain rows keep their supplied order and
+select the first threshold strictly above the frequency, or the final row.
+Bank and frequency metadata updates follow these effects.
+
+Fresh comparison covers **11,184 tuning cases and 2,328 resolution cases**.
+It executes the original tuner, PLL field mapper, serial byte writer, path
+selectors, TX band dispatcher, channel resolver and subchannel configuration
+lookup. All 401 executed instruction locations and the bandwidth table are
+checked against the matched original payload/container/analysis ELF bytes.
+Cases cover all twelve users and both directions, band boundaries, noncanonical
+boolean values, gain-table ordering, subchannel bounds, invalid indices, signed
+offset truncation, integer wrap and power-refresh errors. Native structural
+validation rejects unsafe storage, users and dimensions before effects.
+
+Comparison includes 55,920 byte-write arguments, 43,452 field writes, 22,368
+metadata updates, 3,160 band-offset dispatches, 1,176 power calls and 2,352 paired
+lock/unlock calls. These are compared arguments, ordering and state, not physical
+hardware operations. PLL arithmetic is replaced by a supplied synthetic 40-bit
+word; the existing runtime PLL calculation is unchanged. Register access,
+band-offset application, power refresh, metadata internals, mutexes and time/log
+helpers are intercepted. Frequencies outside physical operating ranges exercise
+arithmetic only and do not establish support for those ranges.
+
+All 30 native C suites and 18 Python tests pass. The standard build reproduces
+the candidate exactly. Hardware command registers match three stock windows;
+the measurement PLL sweeps while link RX/TX remain at 5770 MHz. Startup samples
+cover all 42 configured channels and reach score readiness. Stop/start,
+deinit/init/start and candidate removal/readmission preserve TX compensation.
+The final four HDMI-to-USB captures total 90 seconds, with 102 linked/AP-time
+samples and zero sampled socket drops. Inspected frames show the dark textured
+scene from the initial fresh-stock reference. The candidate remains in RAM.
+
+The first test window expired after successful startup/restart captures. The
+repeated sequence began with another receiver reboot. That stock capture showed
+the fallback background despite a link; loading the native image restored the
+camera scene. This is retained as a startup-reliability limitation, not counted
+as successful stock video or attributed to the new tuner. There was no controlled
+freshness, bright-scene quality or latency measurement. Native still enables 42
+channels versus stock's four and excludes ambiguous polling events. Active
+catalog, physical sample attribution, PHY transport, monitor completion and
+runtime channel policy remain open; the three host catalog commands are still
+unsupported.
+
 Next, extend the core inventory through the transport dispatchers and indirect
 callbacks, and bind each command's behavior to its comparison tests. Then cover
 radio messages, timers and state transitions in the same way. Dynamic power still
