@@ -303,6 +303,28 @@ This is an offline test vector, not a captured radio packet.
 
 ## Acquisition and login
 
+### Who coordinates the exchange
+
+The original transmitter is the **AP/coordinator**. It broadcasts the link
+configuration, slot records and login records. Open8030 implements the DEV-side
+checks and responses; it does not run the AP's admission or allocation logic.
+Here, "login" means joining that radio relationship, not logging into the Linux
+host or subscribing to a telemetry socket.
+
+| Participant | Responsibility in the tested path |
+| --- | --- |
+| Receiver Linux backend | Supplies candidate transmitter identities through host control |
+| Original transmitter / AP | Advertises its identity, channels, mode and slot state, then supplies a login record identifying the receiver and its assignment |
+| Open8030 receiver / DEV | Validates the advertised relationship, announces its local identity, accepts a supported matching assignment and queues the synchronization ACK |
+
+The receiver initially reports **slot 8 (unassigned)** even though it has selected
+local transmit context 0. A matching login record binds its identity to a logical
+slot and token; the tested connected assignment is **slot 0**. The token must
+match the slot record's high byte, so a stale assignment cannot silently retain
+the same lock after that token changes. See [logical peer slots](#logical-peer-slots).
+
+### Exchange and receiver checks
+
 ```mermaid
 sequenceDiagram
     participant Linux as Original Linux backend
@@ -342,11 +364,31 @@ The main gates are:
    and enables the receive MCS policy. State 2 is set before that queued ACK is
    necessarily transmitted; it is not proof of peer receipt of the ACK.
 
+### Acknowledgement and continued coordination
+
+Command 4 acknowledges the supported synchronization bytes from the login
+record. It is not an acknowledgement of every video or telemetry packet. Local
+state 2 and ACK preparation occur before the later transmit opportunity sends
+that ACK; there is no demonstrated additional AP-confirmation round trip that
+the receiver waits for before marking itself locally connected. Unsupported
+synchronization flags must not be treated as successfully applied.
+
 Subsequent full controls from the admitted peer can invalidate the link on token,
 state, mode, bitmap or channel changes. Compact controls can invalidate it by
 token/state. External payload forwarding happens after those checks and requires
 active state 2, assigned slot 0 and no pending recovery. A full control identifying
 a different peer does not authorize delivery of that packet's external payload.
+
+In continuous operation, invalidation requests the deferred stop/rebuild/restart
+path described under [recovery](#timing-retransmission-and-recovery). Reacquisition
+must satisfy the admission and login checks again. Restoring the radio connection
+alone does not establish that the Linux video pipeline has recovered.
+
+The AP's internal policy for selecting among receivers, issuing or replacing
+tokens, choosing retry/time-out behavior and allocating multi-peer airtime has
+not been fully recovered. The exchange above documents the implemented receiver
+path and the transmitter messages it consumes; it is not a complete AP state
+machine or proof of simultaneous multi-receiver operation.
 
 The pure admission helper includes decisions for additional modes and pairing;
 that does not establish support for their RF transitions in the running firmware.
