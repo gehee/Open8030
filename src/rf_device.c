@@ -8,6 +8,7 @@
 #include "ar_dev_tx.h"
 #include "ar_dev_mcs.h"
 #include "ar_fch_monitor.h"
+#include "ar_ap_time.h"
 #include <string.h>
 #ifndef AR_RF_SIMULATED
 #include "ar_sdio_device.h"
@@ -28,6 +29,7 @@ static uint8_t receive_buffers[4][65536] __attribute__((aligned(512)));
 static unsigned receive_head, receive_pending, receive_length, receive_user;
 static uint32_t receive_metadata;
 static uint64_t receive_started;
+static struct ar_ap_time ap_time;
 static uint32_t receive_milliseconds, receive_iterations;
 static unsigned receive_operation;
 static ar_rf_event_callback event_callback;
@@ -266,10 +268,14 @@ static void sync_receive(const uint8_t control[7])
 		item->accepted++; item->last_us = elapsed; memcpy(item->last, control, 7);
 	}
 	if (command == 6 && !sync_info.identity_commands++) { memcpy(sync_info.first_identity, control, 7); }
-	/* Command7 is a time-offset message, not a TTL countdown. Its effect
-	 * and the other callbacks remain unsupported; cache replacement still
-	 * prevents a stale identity command from firing later. */
-	if (!command || command == 7) { return; }
+	/* Command7 consumes header bits as time, not a TTL countdown. It does
+	 * not cancel an existing shared timer; its cache replacement prevents
+	 * the previous command from being dispatched when that timer expires. */
+	if (command == 7) {
+		ar_ap_time_receive(&ap_time, control, (uint32_t)(timer_ticks() / 40000));
+		return;
+	}
+	if (!command) { return; }
 	if (ttl == 1 || ttl == 31) {
 		if (ttl == 1) { sync_info.pending = 0; }
 		sync_info.immediate++; sync_apply();
@@ -284,7 +290,9 @@ static void sync_poll(uint32_t ms)
 	if (!sync_info.pending || (int32_t)(ms - sync_info.deadline_ms) < 0) { return; }
 	sync_info.pending = 0; sync_info.timer_fired++;
 	unsigned ttl = (sync_info.last_control[1] >> 4) | (sync_info.last_control[2] & 1) << 4;
-	if (ttl && (sync_info.last_control[1] & 15)) { sync_apply(); }
+	unsigned command = sync_info.last_control[1] & 15;
+	/* Command7 has no timer callback in the original descriptor table. */
+	if (ttl && command && command != 7) { sync_apply(); }
 }
 static void read_control_words(uint32_t *words)
 {
@@ -1222,6 +1230,11 @@ uint8_t ar_rf_control_checksum(const uint8_t control[7])
 		check = ar_mac_crc8_step(check ^ value);
 	}
 	return check;
+}
+
+uint32_t ar_rf_host_ap_time(void)
+{
+	return ar_ap_time_get(&ap_time, (uint32_t)(timer_ticks() / 40000));
 }
 
 int ar_rf_host_status(uint16_t users, uint8_t output[300])
@@ -2234,6 +2247,10 @@ int ar_rf_host_control(unsigned operation, size_t payload_length)
 	if (operation == 2) {
 		if (host_initialized) { return -7; }
 		int result = prepare_saved_host(); if (result) { return result; }
+		/* Original sync-object creation in 0x22de32 clears time validity.
+		 * Stop/start and link loss retain the offset; deinit/init recreates it.
+		 * Do not bind AP time to receive_started, which changes on restart. */
+		ar_ap_time_reset(&ap_time);
 		host_initialized = 1; host_start_required = 1; lifecycle.initializations++;
 		return 0;
 	}

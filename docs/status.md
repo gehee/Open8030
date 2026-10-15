@@ -20,17 +20,26 @@ read parity remains unverified. Power calibration covers initial user-0 settings
 Caches and interrupts remain disabled for cooperative polling.
 
 The container built without a stock image and the combined `run` command were
-tested on 2026-10-14. Native firmware identity, loader configuration and RF link
-were confirmed, and a visible camera scene was captured directly from the host's
-HDMI capture device. `run` left Open8030 running without a separate keep command.
-This does not establish RF frame rate, end-to-end latency or telemetry parity.
+tested on 2026-10-14. The development baseline adds DEV-side AP-time synchronization
+and host getter `0x0100000c`, validated on 2026-10-15 UTC. It matches 2,304
+original-instruction emulator cases. A 55-second native HDMI capture and two
+20-second captures after stop/start and stop/deinit/init/start show the camera
+scene. Native identity brackets each capture; all 104 sampled status responses
+are linked and the sampled socket counters show zero endpoint drops.
+
+The clock offset survives stop/start. Deinit/init produces the original unavailable
+sentinel before reception starts, then fresh AP messages restore synchronization.
+Fresh stock comparison confirms the same advancing transmitter-clock timeline.
+The candidate was retained in RAM after video inspection. This does not establish
+RF frame rate, independently measured end-to-end latency or full telemetry parity.
 [The baseline manifest](../baseline.json) records exact input/output hashes and
 memory usage; detailed captures and lab records remain private.
 
 Earlier in that session, both stock and replacement firmware showed a black
 camera area with live overlays. A visible scene returned after a full receiver
-reboot into stock and remained visible after loading Open8030 again. The cause
-of the earlier black picture has not been isolated.
+reboot into stock and remained visible after loading Open8030 again. The same
+warm-restoration symptom recurred before the AP-time candidate was loaded; a full
+receiver reboot again restored stock video. The cause has not been isolated.
 
 ## Remaining work
 
@@ -39,7 +48,7 @@ request and PHY-command gaps, and the evidence required to close each area.
 Full original-firmware coverage has not been established.
 
 - Dynamic host power controls and broader channel, band and RF policy support.
-- AP-time synchronization and complete telemetry/host-command parity.
+- Complete telemetry/host-command parity and broader time-synchronization modes.
 - Wider modes, other hardware variants and transmitter support.
 - Physical peer-silence/restart, pending-DMA recovery and extended operation tests.
 - A complete interrupt/timer platform port and validated resource margins.

@@ -2,12 +2,12 @@
   "baseline": "working-video",
   "target": "VRX/GND Ascent VRX; matched 18.21.10 inputs",
   "runtime": {
-    "bytes": 60592,
-    "sha256": "f65af4d20c22e5c55273dfe76bb4be01d87b7a8de4e8d4a1392827739daa1bdc",
+    "bytes": 60264,
+    "sha256": "0eb1fbcbdd2657353097bbd85e6f6e19e7fbd5858ebe59079d990000be93fe38",
     "load_address": "0x204000"
   },
   "ram": {
-    "used_bytes": 659888,
+    "used_bytes": 659376,
     "capacity_bytes": 704512
   },
   "private_board_profile": {
@@ -19,19 +19,20 @@
     "sha256": "c69e46c57bbb3e5fc7fe0c5581e59fb5735dcf8a97bf0e05ae7aaa0273657768"
   },
   "container": {
-    "bytes": 78848,
-    "sha256": "8b816504f0a4612dfc54eba37444579b9871496190f64341ce2df448fe84007f",
+    "bytes": 78336,
+    "sha256": "437d97a4fade9ef3d6f0318d621593d9e98452e99ea2d5e516164f31617d6a5e",
     "payload_alignment": 512
   },
   "original_stock_sha256": "dc58247910af564376350404383c5c411cbec21663873fba24e70c61a3584e3c",
   "external_config_sha256": "5cf0cd31645d4786c6b04399c6c609386d427ffc4c6d7f6e42d81e3e770c2a74",
   "scope": "Experimental Ascent VRX 18.21.10 native video baseline; private inputs not distributed",
   "generated_container": {
-    "bytes": 78848,
-    "sha256": "fc8d2b94c336f0718f93d28811a36747cb04eeb8409acf99973df720af8fe552",
+    "bytes": 78336,
+    "sha256": "437d97a4fade9ef3d6f0318d621593d9e98452e99ea2d5e516164f31617d6a5e",
     "payload_alignment": 512,
     "configuration": "zero-filled 16 KiB; external loader JSON required",
     "hardware_verified": true,
-    "verification_scope": "Ascent VRX 18.21.10: loader JSON, native identity, RF link, visible camera scene and automatic RAM retention; no latency or telemetry parity claim"
+    "verification_scope": "Ascent VRX 18.21.10: DEV AP-time getter, native identity/link, visible camera scene at startup and after stop/start and deinit/init/start; no independently measured latency or full telemetry parity claim",
+    "verified_utc_date": "2026-10-15"
   }
 }

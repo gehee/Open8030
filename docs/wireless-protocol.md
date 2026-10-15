@@ -341,7 +341,7 @@ The receiver validates these command lengths before updating its cached message:
 | 4 | 3 | Effect unsupported |
 | 5 | 3 | Effect unsupported |
 | 6 | 2 | Update selected RX/TX identity fields |
-| 7 | 4 | Time-offset message recognized; timing effect unimplemented |
+| 7 | 4 | Update DEV's AP-time offset; exposed through host getter `0x0100000c` |
 | 8 | 4 | Effect unsupported; message byte 6 bits 2–3 must be clear |
 | 9 | 0 | Effect unsupported |
 
@@ -351,6 +351,33 @@ effect. For nonzero commands other than 7, TTL 1 or 31 applies immediately; TTL
 TTL 0 does not schedule a new application. These are frame-relative synchronization
 semantics, not an IP hop count. Processing uses a shared cached control message,
 not an independent timer queue for every received command.
+
+### AP-time synchronization
+
+Command 7 uses the header's usual TTL bits differently. Timestamp bits 0–27
+come from the little-endian word in bytes 3–6, with its high nibble discarded.
+Timestamp bits 28–31 come from byte 1 bits 4–7. Byte 2 bit 0 does not contribute
+to the 32-bit timestamp. The normal checksum and four-byte length checks still
+apply; an invalid message must not replace the time offset.
+
+The receiver stores `offset = AP_ms - local_ms` with unsigned 32-bit arithmetic.
+Host getter `0x0100000c` accepts no payload and returns four little-endian bytes
+containing `local_ms + offset`, modulo 2³². Before synchronization, it succeeds
+with the unavailable value `0xffffffff`. That value can also occur at a valid
+clock's wrap boundary; the wire response has no separate validity flag.
+
+The local time base is the continuous 40 MHz hardware counter divided by 40,000,
+not the elapsed time since reception started. Stop/start retains the offset;
+deinit/init clears it. Receiving command 7 does not arm or cancel the shared
+control timer. If it replaces a pending command in the cache, expiration cannot
+reapply the old command; the original descriptor has no command-7 timer callback.
+
+The decoder and getter match 2,304 original-instruction emulator cases. The
+clock and semaphore/PHY acquisition helpers are intercepted; this is not a
+hardware timing measurement. Native integration tests cover malformed controls,
+pending-command replacement and lifecycle handling. This implements DEV's AP
+clock estimate, not AP-side timestamp transmission or measured video latency.
+Sources: [ap_time.c](../src/ap_time.c), [ap_time_test.c](../tests/ap_time_test.c).
 
 For command 6, payload byte 3 bits 0–3 select user 0–9 and bit 4 selects transmit
 identity when set. Byte 4 carries the identity value. RX identity updates are
@@ -432,6 +459,7 @@ peer-silence/restart and pending-DMA recovery still need broader hardware covera
 | [dev_tx_test.c](../tests/dev_tx_test.c) | Report encoding, synthetic byte vector, budgets and buffer ownership |
 | [dev_mcs_test.c](../tests/dev_mcs_test.c) | Receive-MCS policy transitions and timing |
 | [fch_monitor_test.c](../tests/fch_monitor_test.c) | Observation/loss logic and timer edge cases |
+| [ap_time_test.c](../tests/ap_time_test.c) | DEV AP clock decoding, unavailable state and wrap |
 | [rf_device_test.c](../tests/rf_device_test.c) | Simulated hardware integration contracts |
 | [Hardware status](status.md) | Matched Ascent VRX native identity/link and visible HDMI camera output |
 

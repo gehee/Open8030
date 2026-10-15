@@ -291,6 +291,7 @@ const struct ar_rf_rx_info *ar_rf_receive_information(void);
 /* Matched GET_STATUS wire layout. Available after a DEV4 fixed-channel plan;
  * unrequested/reserved bytes are zero. Stopped monitors never report linked. */
 int ar_rf_host_status(uint16_t users, uint8_t output[300]);
+uint32_t ar_rf_host_ap_time(void);
 typedef void (*ar_rf_event_callback)(unsigned id, const uint8_t *data, size_t length, void *context);
 void ar_rf_set_event_callback(ar_rf_event_callback callback, void *context);
 void ar_rf_poll(void);

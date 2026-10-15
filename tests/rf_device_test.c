@@ -150,6 +150,7 @@ static void receive_sync(uint8_t control[7], unsigned seal)
 
 int main(void)
 {
+	assert(ar_rf_host_ap_time() == UINT32_MAX);
 	uint8_t host_status[300];
 	assert(ar_rf_host_status(0x3ff, NULL) == -22);
 	assert(ar_rf_host_status(0x3ff, host_status) == -11);
@@ -1199,6 +1200,24 @@ int main(void)
 		receive_sync(identity, 1); assert(sync->rx_writes == 3);
 		assert(*reg(0x0a110de8) == ((rx9 & ~255u) | 0x66) && *reg(0x0a110df0) == shared);
 		identity[3] = 0x4a; receive_sync(identity, 1); assert(sync->invalid_users == 1 && sync->rx_writes == 3);
+		/* AP time passes through the real FCH checksum/length gates. A valid
+		 * time header replaces a queued identity without applying its timer. */
+		identity[1] = 0x26; identity[2] = 4; identity[3] = 8;
+		receive_sync(identity, 1); assert(sync->pending);
+		uint8_t clock[7] = {0,0xa7,9,0x67,0x45,0x23,0xf1};
+		receive_sync(clock, 1);
+		uint32_t time_before = ar_rf_host_ap_time();
+		assert(time_before - UINT32_C(0xa1234567) <= 1);
+		assert(sync->pending && sync->rx_writes == 3);
+		unsigned unsupported_before = sync->unsupported;
+		ticks += 20 * 40000; ar_rf_poll();
+		assert(!sync->pending && sync->rx_writes == 3 && sync->unsupported == unsupported_before);
+		assert(ar_rf_host_ap_time() - time_before >= 20 && ar_rf_host_ap_time() - time_before <= 21);
+		clock[3] = 0; /* Corrupt the check without recomputing it. */
+		receive_sync(clock, 0);
+		assert(ar_rf_host_ap_time() - time_before <= 21);
+		clock[2] = 6; receive_sync(clock, 1); /* Correct check, wrong length. */
+		assert(ar_rf_host_ap_time() - time_before <= 21);
 	}
 	if (operation >= 72) {
 		assert(sizeof(struct ar_rf_tx_mcs_info) == 64);
@@ -1455,6 +1474,10 @@ int main(void)
 	assert(ar_rf_host_control(0,0)==-7 && ar_rf_host_control(2,0)==-7 && ar_rf_host_control(3,0)==-7);
 	assert(ar_rf_host_control(1,1)==-22 && ar_rf_host_control(4,0)==-95 && writes==before);
 	for (unsigned cycle=0; cycle<3; cycle++) {
+		uint8_t clock[7] = {0,7,8,0x40,0x42,0x0f,0}; /* 1,000,000 ms. */
+		receive_sync(clock,1);
+		uint32_t old_time = ar_rf_host_ap_time(); uint64_t old_ticks = ticks;
+		assert(old_time - 1000000 <= 1);
 		/* A DMA-complete indication is consumed without forwarding its packet
 		 * during stop; no ring slot can be reused while DMA remains owned. */
 		if (cycle == 1) { injected = 0; ar_rf_poll(); }
@@ -1472,11 +1495,17 @@ int main(void)
 			assert(ar_rf_host_status(0x3ff,host_status)==-11);
 			assert(ar_rf_host_candidates(candidates,sizeof candidates)==-11);
 			assert(!ar_rf_host_control(2,0) && ar_rf_lifecycle_information()->state==1);
+			assert(ar_rf_host_ap_time()==UINT32_MAX);
 			assert(!ar_rf_host_candidates(candidates,sizeof candidates));
 			assert(ar_rf_information()->phase==AR_RF_PSRAM); /* Init is not start. */
 		}
 		assert(!ar_rf_host_control(0,0) && life->starts==starts+cycle+1);
 		assert(ar_rf_lifecycle_information()->state==2 && !search->acquisition_ready);
+		if (cycle == 1) { assert(ar_rf_host_ap_time()==UINT32_MAX); }
+		else {
+			uint32_t elapsed = (uint32_t)((ticks-old_ticks)/40000);
+			assert(ar_rf_host_ap_time()-old_time-elapsed <= 1);
+		}
 		assert_channel_plls(5770000);
 		ticks += 11*40000; ar_rf_poll(); assert_channel_plls(5805000);
 		/* The latest host candidates survived every native state rebuild. */

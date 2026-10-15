@@ -64,7 +64,7 @@ and scenario; they must be repeated after relevant changes.
 | Container, bootstrap and loader | Working matched-board baseline | Repeated cold starts; bad/truncated configuration and failed preparation; ordering and recovery across original loader paths. |
 | OTP, flash and factory data | Identity and read-only lookup; hardware covers zero-offset fallback | Valid factory records, partition variants, corrupt records and hardware-calibrated offsets. |
 | Host framing and SDIO | Framing, enumeration and cooperative transport | Original error/reset semantics, saturation, concurrent traffic, reconnect and interrupted DMA. |
-| Host getters | Main status only among the selected vendor getters below | Complete field semantics, all remaining getters, unavailable states and original error responses. |
+| Host getters | Main status and DEV AP-time getter | Complete field semantics, all remaining getters, unavailable states and original error responses. |
 | Host setters and configuration | Candidate list and restricted loader configuration | Full dispatcher inventory, dynamic power, channel/band policies, reset/default behavior and runtime configuration changes. |
 | Host lifecycle | Explicit stop/start and stop/deinit/init/start tested historically | Every wrong-state/repeated operation, cancellation, pending DMA, failure recovery and complete reset semantics. |
 | Events | Subscription and delivery for IDs 0 and 1 | Other original IDs, payload layouts, ordering, cancellation and overflow behavior. |
@@ -76,7 +76,7 @@ and scenario; they must be repeated after relevant changes.
 | MCS adaptation | RX adaptation and limited TX increase | TX decrease/interleaver drain, all PHY keys, retry/expiry, loss interactions and sustained adaptation. |
 | Power and calibration | Initial user-0 setup | Normal backend startup power writes, all users, peer-driven power, compensation and calibration effects. Earlier dynamic-power candidates broke acquisition. |
 | Channel/band selection | Configured search and matched channel | Independent uplink changes, subchannels, hopping, scan scoring, automatic policies, rollback and cross-band operation. |
-| Time synchronization | AP-time control recognized without effect | Original clock basis, offset application, getter, wrap, stale time and reset/loss behavior. |
+| Time synchronization | DEV AP-time decoding/getter; original-instruction comparison and hardware startup/restart checks | Physical peer-loss/stale time, long-run hardware wrap and other roles/modes. |
 | Link recovery | Candidate removal/readmission and bounded recovery machinery | Physical peer silence/restart, pending work, sustained reacquisition and repeated failures. |
 | Video/control/telemetry | Visible camera video and byte transport | Freshness challenge, measured end-to-end latency, telemetry values, control effects, loss/throughput and prolonged operation against stock. |
 | Platform and resources | Cooperative polling; caches/interrupts disabled | Complete interrupt/timer behavior, long-run wrap, resource margins, faults and recovery under load. |
@@ -138,7 +138,7 @@ commands. Equal command numbers across those layers have no implied relationship
 | 4 | Unsupported | Channel transition, confirmation and rollback |
 | 5 | Unsupported | Original callback and hardware effects |
 | 6 | Selected RX/TX identity fields | All user/state combinations and shared-field effects |
-| 7 | Recognized; no timing effect | AP-time offset and host getter |
+| 7 | DEV AP-time offset and host getter | Physical peer-loss/stale time, long-run hardware wrap and other roles/modes |
 | 8 | Validated format only | Original callback and hardware effects |
 | 9 | Validated format only | Original callback and hardware effects |
 
@@ -155,8 +155,26 @@ recording selected a different camera and was excluded from VRX evidence.
 Adapter cadence cannot establish camera/RF frame rate or end-to-end latency.
 This is a current native regression check, not a fresh stock/native comparison.
 
+### AP-time implementation after the initial audit
+
+The initial getter probe above remains a record of the earlier image. The next
+candidate implements PHY command 7 and getter `0x0100000c`; see
+[AP-time synchronization](wireless-protocol.md#ap-time-synchronization).
+Its decoder/getter matches 2,304 original-instruction cases covering all 32
+header/TTL combinations, payload-tail variations, millisecond boundaries and
+32-bit wrap. Clock and semaphore/PHY acquisition helpers are intercepted, while
+the original parser, checksum, copy, division and getter instructions execute.
+
+Hardware checks include a fresh stock AP-time/video reference, then native
+startup, stop/start and stop/deinit/init/start. The native getter advances,
+retains its offset through stop/start, returns the unavailable sentinel after
+reinitialization and synchronizes again after reception starts. Direct HDMI
+captures show the camera scene after each sequence. This closes the implemented
+DEV clock path for these scenarios, not every time-related behavior in stock.
+The accepted image and hardware limits are recorded in [status](status.md) and
+[baseline.json](../baseline.json); detailed receipts remain private.
+
 Next, complete the original dispatcher inventory and bind each known behavior
-to its tests, then implement gaps in isolated changes. AP-time synchronization
-is a concrete missing protocol path; dynamic power needs a separately isolated
-acquisition fix. Neither a large synthetic test count nor a visible scene can
-close the remaining matrix by itself.
+to its tests, then implement gaps in isolated changes. Dynamic power still needs
+a separately isolated acquisition fix. Neither a large synthetic test count nor
+a visible scene can close the remaining matrix by itself.

@@ -138,6 +138,18 @@ static void receive(const struct ar_frame *frame, void *context)
 		size_t size = ar_encode(reply, sizeof reply, &socket_response);
 		(void)ar_sdio_send(reply, size); return;
 	}
+	if (frame->reqid == UINT32_C(0x0100000c)) {
+		uint8_t output[4];
+		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid};
+		if (frame->status || frame->length) { response.status = AR_STATUS_INVALID; }
+		else {
+			uint32_t value = ar_rf_host_ap_time();
+			for (unsigned i = 0; i < 4; i++) { output[i] = value >> (8 * i); }
+			response.payload = output; response.length = sizeof output;
+		}
+		size_t size = ar_encode(reply, sizeof reply, &response);
+		(void)ar_sdio_send(reply, size); return;
+	}
 	if (frame->reqid == UINT32_C(0x01000000)) {
 		int status = frame->status || frame->length != 2 ? AR_STATUS_INVALID :
 			ar_rf_host_status(frame->payload[0] | (uint16_t)frame->payload[1] << 8, transformed);
