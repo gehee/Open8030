@@ -515,6 +515,15 @@ build reproduces stage 206. A fresh 30-second HDMI-to-USB capture shows the came
 scene, with 33 linked samples and zero sampled socket drops. Stage 206 remains
 running in RAM. See [stream admission coverage](parity.md#stream-admission-and-publication).
 
+Stage 208 compares host-facing handle admission, including role checks, host-port
+mapping, first-free reservation, encoded handle IDs and full-table cleanup.
+789 original scenarios include 32 composed open/lookup/close sequences. Four
+sanitizer suites and 18 Python tests pass. The helper remains source-only; factory
+internals, table initialization, worker startup and the stock spare-port rejection
+remain open. The build reproduces stage 206, which remains running in RAM. A
+fresh 30-second HDMI-to-USB capture shows the camera scene with 33 linked samples
+and zero sampled socket drops. See [handle admission coverage](parity.md#handle-admission-and-open-cleanup).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host

@@ -12,6 +12,23 @@ struct ar_tx_handles {
 	struct ar_tx_handle_record *records;
 	size_t record_count; /* Native storage bound, separate from original count. */
 };
+/* Source-only host-facing stream open. Role 0 accepts selectors 0..7; other
+ * roles accept only selector 0. Host ports 0..3 map to stream ports 1..4.
+ * Stream creation precedes handle allocation. Under the handle mutex, reserve
+ * the first inactive record, then unlock BEFORE writing direction/selector/port.
+ * The result is record bits 3..15, not the scanned array index. Table setup must
+ * initialize these bits consistently. Full tables close the newly opened
+ * streams and return -11 even if cleanup fails. Stream-open errors propagate.
+ * Callbacks serialize mutations and keep table/registry storage live, including
+ * the reserved record across unlock. Unsafe native storage/adapters return -22;
+ * a table-bound failure after stream creation attempts the same cleanup.
+ * This does not create socket workers or establish RTOS/DMA safety. */
+int ar_tx_handle_open(struct ar_tx_handles *handles, unsigned role,
+	unsigned selector, unsigned host_port, unsigned flags,
+	uint32_t tx_capacity, uint32_t rx_capacity,
+	struct ar_tx_stream_registry *registry,
+	const struct ar_tx_stream_open_ops *open_ops,
+	const struct ar_tx_stream_close_ops *close_ops, void *context);
 /* Out-of-range handles return -1 without touching output or taking a lock.
  * Otherwise copy the record under the table mutex, optionally clear its active
  * bit, unlock, and return 0/-1 from the COPIED active bit. Output must not overlap

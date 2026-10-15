@@ -68,7 +68,7 @@ and scenario; they must be repeated after relevant changes.
 | Host setters and configuration | Candidate list and restricted loader configuration | Full dispatcher inventory, dynamic power, channel/band policies, reset/default behavior and runtime configuration changes. |
 | Host lifecycle | Explicit stop/start and stop/deinit/init/start tested historically | Every wrong-state/repeated operation, cancellation, pending DMA, failure recovery and complete reset semantics. |
 | Events | Subscription and delivery for IDs 0 and 1 | Other original IDs, payload layouts, ordering, cancellation and overflow behavior. |
-| Host sockets | Slot-0 copy-mode data path, deferred close and active-write cancellation; normal backend video/control; low-level stream admission compared offline | Allocation internals, handle/worker publication, unresolved stock spare-port rejection, other modes/slots, retained-descriptor TX, saturation, teardown races and complete capacity/error behavior. |
+| Host sockets | Slot-0 copy-mode data path, deferred close and active-write cancellation; normal backend video/control; stream and handle admission compared offline | Allocation internals, table initialization, worker startup, runtime integration, unresolved stock spare-port rejection, other modes/slots, retained-descriptor TX, saturation, teardown races and complete capacity/error behavior. |
 | MAC framing | Header/descriptor parser and DEV encoder | Other formats/flags, receive ordering, duplicate handling and all original rejection rules. |
 | AP full/compact controls | Selected mode-0/slot-0 admission and connected control | All extensions, remote synchronization effects, changed channels, slots, stale/duplicate controls and unsupported modes. |
 | Internal port-0 commands | Stream parsing; login checksum ACK transmission | Receiving a command currently mainly records it. Inventory and implement each original command's effects, responses and retries. |
@@ -2357,8 +2357,61 @@ the standard build reproduces accepted stage 206 byte-for-byte. A fresh
 image remains running in RAM. This is a regression check, not a new stock/native
 admission comparison or a controlled freshness/latency measurement.
 
-The host wrapper's role checks, host-port-to-stream-port mapping, handle-table
-allocation/publication, full-table cleanup and socket-worker startup still need
-their own comparisons. The live stock spare-port rejection remains unresolved;
-the possible `-2`, `-3` and `-9` paths above do not identify its cause. Full socket
-or firmware parity cannot be inferred from these helper results.
+The host wrapper is compared separately below. Factory internals, handle-table
+initialization and socket-worker startup remain open. The live stock spare-port
+rejection remains unresolved; the possible `-2`, `-3` and `-9` paths above do not
+identify its cause. Full socket or firmware parity cannot be inferred from these
+helper results.
+
+### Handle admission and open cleanup
+
+Stage 208 compares the host-facing stream-open wrapper at `0x24241c`, including
+the original stream-create, close and destructor paths beneath it. Role byte 0
+accepts selectors 0..7; other role values accept only selector 0. Host ports 0..3
+map to stream ports 1..4. Invalid role/selector/port combinations return `-6`
+before creating streams. Stream-create failures propagate without allocating a
+handle.
+
+After successful stream creation, the wrapper scans for the first inactive
+handle record under the table mutex. It sets the active bit and unlocks, then
+writes the direction bits, selector and mapped port. Publication is therefore
+not one atomic operation under that mutex. The returned handle is the record's
+encoded **bits 3..15**, not the scanned index or the full upper word. Existing
+record initialization must supply the index correctly; the wrapper does not
+repair inconsistent records. Mutating the record during unlock can change the
+returned ID or leave its active bit clear even though open returns success.
+These deterministic mutation tests describe instruction ordering, not a proven
+original scheduling race.
+
+A full handle table invokes stream close and returns `-11` regardless of that
+cleanup result. A fixture that removes selector availability before cleanup
+therefore retains created streams and still returns `-11`; the native helper
+preserves this behavior rather than claiming guaranteed rollback. Unsafe native
+table bounds or missing adapters return the additional native error `-22`.
+Bounds failure after stream creation attempts cleanup before returning.
+
+Fresh original execution matches **789 scenarios**, including **32 composed
+open → lookup → close sequences**, across **464 hash-bound instruction
+locations**. Comparisons check results, records, stream registry/object state
+and callback ordering with snapshots at each callback. Cases include role and
+port limits, selected capacities, allocation failures, duplicate streams,
+empty/full tables, first-free selection, 8- and 64-record tables including the
+last slot, encoded-ID boundaries and mutations at lock/unlock. Nested original
+close/destructor instructions execute during cleanup; stream factory, mutex,
+synchronization destruction, heap-free and diagnostic endpoints are intercepted.
+Native unpublished-stream destruction is an adapter fixture using the separately
+compared destructor contract. Table initialization, actual allocator/scheduler
+behavior, socket workers and DMA are outside this comparison. Synthetic ELF,
+ABI, pointers and partial ISA remain analysis metadata.
+
+Four ASan/UBSan suites and 18 Python tests pass. Real-allocation tests exercise
+open/close/reopen, allocation failure and exhausted/invalid native table cleanup.
+The helper remains source-only and the standard build reproduces stage 206.
+A fresh 30-second direct `/dev/video0` HDMI-to-USB capture shows the camera scene;
+all 33 samples remain linked, AP time advances and sampled socket drops stay zero.
+Stage 206 remains running in RAM. This is a regression observation, not a fresh
+stock/native open comparison or controlled freshness/latency measurement.
+
+The stock spare-port rejection still needs its actual underlying error and
+live allocation state identified. Factory and worker-start contracts, integration
+of retained-buffer ownership, and full socket admission parity remain open.
