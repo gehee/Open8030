@@ -582,6 +582,19 @@ stay linked with zero sampled socket drops. Stage 213 is retained in RAM and
 recorded as the accepted build. Event producers beyond 0/1 and internal routing
 remain pending. See [host event coverage](parity.md#host-event-subscriptions-and-copied-transport).
 
+Stage 214 adds a source-only comparison of internal route delivery: all 64
+destination positions, direct/queued writes, reference transfer, failure paths,
+counter wrap and event-bridge composition. It matches 284 original cases,
+including 96 bridge cases. The matched mode-3 routes preserve the full framed
+packet; event-buffer allocation failure can count as a successful write without
+emitting an event. Queued writer completion and runtime integration remain open.
+Three sanitizer suites and 18 Python tests pass. The build reproduces stage 213;
+a fresh 30-second direct HDMI-to-USB capture shows the camera scene with all 33
+samples linked. The video socket drops another 108,063 bytes during that check,
+so the no-drop check fails despite visible video. The cause and stock comparison
+under the same load remain open. Stage 213 remains running in RAM.
+See [route delivery coverage](parity.md#selected-internal-route-delivery).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host
@@ -594,6 +607,8 @@ Full original-firmware coverage has not been established.
   ownership and complete socket admission/teardown behavior.
 - Wider modes, other hardware variants and transmitter support.
 - Physical peer-silence/restart, pending-DMA recovery and extended operation tests.
+- Sustained-session video receive/backpressure: stage 214 observes dropped bytes
+  in the unchanged accepted image while video remains visible.
 - A complete interrupt/timer platform port and validated resource margins.
 - Public board-profile provisioning, repeated cold starts, reliable recovery
   from black camera output and persistent installation/rollback.

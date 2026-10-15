@@ -69,7 +69,7 @@ and scenario; they must be repeated after relevant changes.
 | Host lifecycle | Explicit stop/start and stop/deinit/init/start tested historically | Every wrong-state/repeated operation, cancellation, pending DMA, failure recovery and complete reset semantics. |
 | Events | All twelve original host subscriptions and declared payload sizes; copied FIFO transport; producers for IDs 0 and 1 | Integrate other producers and internal routes; compare their payload meaning, scheduling, overflow and lifecycle behavior. Subscription success alone does not establish a working producer. |
 | Host sockets | Slot-0 copy-mode data path, deferred close and active-write cancellation; normal backend video/control; stream/handle admission and queue factories compared offline | Stock host ports 0/1 reject opens because their streams already exist; native admission differs. Heap/RTOS internals, table initialization, worker startup, runtime ownership, other modes/slots, retained-descriptor TX, saturation, teardown races and complete capacity/error behavior remain open. |
-| Internal data interfaces | Stock stream occupancy observed; mode-3 graph, source-only event forwarding and socket-port-1 framing compared offline | Integrate UART/SBUS, parsers, event subscriptions, shared stream ownership and payload routing; compare other framing profiles, modes, timing, teardown and failure recovery. A reserved-port rejection alone does not implement these services. |
+| Internal data interfaces | Stock stream occupancy observed; mode-3 graph, source-only event forwarding, socket-port-1 framing and selected route delivery compared offline | Integrate UART/SBUS, parsers, event producers, shared stream ownership and payload routing; compare other framing profiles, route actions, queued writer completion, modes, timing, teardown and failure recovery. A reserved-port rejection alone does not implement these services. |
 | MAC framing | Header/descriptor parser and DEV encoder | Other formats/flags, receive ordering, duplicate handling and all original rejection rules. |
 | AP full/compact controls | Selected mode-0/slot-0 admission and connected control | All extensions, remote synchronization effects, changed channels, slots, stale/duplicate controls and unsupported modes. |
 | Internal port-0 commands | Stream parsing; login checksum ACK transmission | Receiving a command currently mainly records it. Inventory and implement each original command's effects, responses and retries. |
@@ -144,10 +144,12 @@ host-accessible commands.
 Indirect callbacks, internal radio messages and timers also remain open; finding
 all IDs in this dispatcher does not close those behaviors.
 
-### Selected runtime probes
+### Historical runtime probes
 
-The selected read-only probe on 2026-10-15 UTC, using the accepted container above,
-returned:
+The selected read-only probe at the start of the 2026-10-15 UTC audit, using the
+container recorded in the reference table above, returned the following results.
+These are historical observations, not the current support list: AP time was
+implemented afterward and stage 213 expanded event subscription support.
 
 | Request | Meaning | Native result |
 | --- | --- | --- |
@@ -174,7 +176,7 @@ below follow the current source dispatcher, not the audit alone.
 | `0xff000000`, `0xff000001`, `0xff000002` | HELLO, synchronization reset and heartbeat; reset does not implement a full radio reboot |
 | `0x02000004` | Candidate list; bounded supported profile |
 | `0x03010000`, `0x03010001` | Supported event subscriptions |
-| `0x03010002`, `0x03010008`, `0x0301000c` | Unsupported event subscriptions |
+| `0x03010002`, `0x03010008`, `0x0301000c` | Subscription supported since stage 213; corresponding producers remain unintegrated |
 | `0x04000002`, `0x04000003`, `0x04010002` | Socket open/write used by the backend |
 | `0x01000005`, `0x0100000a`, `0x01000012`, `0x010000c8` | Additional unsupported getters; complete original contracts still need tracking |
 | `0x02000008`, `0x02000009`, `0x0200000c`, `0x0200000d`, `0x02000010`, `0x02000020`, `0x02000024`, `0x020000c8` | Unsupported setters; inventory each original effect before implementing or probing writes |
@@ -2769,3 +2771,81 @@ event bridge still need real internal ownership, routing and lifecycle work.
 This change closes the selected subscription/transport gap, not complete event,
 internal-service or original-firmware parity. Controlled scene freshness,
 latency, long-run behavior and wider board/mode coverage remain open.
+
+### Selected internal route delivery
+
+Stage 214 compares `src/data_route.c` with the delivery portion of original
+worker `0x20df00`. All six matched mode-3 route records have action flags `0x8`.
+That action selects destinations without stripping or adding framing. A packet
+from the socket-port-1 parser therefore retains its `C8 | length | body | CRC8`
+envelope when delivered to the event bridge. The bridge adds its separate
+two-byte length prefix inside the 1,024-byte event message. This resolves the
+transformation question left open by stage 212; it does not yet connect these
+services in the running firmware.
+
+The source-only helper consumes one owned packet reference and visits selected
+destination IDs in ascending order across all 64 bitmap positions. Missing
+interfaces increment the worker's missing-destination counter. Disabled
+interfaces increment their own disabled counter. An enabled synchronous
+interface with no write callback is skipped. A direct callback succeeds only
+when its return value equals the packet length re-read after the call. Success
+updates route bytes/packets and interface bytes; a short or failed write invokes
+the diagnostic adapter and increments the worker's delivery-failure counter.
+It is not retried. Unsigned 64-bit accounting wraps.
+
+A queued destination obtains an extra packet reference before submission. A
+successful submission transfers that reference to its destination worker and
+leaves delivery counters unchanged until that worker runs. Failed submission
+invokes diagnostics, releases the extra reference and increments failures.
+After visiting every destination, the sender releases its own reference. A
+successful return from this delivery helper means the attempts finished, not
+that every recipient accepted the packet or that a queued writer completed.
+
+The comparison executes the original worker, linked interface lookup, packet
+length getter and event bridge with intercepted service boundaries. **284 cases**
+match callback order/arguments, forwarded bytes, reference balance and counters.
+They include every destination bit, mixed recipients, missing/disabled/no-writer
+interfaces, direct/queued failures, lengths 0 through 1,022 at selected boundaries,
+callback-time length mutation and counter wrap. **96 cases** execute the original
+event bridge, producing **48 event emissions** at the intercepted hub boundary.
+Original bridge allocation failure still returns the input length: the route
+counts a successful write even though no event was emitted. This is preserved
+as an original behavior, not used as proof of application delivery.
+
+**430 executed instruction locations** and all six route action records are
+bound to the matched payload, container and analysis ELF. Queue receive supplies
+an already selected packet; the original parser and route selection do not
+execute in the same fixture. Two original metadata-override cases supply the
+resulting metadata to the native helper; the helper does not implement that
+earlier action. Other route transformations, worker preamble errors and the
+dedicated destination writer remain outside this comparison. Heap, packet
+reference operations, queue posting, non-event write callbacks, event-hub
+emission, locks and diagnostics are intercepted. Their real allocator,
+scheduler, subscriber and UART effects are not verified here. Synthetic ELF,
+pointers, ABI and partial ISA remain analysis metadata.
+
+Three native ASan/UBSan suites and 18 Python tests pass. Native tests additionally
+exercise packet-to-event composition, live destination-mask changes, retained
+queue references and invalid-adapter/length guards. The helper remains outside
+CMake and the standard build reproduces stage 213 exactly. A fresh 30-second
+host `/dev/video0` HDMI-to-USB capture at MJPEG 1920×1080/nominal 30 fps shows the
+dark textured camera scene and right-side features. All 33 samples are linked
+and AP time advances. However, the video socket's cumulative dropped-byte
+counter increases from 2,128,926 to 2,236,989: **108,063 bytes dropped during this
+check**, with 11,346,223 bytes delivered. This fails the no-drop check and exposes
+a sustained-session receive/backpressure gap in the unchanged accepted runtime.
+The exact trigger and comparison with stock under the same load remain open;
+visible video and a linked state do not close this gap. Image/configuration
+hashes and the retained session match stage 213, which remains running in RAM.
+This is a regression check, not hardware execution of the new helper, a fresh
+stock comparison or a controlled freshness/latency measurement.
+
+Full coverage remains blocked by the incomplete original-system inventory as
+well as implementation gaps. In particular, closing this route comparison does
+not close host command handlers, internal services, retained TX/DMA ownership,
+channel/power policy, recovery/timing, other roles or other boards. The next
+internal-data work is to compare queued writer completion and packet lifetime,
+then integrate both directions of the selected services with their real stream
+ownership and lifecycle behavior. Each runtime integration still requires
+stock/native checks and direct video inspection. Investigate the observed video
+receive drops before accepting a claim of sustained streaming parity.
