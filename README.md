@@ -7,7 +7,28 @@ Zephyr, with potential support for AR8030-based transmitters (VTX).
 original receiver Linux software and transmitter. Other boards may need different
 profiles and loading procedures. See [status and remaining work](docs/status.md).
 
-## Setup
+## Run the prebuilt firmware
+
+The [v0.1.0 experimental release](https://github.com/mh1412/Open8030/releases/tag/v0.1.0)
+includes the tested Ascent VRX image. On Linux with Python 3.12+, Git, curl and
+OpenSSH installed:
+
+```sh
+git clone --branch v0.1.0 https://github.com/mh1412/Open8030.git
+cd Open8030
+mkdir -p .local
+curl -fL https://github.com/mh1412/Open8030/releases/download/v0.1.0/open8030.img \
+  -o .local/open8030.img
+./open8030 run YOUR_VRX_IP
+```
+
+Start from working stock video and replace `YOUR_VRX_IP` with the receiver address.
+`run` checks the downloaded image's SHA-256 against the tagged baseline before
+uploading it. No build toolchain or private profile source is needed to run this
+prebuilt image. Operation is RAM-only; `./open8030 stop YOUR_VRX_IP` or a receiver
+reboot returns to stock. Check fresh camera video after loading.
+
+## Source build setup
 
 Use Linux x86_64 with Python 3.12+ and CMake 3.20+. On Debian/Ubuntu with suitable
 package versions:
@@ -72,11 +93,12 @@ persistent installation is not implemented.
 If the camera area stays black despite live overlays, reboot into stock and
 confirm a visible scene before running Open8030 again.
 
-The image, private inputs and saved session details stay in ignored `.local/`.
+Local images, private inputs and saved session details stay in ignored `.local/`.
 Use the same checkout and receiver address for `run` and `stop` so the
-helper can find its session. The packaged image contains private board-profile
-data; do not publish it. These commands target the tested Ascent VRX baseline
-and reject mismatched images or receiver software.
+helper can find its session. The published firmware includes compiled board-profile
+data; the profile source and lab artifacts remain private. Preserve the release's
+license notices when redistributing it. These commands target the tested Ascent VRX
+baseline and reject mismatched images or receiver software.
 
 ## Development
 
