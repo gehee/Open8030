@@ -501,17 +501,17 @@ suites and 18 Python tests pass. Six HDMI-to-USB captures total 120 seconds acro
 startup, close stress, restart, reinitialization and recovery. All 138 samples are
 linked with advancing AP time and zero sampled socket drops; inspected camera
 frames match the fresh stock scene. Stage 206 is the retained RAM baseline.
-Original spare-port admission differs and remains unresolved; retained TX and
-actual RTOS/DMA ownership are still incomplete. See
+Original spare-port admission differs; stage 210 identifies the rejection below.
+Retained TX and actual RTOS/DMA ownership are still incomplete. See
 [cooperative close coverage](parity.md#cooperative-socket-close).
 
 Stage 207 compares low-level stream admission and publication in 1,206 original
 scenarios. It covers duplicate-direction rejection, selected capacity checks,
 TX-before-RX allocation, partial-allocation cleanup and publication ordering.
 All 47 native sanitizer suites and 18 Python tests pass. Factory internals and
-host handle/worker creation remain outside this comparison, and the stock
-spare-port rejection is still unresolved. This is source-only work: the standard
-build reproduces stage 206. A fresh 30-second HDMI-to-USB capture shows the camera
+host handle/worker creation remain outside this comparison; the stock
+spare-port rejection was unresolved at this stage. This is source-only work:
+the standard build reproduces stage 206. A fresh 30-second HDMI-to-USB capture shows the camera
 scene, with 33 linked samples and zero sampled socket drops. Stage 206 remains
 running in RAM. See [stream admission coverage](parity.md#stream-admission-and-publication).
 
@@ -520,8 +520,8 @@ mapping, first-free reservation, encoded handle IDs and full-table cleanup.
 789 original scenarios include 32 composed open/lookup/close sequences. Four
 sanitizer suites and 18 Python tests pass. The helper remains source-only; factory
 internals, table initialization, worker startup and the stock spare-port rejection
-remain open. The build reproduces stage 206, which remains running in RAM. A
-fresh 30-second HDMI-to-USB capture shows the camera scene with 33 linked samples
+were still open at this stage. The build reproduces stage 206, retained in RAM.
+A fresh 30-second HDMI-to-USB capture shows the camera scene with 33 linked samples
 and zero sampled socket drops. See [handle admission coverage](parity.md#handle-admission-and-open-cleanup).
 
 Stage 209 compares stream and queue factories in 468 original scenarios,
@@ -534,6 +534,23 @@ coverage. The build reproduces stage 206. A fresh 30-second HDMI-to-USB capture
 shows the camera scene with 33 linked samples and zero sampled socket drops;
 stage 206 remains running in RAM. See [factory coverage](parity.md#stream-and-queue-factories).
 
+Stage 210 identifies the stock socket-admission difference: both directions
+behind host ports 0 and 1 already have streams. All seven selected opens return
+inner SDIO error `-9`, wrapped as `-259`; the original daemon forwards only the
+outer status. Stock results agree with and without a temporary daemon observer.
+Open8030 admits all seven opens, confirming missing internal ownership in the
+runtime. The specific internal owners and their data paths remain unimplemented;
+rejecting those ports alone would not close the gap. See
+[stock stream occupancy](parity.md#stock-stream-occupancy-and-internal-interfaces).
+
+The firmware image is unchanged. Its first warm reload produces black camera
+output despite a linked radio and delivered video bytes, so that session fails
+acceptance. A full stock reboot and reload of the same Open8030 image restore
+the visible scene. Repeating all seven native opens/closes during a fresh
+30-second HDMI-to-USB capture passes with 33 linked samples and zero sampled
+socket drops. The observer is removed and stage 206 is retained in RAM. The
+warm-restoration cause, controlled freshness and measured latency remain open.
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host
@@ -542,6 +559,8 @@ Full original-firmware coverage has not been established.
 
 - Dynamic host power controls and broader channel, band and RF policy support.
 - Complete telemetry/host-command parity and broader time-synchronization modes.
+- Internal data-interface provisioning, UART/SBUS service mapping, shared stream
+  ownership and complete socket admission/teardown behavior.
 - Wider modes, other hardware variants and transmitter support.
 - Physical peer-silence/restart, pending-DMA recovery and extended operation tests.
 - A complete interrupt/timer platform port and validated resource margins.

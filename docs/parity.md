@@ -68,7 +68,8 @@ and scenario; they must be repeated after relevant changes.
 | Host setters and configuration | Candidate list and restricted loader configuration | Full dispatcher inventory, dynamic power, channel/band policies, reset/default behavior and runtime configuration changes. |
 | Host lifecycle | Explicit stop/start and stop/deinit/init/start tested historically | Every wrong-state/repeated operation, cancellation, pending DMA, failure recovery and complete reset semantics. |
 | Events | Subscription and delivery for IDs 0 and 1 | Other original IDs, payload layouts, ordering, cancellation and overflow behavior. |
-| Host sockets | Slot-0 copy-mode data path, deferred close and active-write cancellation; normal backend video/control; stream/handle admission and queue factories compared offline | Heap/RTOS internals, table initialization, worker startup, runtime integration, unresolved stock spare-port rejection, other modes/slots, retained-descriptor TX, saturation, teardown races and complete capacity/error behavior. |
+| Host sockets | Slot-0 copy-mode data path, deferred close and active-write cancellation; normal backend video/control; stream/handle admission and queue factories compared offline | Stock host ports 0/1 reject opens because their streams already exist; native admission differs. Heap/RTOS internals, table initialization, worker startup, runtime ownership, other modes/slots, retained-descriptor TX, saturation, teardown races and complete capacity/error behavior remain open. |
+| Internal data interfaces | Stock stream occupancy confirmed on the matched board; native internal owners are missing | Inventory UART/SBUS and other interface creation, role/configuration gating, shared stream ownership, payload routing, timing, teardown and failure recovery. A reserved-port rejection alone does not implement these services. |
 | MAC framing | Header/descriptor parser and DEV encoder | Other formats/flags, receive ordering, duplicate handling and all original rejection rules. |
 | AP full/compact controls | Selected mode-0/slot-0 admission and connected control | All extensions, remote synchronization effects, changed channels, slots, stale/duplicate controls and unsupported modes. |
 | Internal port-0 commands | Stream parsing; login checksum ACK transmission | Receiving a command currently mainly records it. Inventory and implement each original command's effects, responses and retries. |
@@ -2310,10 +2311,12 @@ All 138 status samples remain linked, with advancing AP time and zero sampled
 socket drops. The accepted image is retained in RAM. Capture cadence does not
 measure RF/camera frame rate, controlled scene freshness or end-to-end latency.
 
-The stock daemon rejected spare host-port-0 opens with status `-259` for the
-attempted flags-3 capacities of 64 and 2,048 bytes; Open8030 admits them. The
-underlying stock allocation/admission cause remains unresolved. Native spare-port
-close tests must therefore not be presented as matched stock open/close parity.
+The stock daemon rejected host-port-0 opens with status `-259` for the
+attempted flags-3 capacities of 64 and 2,048 bytes; Open8030 admits them. Stage
+210 subsequently identifies the inner error as duplicate stream `-9`; see
+[stock stream occupancy](#stock-stream-occupancy-and-internal-interfaces).
+Native spare-port close tests must therefore not be presented as matched stock
+open/close parity.
 Complete socket allocation, capacity/error behavior, original worker scheduling,
 retained-buffer TX and pending-DMA teardown remain open.
 
@@ -2358,10 +2361,10 @@ image remains running in RAM. This is a regression check, not a new stock/native
 admission comparison or a controlled freshness/latency measurement.
 
 The host wrapper is compared separately below. Factory internals, handle-table
-initialization and socket-worker startup remain open. The live stock spare-port
-rejection remains unresolved; the possible `-2`, `-3` and `-9` paths above do not
-identify its cause. Full socket or firmware parity cannot be inferred from these
-helper results.
+initialization and socket-worker startup remain open. These helper comparisons
+alone did not identify the live stock rejection; stage 210 subsequently records
+the duplicate-stream error on SDIO. Full socket or firmware parity cannot be
+inferred from these helper results.
 
 ### Handle admission and open cleanup
 
@@ -2412,10 +2415,10 @@ all 33 samples remain linked, AP time advances and sampled socket drops stay zer
 Stage 206 remains running in RAM. This is a regression observation, not a fresh
 stock/native open comparison or controlled freshness/latency measurement.
 
-The stock spare-port rejection still needs its actual underlying error and
-live allocation state identified. Factory contracts are compared below;
-worker startup, retained-buffer ownership integration and full socket admission
-parity remain open.
+Stage 210 subsequently identifies the stock rejection as duplicate stream;
+the live owners still require investigation. Factory contracts are compared
+below; worker startup, retained-buffer ownership integration and full socket
+admission parity remain open.
 
 ### Stream and queue factories
 
@@ -2466,5 +2469,71 @@ the standard build reproduces stage 206. A fresh 30-second `/dev/video0`
 HDMI-to-USB capture shows the camera scene, with 33 linked samples, advancing
 AP time and zero sampled socket drops. Stage 206 remains running in RAM. This
 regression check does not establish controlled freshness/latency or matched
-stock/native socket admission. Worker startup, table initialization, live
-spare-port failure identification and runtime ownership integration remain open.
+stock/native socket admission. Worker startup, table initialization and runtime
+ownership integration remain open. The stock admission difference is investigated
+below.
+
+### Stock stream occupancy and internal interfaces
+
+Stage 210 compares seven ordinary daemon socket-open requests on the matched
+18.21.10 board/configuration. Each request uses selector 0, equal TX/RX capacities
+and a fresh client connection. Flags 1, 2 and 3 select RX, TX and both directions.
+
+| Host port | Flags | Capacity per direction | Stock TCP status | Stock SDIO inner error | Open8030 TCP status |
+| --- | --- | --- | --- | --- | --- |
+| 0 | 1, 2, 3 | 64 bytes | `-259` for each | `-9` for each | Success for each |
+| 0 | 3 | 2,048 bytes | `-259` | `-9` | Success |
+| 1 | 1, 2, 3 | 64 bytes | `-259` for each | `-9` for each | Success for each |
+
+The unmodified stock daemon exposes only the outer status, with an empty TCP
+payload. A temporary observer of that same daemon's SDIO reads/writes captures
+the four-byte little-endian error `-9` in all seven stock replies. The original
+host branch wraps handle-open errors as status `-259` with that inner word;
+the daemon drops the error payload when forwarding it. The compared original
+stream-create path returns `-9` when a requested direction already exists,
+before allocation. Separate RX-only and TX-only probes establish that both
+directions are occupied on each tested port. These host ports map to MAC stream
+ports 1 and 2. This resolves the previous allocation-versus-admission ambiguity.
+
+Stock rejects the same seven cases both with and without the observer. The
+observer also records successful normal backend opens of host port 3 with
+TX/RX capacities 2,048/56,320 and host port 2 with 2,048/2,048. Open8030 admits
+all seven probes and the daemon closes each client after native close. No test
+payload is written, and the probes do not reopen the backend's ports 2 or 3.
+These observations establish an admission difference, not end-to-end service
+parity or a general allocation/capacity limit.
+
+The missing runtime work is internal interface provisioning and shared stream
+ownership. Original interface creation at `0x210d2c` includes role gating,
+interface-kind dispatch and a socket-backed path calling handle open at
+`0x2111a4`. That path selects flags `0x13` for port 0 and `3` otherwise, with
+capacities from its interface configuration. UART/SBUS-related paths are leads
+for identifying the owners; the specific live owners and their complete
+configuration-to-stream mapping are not yet established. Hard-coding rejection
+of ports 0/1 would leave their data handling, timing and lifecycle absent.
+
+The observer is an ignored, temporary AArch64 shared library loaded into the
+stock daemon in RAM. It preserves the observed I/O bytes, return values and
+error state, but adds execution and logging time. It records selected complete
+frames only, without reconstructing frames split across reads or measuring
+latency. Original radio/daemon instruction bytes, image/configuration/backend
+hashes, observer source/toolchain/hash, boot identity and raw records are retained
+privately. Static instruction inspection and earlier helper comparisons support
+the error interpretation; this stage does not execute a new full-system emulator
+comparison. Synthetic ELF and ABI conventions remain analysis metadata.
+
+No firmware source or image bytes change in this stage. Stock camera output is
+inspected directly through `/dev/video0` before and after the instrumented
+probes. The first warm reload of accepted stage 206 produces black camera output
+with overlays despite a linked radio and advancing video byte counters. It fails
+acceptance and is not retained. A full receiver reboot restores stock camera
+video; reloading the same Open8030 image restores the scene. Repeating all seven
+native opens/closes during a fresh 30-second HDMI-to-USB capture leaves the scene
+visible, all 33 samples linked and sampled endpoint drops at zero. The ordinary
+daemon has no observer library mapped, and stage 206 is retained in RAM.
+
+The warm-restoration failure remains unresolved and its failed capture is kept
+alongside the recovery evidence. Capture settings are MJPEG 1920×1080 at nominal
+30 fps. The inspected dark textured scene and right-side features establish
+visible camera output; they do not establish controlled freshness, RF/camera
+frame rate, telemetry accuracy or end-to-end latency.

@@ -103,6 +103,14 @@ close does not revoke them or prove over-air completion. This cooperative
 copy-mode adaptation does not implement original retained-buffer ownership or
 RTOS worker scheduling. See [close coverage](parity.md#cooperative-socket-close).
 
+Host socket numbers are not a complete inventory of original data services.
+On the matched stock configuration, both directions behind host ports 0 and 1
+already belong to existing streams, so external opens fail. Open8030 currently
+admits these opens because it lacks the original internal owners. The original
+interface layer includes role/configuration gating and socket-backed interfaces;
+its UART/SBUS service mapping and payload handling still need implementation and
+validation. See [stock stream occupancy](parity.md#stock-stream-occupancy-and-internal-interfaces).
+
 Important compiled bounds include a 4,096-byte frame payload, four SDIO transmit
 queue entries, four socket ports, up to 56,320 receive bytes per port and two
 pending writes per port. Active ports can use smaller receive capacities. These
