@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""Compile and run synthetic native firmware tests; never access a device."""
+import argparse
+from pathlib import Path
+import subprocess
+
+ROOT = Path(__file__).resolve().parents[1]
+TESTS = {
+    'frame': ('frame dispatch', [], []),
+    'socket_rx': ('socket_rx', [], []),
+    'sdio_device': ('sdio_device', ['AR_SDIO_SIMULATED', 'AR_SDIO_STOCK_MEMORY_ATTRIBUTES=1'], []),
+    'mac': ('mac', [], []),
+    'dev': ('dev mac', [], []),
+    'dev_tx': ('dev_tx mac dev', [], []),
+    'dev_mcs': ('dev_mcs', [], []),
+    'fch_monitor': ('fch_monitor', [], []),
+    'event': ('event', [], []),
+    'json': ('json', [], []),
+    'config': ('config json power_config power dev_mcs', [], []),
+    'power': ('power', [], []),
+    'power_config': ('power_config power json', [], []),
+    'flash': ('flash', [], ['-lz']),
+    'flash_spi': ('flash_spi sfdp', [], []),
+    'sfdp': ('sfdp', [], []),
+    'factory_storage': ('flash flash_spi sfdp factory power_config power json', [], ['-lz']),
+    'boot': ('boot config json power_config power dev_mcs factory flash_spi sfdp flash', [], []),
+    'rf_device': ('rf_device mac dev dev_tx dev_mcs fch_monitor power', ['AR_RF_SIMULATED'], []),
+    'bootstrap': ('', ['AR_BOOTSTRAP_SIMULATED'], []),
+}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--cc', default='gcc', help='Native Linux C compiler')
+    parser.add_argument('--test', choices=sorted(TESTS), action='append', help='Run selected tests; default is all')
+    args = parser.parse_args()
+    selected = args.test or list(TESTS)
+    output = ROOT / '.local/native-tests'
+    output.mkdir(parents=True, exist_ok=True)
+    for name in selected:
+        modules, defines, libraries = TESTS[name]
+        sources = [ROOT / f'src/{module}.c' for module in modules.split()]
+        if name == 'bootstrap':
+            sources.append(ROOT / 'bootstrap/bootstrap.c')
+        binary = output / name
+        command = [args.cc, '-std=c11', '-Wall', '-Wextra', '-Werror', '-g',
+                   '-fsanitize=address,undefined', '-fno-omit-frame-pointer', '-fno-pie', '-no-pie',
+                   '-I', str(ROOT / 'include'), '-I', str(ROOT / 'bootstrap'),
+                   *['-D' + define for define in defines], *map(str, sources),
+                   str(ROOT / f'tests/{name}_test.c'), *libraries, '-o', str(binary)]
+        print(f'Building and running {name}', flush=True)
+        subprocess.run(command, check=True, timeout=120)
+        subprocess.run([str(binary)], check=True, timeout=120)
+    print(f'Passed {len(selected)} native firmware test suites.')
+
+
+if __name__ == '__main__':
+    main()

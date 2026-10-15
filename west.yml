@@ -1,0 +1,9 @@
+manifest:
+  version: "1.2"
+  projects:
+    - name: zephyr
+      url: https://github.com/zephyrproject-rtos/zephyr
+      revision: 3568e1b6d5cdd51a6b964a2a1d6d29200fea2056
+      import: true
+  self:
+    path: ar8030-firmware

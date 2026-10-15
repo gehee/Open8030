@@ -1,0 +1,6 @@
+board:
+  name: ar8030_bringup
+  full_name: AR8030 experimental polling bring-up
+  vendor: artosyn
+  socs:
+    - name: ar8030_bringup

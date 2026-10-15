@@ -1,0 +1,12 @@
+.local/
+.venv/
+node_modules/
+__pycache__/
+*.pyc
+*.img
+*.bin
+*.elf
+*.gpr
+*.rep/
+*.swp
+*.swo

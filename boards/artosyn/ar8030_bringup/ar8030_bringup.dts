@@ -1,0 +1,30 @@
+/* SPDX-License-Identifier: MIT */
+/dts-v1/;
+/ {
+	model = "AR8030 experimental polling bring-up";
+	compatible = "artosyn,ar8030-bringup";
+	#address-cells = <1>;
+	#size-cells = <1>;
+	chosen {
+		zephyr,sram = &ram0;
+	};
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		cpu0: cpu@0 {
+			device_type = "cpu";
+			compatible = "riscv";
+			reg = <0>;
+			riscv,isa = "rv32imc_zicsr_zifencei";
+			status = "okay";
+		};
+	};
+	/* Measured main load address; upper bound keeps the stock header/stack clear. */
+	ram0: memory@204000 {
+		device_type = "memory";
+		compatible = "mmio-sram";
+		reg = <0x00204000 0x000ac000>;
+	};
+	/* 0x0a110000 is the measured baseband/RF page, not a UART. Physical
+	 * console MMIO and pin routing remain unresolved; transport is SDIO. */
+};
