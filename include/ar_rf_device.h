@@ -315,8 +315,6 @@ const struct ar_rf_rx_info *ar_rf_receive_information(void);
  * unrequested/reserved bytes are zero. Stopped monitors never report linked. */
 int ar_rf_host_status(uint16_t users, uint8_t output[300]);
 uint32_t ar_rf_host_ap_time(void);
-/* Free-running local clock; independent of peer synchronization. */
-uint32_t ar_rf_local_ms(void);
 /* Original GET_REG byte window; successful replies always contain 256 bytes.
  * Bytes beyond the requested window are zero; live reads are not atomic. */
 int ar_rf_host_registers(unsigned offset, unsigned length, uint8_t output[256]);

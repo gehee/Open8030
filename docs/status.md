@@ -777,6 +777,8 @@ not isolate or fix the warm-reload issue. See
 
 ## Transmitter and flight-controller telemetry
 
+Historical stage-231 observer trial; the decoder was removed in stage 232 below.
+
 The stage-231 development image adds a passive host-data decoder and
 `./open8030 telemetry HOST [--watch] [--json]`. It reports transmitter voltage
 and temperature, plus MSP FC identity, version, status and analog/battery data.
@@ -807,6 +809,36 @@ not independent sensor accuracy or sensor-sampling freshness. RC uplink, MAVLink
 physical UART/SBUS routing, controlled peer loss, long-run reliability and the
 warm-reload black-camera cause remain open. The broader telemetry/core-command
 compatibility work also remains incomplete.
+
+## Host-side telemetry architecture (stage 232)
+
+Application decoding now stays on the receiver's Linux host SoC. The duplicate
+AR8030 application/MSP parser, selected-record cache, clock export, diagnostic
+endpoint and separate CLI monitor have been removed. The original Linux backend
+and stock UI continue decoding the unchanged host-data stream. The C8-to-event-8
+transport bridge remains. This frees 6,112 bytes of radio RAM: usage is now
+686,720/704,512 bytes. The runtime and container hashes reproduce stage 230.
+
+The 2026-10-15 hardware trial starts from freshly rebooted stock video. Stock and
+30-second native HDMI-to-USB captures show the same dark textured scene with the
+voltage and FC warning overlays; all 33 native status samples are linked. Sixty
+flow samples over 59 seconds show 24,995,227 additional video bytes delivered,
+zero socket drops and zero SDIO errors. The video queue high-water is 11,794 bytes;
+the lifetime maximum finished SDIO descriptor duration is 395,964 ticks (9.90 ms).
+These observations do not establish a performance improvement over stage 231.
+
+Twenty read-only samples of the matched stock Linux backend's decoded state show
+transmitter voltage changing from 9,960 to 10,072 mV, alongside decoded temperature.
+Private host-side analysis of 192 bounded raw-fragment samples finds valid
+transmitter records and MSP identity/version/status/analog messages; no complete
+sampled application record fails its CRC. This sampling can omit messages and is
+not a rate measurement. The retired snapshot request returns unsupported.
+
+All 65 native sanitizer suites and 18 Python tests pass; the normal build reproduces
+the retained image. Open8030 remains running in RAM. This preserves the tested
+stock UI data path, but does not independently verify every UI field, sensor
+accuracy, RC uplink, physical UART/SBUS, controlled camera freshness, long-run
+reliability or the warm-reload issue. See [telemetry](telemetry.md).
 
 ## Remaining work
 

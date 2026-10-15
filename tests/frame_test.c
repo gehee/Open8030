@@ -135,7 +135,8 @@ int main(void)
 	assert(ar_diagnostic_request_id(AR_DAEMON_DIAGNOSTIC_BASE | 0x29) == AR_REQ_SOCKET_CLOSE_INFO);
 	assert(ar_diagnostic_request_id(AR_DAEMON_DIAGNOSTIC_BASE | 0x2a) == AR_REQ_SOCKET_FLOW_INFO);
 	assert(ar_diagnostic_request_id(AR_DAEMON_DIAGNOSTIC_BASE | 0x2b) == AR_REQ_TELEMETRY_INFO);
-	assert(ar_diagnostic_request_id(AR_DAEMON_DIAGNOSTIC_BASE | 0x2c) == AR_REQ_HOST_TELEMETRY_INFO);
+	/* Retired application telemetry request is no longer forwarded as a radio diagnostic. */
+	assert(ar_diagnostic_request_id(AR_DAEMON_DIAGNOSTIC_BASE | 0x2c) == (AR_DAEMON_DIAGNOSTIC_BASE | 0x2c));
 	for (unsigned i = 0x10; i <= 0x16; i++) {
 		assert(ar_diagnostic_request_id(AR_DAEMON_DIAGNOSTIC_BASE | i) == (AR_DAEMON_DIAGNOSTIC_BASE | i));
 	}

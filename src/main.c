@@ -11,11 +11,9 @@
 #include "ar_socket_rx.h"
 #include "ar_event.h"
 #include "ar_telemetry.h"
-#include "ar_host_telemetry.h"
 static struct ar_socket_rx sockets;
 static struct ar_events events;
 static struct ar_telemetry telemetry;
-static struct ar_host_telemetry host_telemetry;
 static struct {
 	uint32_t high_water, largest_feed, drop_calls, last_drop_bytes;
 	uint32_t tx_room, active_ticks, last_ticks, max_ticks, tx_packets, rx_packets;
@@ -30,7 +28,6 @@ static void rf_event(unsigned id, const uint8_t *data, size_t length, void *cont
 	(void)context;
 	if (id == 0 && length == 3 && data[0] == 0) {
 		ar_telemetry_link(&telemetry, data[1] == 2);
-		ar_host_telemetry_link(&host_telemetry, data[1] == 2);
 	}
 	(void)ar_event_publish(&events, id, data, length);
 }
@@ -48,7 +45,6 @@ static void received_payload(unsigned slot, unsigned port, const uint8_t *data, 
 {
 	(void)context;
 	ar_telemetry_receive(&telemetry, slot, port, data, length);
-	if (!slot && port == 3) { ar_host_telemetry_feed(&host_telemetry, data, length, ar_rf_local_ms()); }
 	size_t accepted = ar_socket_rx_feed(&sockets, slot, port, data, length);
 	if (slot || !port || port > AR_SOCKET_RX_PORTS) { return; }
 	unsigned i = port - 1;
@@ -116,18 +112,12 @@ static void receive(const struct ar_frame *frame, void *context)
 #ifdef CONFIG_SOC_AR8030_BRINGUP
 	struct ar_frame socket_response;
 	uint32_t diagnostic_reqid = ar_diagnostic_request_id(frame->reqid);
-	if (diagnostic_reqid == AR_REQ_TELEMETRY_INFO || diagnostic_reqid == AR_REQ_HOST_TELEMETRY_INFO) {
+	if (diagnostic_reqid == AR_REQ_TELEMETRY_INFO) {
 		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid};
 		if (frame->status || frame->length) { response.status = AR_STATUS_INVALID; }
 		else {
-			if (diagnostic_reqid == AR_REQ_HOST_TELEMETRY_INFO) {
-				host_telemetry.info.now_ms = ar_rf_local_ms();
-				response.payload = (const uint8_t *)&host_telemetry.info;
-				response.length = sizeof host_telemetry.info;
-			} else {
-				response.payload = (const uint8_t *)&telemetry.info;
-				response.length = sizeof telemetry.info;
-			}
+			response.payload = (const uint8_t *)&telemetry.info;
+			response.length = sizeof telemetry.info;
 		}
 		size_t size = ar_encode(reply, sizeof reply, &response);
 		(void)ar_sdio_send(reply, size); return;
@@ -437,7 +427,6 @@ int main(void)
 	ar_socket_rx_init(&sockets);
 	ar_events_init(&events);
 	ar_telemetry_init(&telemetry, &events);
-	ar_host_telemetry_init(&host_telemetry);
 	ar_rf_set_event_callback(rf_event, NULL);
 	ar_rf_set_payload_callback(received_payload, NULL);
 	ar_rf_set_tx_callbacks(transmit_peek, transmit_commit, NULL);

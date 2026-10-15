@@ -4002,6 +4002,9 @@ freshness, typed telemetry semantics or full internal-service ownership.
 
 ## Passive host-data telemetry decoding
 
+Historical stage-231 experiment. Stage 232 removes this observer from the radio
+and uses the existing Linux backend/UI for application decoding.
+
 Stage 231 adds a native observer for MAC port 3 / host socket 2. This path already
 carried application telemetry through the original Linux backend. It is distinct
 from the recovered C8 UART/event-8 path introduced in stage 230.
@@ -4040,3 +4043,23 @@ stock-matching dark scene. The candidate remains running in RAM. Exact image
 hashes are in [baseline.json](../baseline.json); raw traffic, disassembly and
 capture receipts stay in ignored lab storage. See [status](status.md#transmitter-and-flight-controller-telemetry)
 and [telemetry](telemetry.md) for scope and remaining limits.
+
+## Host-side telemetry boundary
+
+Stage 232 removes the experimental application/MSP observer from the AR8030.
+MAC port-3 payloads continue through the existing host socket without application
+interpretation. The receiver's original Linux backend/UI already implement that
+layer, so no replacement host service is installed. The stage-231 custom snapshot
+and CLI are removed; native tests check the retired alias and hardware returns
+unsupported. The C8-to-event-8 bridge remains an original transport compatibility
+path, with no new live C8 evidence.
+
+The resulting image reproduces stage 230 and uses 6,112 fewer RAM bytes than
+stage 231. Fresh stock/native HDMI-to-USB captures preserve the camera scene and
+existing overlays. The matched stock backend's decoded transmitter values are
+read without stopping or modifying the process; private offline analysis also
+confirms valid transmitter and FC records in bounded host-data samples. These
+checks do not establish every UI field, RC control or physical UART behavior.
+See [stage-232 validation](status.md#host-side-telemetry-architecture-stage-232)
+and [telemetry architecture](telemetry.md). Historical stage-231 parser results
+remain above as evidence, not current radio functionality.

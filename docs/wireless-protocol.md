@@ -34,8 +34,9 @@ verified scope.
 
 The findings below describe the matched original 18.21.10 firmware. Stages
 216–229 added source-only comparisons; stage 230 integrates a selected C8 receive
-bridge and telemetry diagnostics; stage 231 adds passive decoding of transmitter
-status and flight-controller MSP replies on the host-data stream. Passing helper tests does not mean every
+bridge and transport diagnostics. Stage 232 removes the experimental stage-231
+application decoder; transmitter status and MSP decoding belong to the original
+Linux host backend/UI. Passing helper tests does not mean every
 compared service is present in the running firmware.
 
 | Mechanism | What we have established | Open8030 status |
@@ -791,9 +792,9 @@ opaque here rather than assigned meanings unsupported by the implementation.
 
 ### Application telemetry decoding
 
-The host-data observer now validates the outer application framing and nested
-MSP replies independently of the external socket consumer. It exposes selected
-transmitter and FC records with individual reception times through
-`./open8030 telemetry HOST`. This is a passive diagnostic path, not a new radio
-service or traffic scheduler. See [telemetry](telemetry.md) for framing, decoded
-fields, limits and the distinction from C8 UART/event traffic.
+MAC port 3 / host socket 2 carries the original application stream to Linux.
+Open8030 treats those payloads as opaque bytes. Application-envelope validation,
+transmitter-status interpretation and FC MSP decoding belong to the receiver's
+host backend and UI. The experimental stage-231 radio-side observer and its
+snapshot endpoint were removed in stage 232. See [telemetry](telemetry.md) for
+recovered formats, stock compatibility and the separate C8 UART/event path.

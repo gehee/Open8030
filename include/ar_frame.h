@@ -43,7 +43,6 @@
 #define AR_REQ_RF_TX_HISTORY_INFO UINT32_C(0x0c5a0028)
 #define AR_REQ_SOCKET_CLOSE_INFO UINT32_C(0x0c5a0029)
 #define AR_REQ_SOCKET_FLOW_INFO UINT32_C(0x0c5a002a)
-#define AR_REQ_HOST_TELEMETRY_INFO UINT32_C(0x0c5a002c)
 #define AR_REQ_TELEMETRY_INFO UINT32_C(0x0c5a002b)
 /* Project-only read diagnostics through the original Linux daemon. Its
  * 0x4030d0 dispatcher consumes group 0x0c locally; group 0x01 is forwarded.
@@ -54,7 +53,7 @@ static inline uint32_t ar_diagnostic_request_id(uint32_t request)
 	if ((request & UINT32_C(0xffff0000)) == AR_DAEMON_DIAGNOSTIC_BASE) {
 		switch (request & 0xffff) {
 		case 0: case 0x17: case 0x1a: case 0x1b: case 0x1c: case 0x1d:
-		case 0x1e: case 0x1f: case 0x20: case 0x21: case 0x22: case 0x23: case 0x24: case 0x25: case 0x26: case 0x27: case 0x28: case 0x29: case 0x2a: case 0x2b: case 0x2c:
+		case 0x1e: case 0x1f: case 0x20: case 0x21: case 0x22: case 0x23: case 0x24: case 0x25: case 0x26: case 0x27: case 0x28: case 0x29: case 0x2a: case 0x2b:
 			return UINT32_C(0x0c5a0000) | (request & 0xffff);
 		default: break;
 		}

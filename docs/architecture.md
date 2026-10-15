@@ -258,13 +258,15 @@ For over-air packet layouts and link behavior, see the [wireless protocol](wirel
 Continue with [configuration](configuration.md), [operation and troubleshooting](operation.md)
 and [validation status](status.md).
 
-## Host application telemetry observer
+## Host-side telemetry decoding
 
-The runtime also passes received slot-0 MAC port-3 bytes to a bounded passive
-observer in [host_telemetry.c](../src/host_telemetry.c). It validates and reassembles
-application envelopes and nested MSP replies while the existing socket path
-continues forwarding the original bytes. Five selected records are retained with
-local reception times and cleared on link changes. No telemetry requests or
-queue ownership changes are introduced. The read-only 444-byte diagnostic
-`0x0c5a002c` (daemon alias `0x015a002c`) powers `./open8030 telemetry HOST`.
-See [telemetry](telemetry.md) for its layout and freshness semantics.
+The AR8030 transports slot-0 MAC port-3 payloads through host socket 2 without
+interpreting their application envelope, transmitter-status fields or MSP
+messages. The receiver's original Linux backend and UI perform that work on the
+host SoC. This is the same application stream used by the stock firmware.
+
+The stage-231 passive application decoder, selected-record cache and project
+snapshot request have been removed from the radio runtime. No replacement host
+service is needed: the original Linux software already provides decoding and
+presentation. The separate C8-to-event-8 bridge remains a transport compatibility
+path; it does not decode MSP or sensor values. See [telemetry](telemetry.md).

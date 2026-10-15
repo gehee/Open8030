@@ -100,17 +100,12 @@ data; the profile source and lab artifacts remain private. Preserve the release'
 license notices when redistributing it. These commands target the tested Ascent VRX
 baseline and reject mismatched images or receiver software.
 
-## Telemetry (development firmware)
+## Telemetry
 
-Read transmitter status and flight-controller MSP telemetry without interrupting video:
-
-```sh
-./open8030 telemetry YOUR_VRX_IP --watch
-```
-
-The readout marks missing and stale messages. Add `--json` for structured output.
-This requires the current development image, not the v0.1.0 release. See
-[telemetry fields and limits](docs/telemetry.md).
+Transmitter status and flight-controller telemetry travel through the radio as
+opaque host data. The receiver's original Linux backend and UI decode and display
+it; the AR8030 does not parse MSP or transmitter-status records. See
+[telemetry architecture and limits](docs/telemetry.md).
 
 ## Development
 
@@ -133,7 +128,7 @@ the internal build and VRX control implementation. Generated outputs stay in `.l
 - [Wireless protocol](docs/wireless-protocol.md): packet layouts, link management, adaptation, congestion control and error handling, with implementation limits.
 - [Configuration and parameters](docs/configuration.md): inputs, supported JSON fields and CLI options.
 - [Operation and troubleshooting](docs/operation.md): session behavior, logs, status and testing.
-- [Telemetry](docs/telemetry.md): transmitter and FC readings, freshness and message validation.
+- [Telemetry](docs/telemetry.md): host-side decoding, transport and compatibility.
 - [Validation status](docs/status.md): hardware coverage, limitations and HDMI capture instructions.
 
 ## License

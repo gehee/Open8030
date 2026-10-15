@@ -1,95 +1,75 @@
 # Telemetry
 
-The development firmware observes two kinds of downlink data from the original
-transmitter: transmitter status and flight-controller MSP replies. The existing
-Linux backend still receives the original application stream. Open8030 additionally
-validates messages and retains selected values for a read-only host command.
-This command requires the development image containing the telemetry diagnostic;
-the v0.1.0 release does not provide it.
+Telemetry decoding belongs on the receiver's **Linux host SoC**. Open8030 on the
+AR8030 transports the original application bytes; the stock receiver backend and
+UI validate, decode and present them. No additional host service is required.
 
-```sh
-./open8030 telemetry YOUR_VRX_IP
-./open8030 telemetry YOUR_VRX_IP --watch
-./open8030 telemetry YOUR_VRX_IP --watch --json
+```mermaid
+flowchart LR
+    VTX[Original transmitter] -->|RF data| Radio[AR8030: Open8030]
+    Radio -->|Opaque host-data stream over SDIO| Backend[Original Linux backend]
+    Backend -->|Status and FC data| UI[Stock UI on host SoC]
 ```
 
-`--watch` refreshes once per second; Ctrl-C exits. `--json` produces one JSON
-object, or JSON lines when watching. Use the same receiver address as `run`.
-The command uses daemon TCP port 50000; it does not need SSH or subscribe to
-payload sockets. It can report a disconnected radio without starting it.
+## Responsibilities and stock compatibility
 
-## Readings
+In the tested configuration, MAC port 3 maps to host socket 2. Open8030 forwards
+this stream through the existing SDIO/daemon path without interpreting MSP,
+transmitter-status fields, sensor units or application checksums. Radio framing,
+link management and socket transport remain firmware responsibilities.
 
-| Record | Values | Source |
-| --- | --- | --- |
-| Transmitter | Supply voltage in V, temperature in °C | Application type 5 |
-| FC variant | Four-character firmware identifier | MSP command 2 |
-| FC version | Three version bytes displayed as major.minor.patch | MSP command 3 |
-| FC status | Cycle time in µs, I²C error count, sensor mask, mode flags, PID profile | MSP command 101 |
-| FC analog | Battery voltage in V, consumed mAh, current in A, raw RSSI | MSP command 110 |
+The receiver's original Linux software already handles both transmitter status
+and flight-controller data on that stream. Keeping the original byte format and
+socket delivery preserves its stock UI path. Which values the UI displays and
+how it handles their age remain properties of that software; Open8030 does not
+add a new UI freshness policy.
 
-Transmitter voltage and FC battery voltage are separate reports and need not be
-equal. These are received readings, not independently calibrated measurements.
-Zero is a valid reported value; it does not prove that the corresponding sensor
-is fitted or configured. RSSI is left in the FC's raw units. Mode flags are left
-as a bitmask because their names require the FC's active box mapping; the command
-does not infer armed state from them. Additional MSP messages continue through
-the host stream even when this readout has no decoder for them.
+The experimental stage-231 application decoder, record cache, local-clock API,
+`0x0c5a002c` diagnostic (daemon alias `0x015a002c`) and `open8030 telemetry` CLI
+were removed in stage 232. The radio no longer duplicates the host's application
+parser. Stage-231 results remain historical evidence of the messages observed.
 
-Each record has its own message count and age since the last valid reception:
+## Recovered application formats
 
-- `current`: received during this link session, radio linked, age at most five seconds.
-- `stale`: an older saved value, shown explicitly as stale rather than refreshed by unrelated traffic.
-- `missing`: no valid record in this link session; JSON values are `null`.
+The host stream carries an `fe a5` application envelope with a header checksum,
+12-bit payload length, channel/ACK bits, an opaque trailer byte and CRC32C. The
+matched Linux backend reassembles this envelope. Its CRC covers the header,
+payload and trailer, using reflected polynomial `0x82f63b78`, initial zero and no
+final complement. Maximum envelope length is 4106 bytes.
 
-The five-second threshold is a display policy, not a promised transmission rate.
-Identity/version records can become stale if the transmitter sends them rarely.
-Age measures reception at the radio processor, not sensor sampling time. Link
-changes clear records and partial messages. A transport error terminates the
-command rather than continuing to display an apparently live result.
+Application type 5 carries transmitter status. The matched backend's dispatcher
+and consumers identify byte 1 as signed temperature in °C and LE32 bytes 11–14
+as supply millivolts. Application type 2 carries FC bytes; live observations
+include MSPv1 and native MSPv2 messages.
 
-## Data path and validation
+| Observed message | Meaning |
+| --- | --- |
+| Transmitter application type 5 | Transmitter voltage and temperature, among other fields |
+| MSP 2 | Flight-controller firmware identifier |
+| MSP 3 | Firmware version |
+| MSP 101 | FC status, including cycle time, error count and mode/sensor masks |
+| MSP 110 | FC battery/analog readings |
 
-In the tested mode, MAC port 3 maps to host socket 2. Its application stream has
-an `fe a5` header, a header checksum, a 12-bit payload length, a channel/ACK field,
-an opaque trailer byte and a CRC32C. The CRC covers the header, payload and trailer;
-it uses reflected polynomial `0x82f63b78`, initial zero and no final complement.
-Maximum envelope length is 4106 bytes. The observer reassembles envelopes across
-MAC payload boundaries and processes concatenated envelopes. Only non-ACK
-channel-0 messages update the selected telemetry records.
+These are recovered wire meanings, not a list of fields guaranteed to appear in
+the stock UI. Transmitter supply and FC battery voltage are distinct readings.
+Received values are not independently calibrated sensor measurements. Zero can
+be a real value or reflect sensor configuration. FC mode flags require the active
+box mapping before interpreting individual bits.
 
-Application type 5 contains transmitter status. The matched original backend's
-consumers identify byte 1 as signed temperature in °C and bytes 11–14 as a
-little-endian supply reading in mV. Other fields remain uninterpreted here.
-Application type 2 carries FC bytes. The observer validates MSPv1 XOR checksums,
-native MSPv2 CRC8-DVB-S2 checksums and MSPv2 encapsulated inside MSPv1, accepting
-reply direction `>`. MSPv2 payloads are bounded to 512 bytes. MSPv1 jumbo frames
-are not decoded. Known records need their minimum field lengths; malformed or
-short messages never replace a valid reading. Incomplete input expires after a
-two-second gap on that parser's input; link changes discard it immediately.
+MSP formats are documented in the public
+[Betaflight MSP reference](https://betaflight.com/docs/development/MSP-Protocol-Reference-Dev)
+and [message definitions](https://github.com/betaflight/betaflight/blob/master/src/main/msp/msp.c).
+No Betaflight decoder is bundled in this firmware.
 
-MSP field layouts follow the public
-[Betaflight MSP reference](https://betaflight.com/docs/development/MSP-Protocol-Reference-Dev),
-[message definitions](https://github.com/betaflight/betaflight/blob/master/src/main/msp/msp.c)
-and [MSP framing implementation](https://github.com/betaflight/betaflight/blob/master/src/main/msp/msp_serial.c).
-The implementation here is independently written; no Betaflight code is bundled.
+## Other transport paths and limits
 
-The diagnostic snapshot (`0x0c5a002c`, daemon alias `0x015a002c`) is 444 bytes:
-16 little-endian 32-bit header words, then five 76-byte records in the table's
-order. Each record is update time, count, stored length (three LE32 words) and a
-zero-padded 64-byte prefix. Header fields and counters are defined in
-[ar_host_telemetry.h](../include/ar_host_telemetry.h). Times use the local hardware
-millisecond counter modulo 2³², independent of AP synchronization. Counters wrap
-modulo 2³²; ages spanning a full counter period are not meaningful.
+A separate C8 transport path on MAC port 2 can publish original host event 8.
+Its framing preserves complete envelopes for the original host interface; it
+does not interpret MSP or sensor readings. No live C8 input was observed in this
+setup. The existing `0x015a002b` diagnostic reports this bridge and a bounded raw
+host-data fragment, without application decoding or field interpretation.
 
-## Scope
-
-This is passive downlink observation. It does not send MSP requests, configure the
-flight controller, provide RC uplink or implement RC failsafe behavior. MAVLink,
-SBUS and physical UART routing are not established by these MSP observations.
-
-A separate recovered C8 path exists on MAC port 2 and can publish host event 8.
-No C8 traffic was observed in this setup; its synthetic tests do not establish
-live UART telemetry. Flight-controller MSP traffic in this setup arrives on
-MAC port 3 instead. See [validation status](status.md) for live test results and
-[wireless protocol](wireless-protocol.md) for the radio layers underneath.
+Working host-data telemetry does not establish RC uplink, RC failsafe behavior,
+MAVLink, physical UART/SBUS routing, every stock UI field or every operating mode.
+See [validation status](status.md) for hardware results and
+[wireless protocol](wireless-protocol.md) for the radio transport underneath.

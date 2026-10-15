@@ -176,10 +176,10 @@ board/release provenance, then perform a separately authorized hardware test wit
 stock comparison and direct video capture before accepting new hashes. Keep
 private profiles, generated images and captures in ignored `.local/`.
 
-## Telemetry readout
+## Telemetry
 
-`./open8030 telemetry HOST` reads the current development firmware snapshot.
-`--watch` refreshes once per second and `--json` selects machine-readable output.
-The five-second freshness threshold applies separately to each record. The command
-does not configure the transmitter or FC, and requires no additional board-profile
-settings. See [telemetry](telemetry.md) for supported fields and missing/stale behavior.
+Telemetry presentation uses the receiver's original Linux backend and stock UI.
+No additional Open8030 board-profile setting, CLI monitor or host service is
+required. Configure the transmitter/flight-controller connection through their
+existing supported interfaces. See [telemetry](telemetry.md) for the division of
+responsibility and verification limits.
