@@ -52,6 +52,7 @@ TESTS = {
     'data_pipeline': ('data_framing data_filter data_route data_event', [], []),
     'data_filter': ('data_filter', [], []),
     'data_dispatch': ('data_dispatch data_filter', [], []),
+    'data_action': ('data_action data_route', [], []),
     'json': ('json', [], []),
     'config': ('config json power_config power dev_mcs', [], []),
     'power': ('power', [], []),

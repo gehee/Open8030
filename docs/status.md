@@ -676,6 +676,16 @@ reproduces stage 215. Fresh HDMI-to-USB video shows the camera scene with 33 lin
 samples; 60 flow samples show no socket drops or SDIO errors. Stage 215 remains
 running. See [submission coverage](parity.md#route-list-submission-and-action-suppression).
 
+Stage 223 adds native worker packet transformations and compares them with direct
+route delivery. There are 211 matching original cases, 116 explicit native bounds
+and headroom guard differences, and six original allocator probes. The allocator
+starts with one reference; the tested worker releases one. Pool recycling and
+complete copied-packet lifetime remain unresolved. Four sanitizer suites and 18
+Python tests pass. The helper remains source-only and the build reproduces stage
+215. Fresh HDMI-to-USB video shows the camera scene with 33 linked samples;
+60 flow samples show no socket drops or SDIO errors. Stage 215 remains running.
+See [worker actions](parity.md#worker-packet-transformations-and-reference-boundaries).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host

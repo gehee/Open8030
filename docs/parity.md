@@ -69,7 +69,7 @@ and scenario; they must be repeated after relevant changes.
 | Host lifecycle | Explicit stop/start and stop/deinit/init/start tested historically | Every wrong-state/repeated operation, cancellation, pending DMA, failure recovery and complete reset semantics. |
 | Events | All twelve original host subscriptions and declared payload sizes; copied FIFO transport; producers for IDs 0 and 1 | Integrate other producers and internal routes; compare their payload meaning, scheduling, overflow and lifecycle behavior. Subscription success alone does not establish a working producer. |
 | Host sockets | Slot-0 copy-mode data path, deferred close and active-write cancellation; normal backend video/control; stream/handle admission and queue factories compared offline | Stock host ports 0/1 reject opens because their streams already exist; native admission differs. Heap/RTOS internals, table initialization, worker startup, runtime ownership, other modes/slots, retained-descriptor TX, saturation, teardown races and complete capacity/error behavior remain open. |
-| Internal data interfaces | Stock stream occupancy observed; mode-3 graph, event forwarding, framing, route delivery, queued writer, ingress and socket write gate compared offline; constructed parser-to-route composition, native predicates and route-list submission compared | Integrate UART/SBUS, parsers, event producers, shared stream ownership and payload routing; implement native route construction and complete downstream actions; compare other framing profiles, copied-packet lifetime, real packet ownership, scheduling, modes, timing, teardown and failure recovery. A reserved-port rejection alone does not implement these services. |
+| Internal data interfaces | Stock stream occupancy observed; mode-3 graph, event forwarding, framing, route delivery, queued writer, ingress and socket write gate compared offline; constructed parser-to-route composition, native predicates, route-list submission and worker transformations compared | Integrate UART/SBUS, parsers, event producers, shared stream ownership and payload routing; implement native route construction and compose submission with transformed delivery; compare other framing profiles, copied-packet lifetime, real packet ownership, scheduling, modes, timing, teardown and failure recovery. A reserved-port rejection alone does not implement these services. |
 | MAC framing | Header/descriptor parser and DEV encoder | Other formats/flags, receive ordering, duplicate handling and all original rejection rules. |
 | AP full/compact controls | Selected mode-0/slot-0 admission and connected control | All extensions, remote synchronization effects, changed channels, slots, stale/duplicate controls and unsupported modes. |
 | Internal port-0 commands | Stream parsing; login checksum ACK transmission | Receiving a command currently mainly records it. Inventory and implement each original command's effects, responses and retries. |
@@ -3379,3 +3379,84 @@ not establish when the peak occurred. Image, configuration and boot identity
 match the retained baseline, and Open8030 remains running. This unchanged-runtime
 check does not establish fresh stock parity, controlled freshness/latency or a
 fix for the earlier intermittent receive loss.
+
+### Worker packet transformations and reference boundaries
+
+Stage 223 adds the source-only [action helper](../src/data_action.c), composed
+with direct route delivery for comparison against the original delivery worker.
+The supplied packet has mutable backing storage, head/tail cursors and a source
+profile; these native views are not original object layouts. The helper owns no
+packet references and remains outside the firmware build.
+
+The observed transformation order is:
+
+| Action flag | Behavior |
+| --- | --- |
+| `0x100` | Replace the metadata byte before transforming the packet. |
+| `0x01` | Look up the source profile. For default framing, recognize `ff a5 aa 5a ff` and try to remove 15 bytes. For custom framing, compare the configured prefix, then apply configured head and tail trims. |
+| `0x02` | Prepend the 15-byte internal envelope. |
+| `0x04` | Look up the source profile again. For custom framing, apply head/tail trims and prepend the internal envelope, without requiring a prefix match. |
+
+A missing source skips its profile-dependent action. Head and tail trims are
+bounded individually and applied in that order; a trim exceeding the remaining
+length is ignored in the compared cases. An empty custom prefix matches without
+reading data. Delivery follows the transformations when any `0xc8` action bit is
+set. These worker rules are separate from route admission and the submission
+suppression group described above.
+
+The internal envelope contains the five-byte marker, little-endian 16-bit payload
+length, metadata byte, five zero bytes and a little-endian 16-bit byte sum. The
+length is the low 16 bits of the current logical length. The sum covers only that
+many bytes, modulo 65,536; the full underlying payload is retained. Injected
+lengths above 65,535 exercise this worker arithmetic, but are not established as
+reachable through normal pool allocation or interface construction.
+
+**211 cases match**, including **96 direct writes**. The comparison checks the
+entire backing storage, head/tail cursors, lookup order, metadata, output bytes,
+route counters, worker bookkeeping and packet reference changes. It executes
+the original worker, source/destination lookups, cursor helpers, capacity/length
+helpers, byte copying and packet reference decrement. Queue receive supplies a
+synthetic message; direct destination writes, mutexes and diagnostics are
+intercepted. Native delivery uses its existing reference adapter.
+
+**116 additional cases document deliberate native guards**, excluded from the
+matching count. Open8030 returns `-22` when a prefix exceeds the logical data
+span or an envelope lacks 15 bytes of headroom. Original probes use padded
+storage: the original worker can continue writing the header after a failed
+prepend, overwriting input. The native prefix guard is conservative even when a
+particular comparison could stop on an earlier mismatched byte. A failure after
+an earlier transformation preserves those earlier mutations, including metadata
+override. Null-adapter/storage checks are additional native guards. Extreme
+32-bit pointer-wrap trim values remain untested.
+
+Six separate original allocator probes use one synthetic 1,024-byte pool class.
+Requests for 1, 17, 257 and 1,024 bytes allocate with one initial reference;
+requests for zero and 1,025 bytes fail. Worker inputs starting at two references
+finish at one. Three inputs starting at one reach zero through the actual
+reference-decrement instructions; pool disposal is then bypassed. This narrows
+the copied-packet question from stage 222, but does **not** establish complete
+allocation/recycling behavior, final lifetime balance or an original memory leak.
+Native tests explicitly dispose of their fixture-owned remaining reference.
+
+All **883 executed instruction locations**, including the allocator probes, are
+bound to the matched original payload/container/analysis-ELF bytes. Pool classes,
+packet/action objects, registry and worker state are synthetic. Full parser,
+submission and transformed-delivery composition, real pools, queued destinations,
+scheduling, lifecycle cleanup, other modes and runtime ownership remain open.
+Synthetic ELF, pointers, ABI and partial ISA remain analysis metadata. Original
+traces and receipts remain in ignored `.local/stage223-data-actions/`.
+
+Four ASan/UBSan suites and 18 Python tests pass. The native action tests include
+exact-size prefix storage, sequential trim behavior, partial mutation on failure,
+16-bit length/checksum boundaries and composition with direct delivery. The
+standard build reproduces the retained stage-215 image.
+
+A fresh 30-second `/dev/video0` HDMI-to-USB capture shows the dark textured camera
+scene and right-side objects. All 33 samples remain linked with advancing AP time
+and zero socket drops; video delivery increases by 13,467,292 bytes. A separate
+60-sample flow check records zero socket drops or SDIO errors and 24,745,159
+delivered bytes over 59.00 seconds. The lifetime receive high-water counter
+remains 16,690 bytes. Image, configuration and boot identity match the retained
+baseline; Open8030 remains running. This unchanged-runtime check does not prove
+fresh stock parity, controlled freshness/latency or a fix for the earlier
+intermittent receive loss.
