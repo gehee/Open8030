@@ -482,6 +482,15 @@ stage 201. A fresh 30-second HDMI-to-USB capture shows the camera scene with
 33 linked samples and zero sampled socket drops. Stage 201 remains running in
 RAM. See [handle lifetime coverage](parity.md#handle-lookup-and-close-sequencing).
 
+Stage 205 compares host close requests, TX/RX worker shutdown and exit
+notifications across 575 original scenarios, including 16 composed close
+sequences. TX announces exit before draining messages; the final reply follows
+notification that the selected directions have exited. Four sanitizer suites and 18 Python tests pass.
+The model remains source-only; the build reproduces stage 201. A fresh
+30-second HDMI-to-USB capture shows the camera scene with 33 linked samples
+and zero sampled socket drops. Stage 201 remains running in RAM. See
+[socket shutdown coverage](parity.md#socket-worker-shutdown-and-close-replies).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host

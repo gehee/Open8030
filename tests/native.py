@@ -31,6 +31,7 @@ TESTS = {
     'tx_packet': ('tx_packet tx_stream tx_retire mac', [], []),
     'tune': ('tune', [], []),
     'socket_rx': ('socket_rx', [], []),
+    'socket_shutdown': ('socket_shutdown', [], []),
     'sdio_device': ('sdio_device', ['AR_SDIO_SIMULATED', 'AR_SDIO_STOCK_MEMORY_ATTRIBUTES=1'], []),
     'mac': ('mac', [], []),
     'dev': ('dev mac', [], []),

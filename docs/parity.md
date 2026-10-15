@@ -2180,3 +2180,69 @@ socket worker and clears its running flags. Worker draining, notification,
 resource cleanup and host response behavior require their own comparison before
 replacing the runtime socket close. Handle allocation/publication, retained TX
 publication, pending-DMA hardware tests and full firmware coverage remain open.
+
+### Socket worker shutdown and close replies
+
+Stage 205 adds `src/socket_shutdown.c`, a source-only model of the host close
+request, TX/RX worker shutdown and worker-exit notifications. These steps describe
+the original shutdown ordering; the live polling endpoint still has its previous
+copy-mode close implementation.
+
+For a found socket, the original dispatcher calls handle close, makes an empty
+message, posts it to the TX worker queue without waiting, then clears both worker
+running bytes. It ignores the handle-close and post results. A missing socket
+instead releases the request message and posts an empty reply with status `0x103`.
+Closing a found socket does not produce the final host reply at this point.
+
+When TX observes its running byte clear, it posts a `0x0410…` exit notification
+before draining its input queue. Every successfully received queued message is
+released. A nonempty message encountered while retained-mode flag `0x20` is set
+decrements the pending-retained counter and increments drain/completion counters,
+all modulo 2³². Any receive error ends draining. The worker then destroys its
+queue, clears the queue token and deletes its current task. RX releases a held
+copy buffer, if any, before posting a `0x0411…` exit notification and deleting
+its current task. The worker notification posts use an indefinite timeout, but
+their failure results do not undo cleanup.
+
+The dispatcher clears the matching direction bit when it receives each exit
+notification, releases the message, and rechecks the live direction flags. Once
+both directions are clear, it clears the entire socket flags byte and posts a
+`0x0403…` close reply. Both notification orders are compared. This ordering is
+significant: receiving the TX notification alone does not prove its message drain
+or task deletion has finished. Callback changes to flags can also affect retained
+counter updates. Safe runtime adaptation still requires the scheduling and
+ownership contracts, not merely reproducing these notifications.
+
+The empty-message constructor changes the message representation and zeroes its
+length; it preserves other fields. Worker scratch can contain earlier message
+metadata or stack residue, so its message ID/status and unused bytes are not
+assumed to be stable close-reply requirements. The native helper requires callers
+to initialize notification scratch. Its 88-byte adapter representation and
+format tokens are analysis views, not declarations of the SDIO wire format.
+
+Fresh original execution passes **575 scenarios / 639 phases**, including
+**16 composed request/TX/RX/exit-notification sequences**. The dispatcher entry
+at `0x240782`, socket lookup at `0x23925a`, empty constructor at `0x23a052`, and
+TX worker entry at `0x24029e` execute. TX starts with its running byte clear; RX
+starts at the shutdown decision `0x23bbd4` with a synthetic held buffer/frame.
+All 567 executed instruction locations match the reference payload, container
+and analysis ELF. Ordered comparisons include 449 posts, 352 receives, 499
+message releases, 126 queue destructions, 252 task deletions and 118 RX-buffer
+releases. There are 226 drained messages and 214 deliberately failed posts.
+
+Handle close, queue post/receive, virtual message methods, queue destruction,
+RX-buffer release, task deletion and diagnostics are intercepted. The handle
+ownership bodies remain covered separately by stages 203–204; they do not execute
+inside this comparison. Composed sequences use successful posts and deterministic
+phase order. This does not establish actual scheduler behavior, pending-DMA
+completion, message-pool reclamation or the original active worker paths.
+Synthetic ELF, ABI, pointers and partial ISA semantics remain analysis metadata.
+
+Four ASan/UBSan suites and 18 Python tests pass. The standard build reproduces
+stage 201 exactly. A fresh 30-second `/dev/video0` HDMI-to-USB capture at MJPEG
+1920×1080/nominal 30 fps shows the camera texture and right-side features at
+5 and 27 seconds. All 33 samples remain linked with advancing AP time and zero
+sampled socket drops. Device image/configuration hashes and retained-session
+identity are recorded privately; stage 201 remains running in RAM. Runtime
+shutdown integration, allocation/publication, direct TX ownership and hardware
+pending-work tests remain open, along with full original-firmware parity.
