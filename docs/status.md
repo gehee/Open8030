@@ -111,6 +111,17 @@ list. Native polling also excludes many ambiguous power events. Active-catalog
 policy, original scan scoring and IRQ timing remain explicit gaps; see
 [independent measurement scan](parity.md#independent-measurement-scan).
 
+A subsequent comparison confirms why the scan catalogs differ: the original
+Linux backend needs channel-information getter `0x0100000a` to populate its
+catalog before sending work-list setter `0x02000023`. Open8030 rejects the getter,
+leaving the backend catalog empty and suppressing the setter. Stock reports four
+enabled channels out of 42; the native backend desires the same four frequencies
+but cannot resolve their indices. Both commands remain unimplemented. See
+[the catalog dependency](parity.md#active-catalog-and-linux-backend-dependency).
+No firmware bytes changed during this investigation. A fresh 20-second native
+HDMI capture preserves the stock-matching dark scene, with 23 linked/AP-time
+samples and zero sampled socket drops; the accepted image remains running in RAM.
+
 A separate configuration-only test reproduced acquisition failure at initial
 power level 11 using the accepted AP-time image. No video was delivered;
 restoring the original level-25 configuration restored the stream. This failure

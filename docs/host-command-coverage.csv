@@ -21,7 +21,7 @@ request_id,family,core_route,original_reply_bytes,behavior,native_status,compari
 0x01000007,getter,recognized,1,Power mode,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
 0x01000008,getter,recognized,2,User power level,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
 0x01000009,getter,recognized,3,Peer power policy,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
-0x0100000a,getter,recognized,1028,Channel information,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
+0x0100000a,getter,recognized,1028,Channel information,unsupported,Stock 42-frequency reply and backend startup dependency observed; original handler comparison incomplete,Implement and compare complete header/catalog/scan-score semantics and errors; verify backend catalog initialization
 0x0100000b,getter,recognized,128,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
 0x0100000c,getter,recognized,4,AP time,partial,DEV AP-time comparison; see parity.md,"Physical peer loss/stale time, long-run hardware wrap, other roles/modes"
 0x0100000d,getter,recognized,32,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
@@ -29,7 +29,7 @@ request_id,family,core_route,original_reply_bytes,behavior,native_status,compari
 0x0100000f,getter,recognized,4,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
 0x01000010,getter,recognized,648,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
 0x01000011,getter,recognized,648,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
-0x01000012,getter,recognized,129,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
+0x01000012,getter,recognized,129,Enabled work-channel indices,unsupported,Stock four-index reply observed; original handler comparison incomplete,Implement and compare enabled-index enumeration and errors; verify consistency with work-list updates and lifecycle
 0x01000013,getter,recognized,12,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
 0x01000014,getter,recognized,136,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
 0x01000015,getter,recognized,136,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
@@ -80,7 +80,7 @@ request_id,family,core_route,original_reply_bytes,behavior,native_status,compari
 0x0200001d,setter,recognized,0,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
 0x02000020,setter,recognized,0,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
 0x02000022,setter,recognized,0,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
-0x02000023,setter,recognized,0,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
+0x02000023,setter,recognized,0,Set enabled work-channel list,unsupported,Original backend emits only after catalog initialization; native getter failure suppresses this request,Compare and implement mask plus channel/group/AP side effects; invalid/duplicate indices and band restrictions; normal backend workflow
 0x02000024,setter,recognized,0,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
 0x02000025,setter,recognized,0,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
 0x02000026,setter,recognized,0,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"

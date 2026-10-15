@@ -476,8 +476,55 @@ HDMI-to-USB captures total 70 seconds, with 82 linked/AP-time samples and zero
 sampled socket drops. These video checks preserve the development baseline; they
 do not resolve the scan catalog, sample-attribution or timing discrepancies above.
 
-The next scan work must establish the original active catalog and interrupt
-ordering before claiming complete measurement or automatic-selection parity.
+### Active catalog and Linux backend dependency
+
+A subsequent read-only stock/native comparison establishes the active set for
+this session. Stock getter `0x0100000a` returns the 42 configured frequencies;
+getter `0x01000012` returns four enabled indices: **15, 23, 24 and 25**. These map
+to 5,839, 5,740, 5,770 and 5,805 MHz, respectively. Three successive queries agree.
+This confirms the earlier PLL observations for this session; it does not make
+these four channels a fixed board default.
+
+The matched original Linux backend explains an important dependency:
+
+1. At initialization, it clears its cached catalog count, then requests
+   `0x0100000a`. Only a successful reply populates its frequency catalog.
+2. To select working channels, it matches desired frequencies against that
+   cached catalog, subject to its validity, connection and relay policies.
+3. If the resulting list is nonempty, it sends `0x02000023` with the selected
+   channel indices. An empty result suppresses the setter entirely.
+
+The backend's original instructions at `0x42bd24` (initialization) and
+`0x42e68c` (work-list selection), checked against its matched binary, establish
+these branches. Read-only process-memory observations corroborate their effects:
+
+| Backend state | Stock firmware | Accepted Open8030 |
+| --- | --- | --- |
+| Cached firmware catalog | 42 frequencies | Empty |
+| Desired work frequencies | 5,740 / 5,770 / 5,805 / 5,839 MHz | Same four frequencies |
+| Selected work indices | 15 / 23 / 24 / 25 | Empty |
+| Catalog getter result | Success | Unsupported (`-95`) |
+
+Open8030 also rejects `0x01000012`; its host audit contains no `0x02000023`
+request and has no recorded overflow. Absence from that audit therefore cannot
+justify omitting the setter: an earlier unsupported getter prevents the normal
+backend from reaching it. This is a concrete example of why observed native
+traffic alone cannot define the original behavior inventory.
+
+The next implementation must compare the channel-information getter, enabled-list
+getter and work-list setter as a connected workflow. The setter also affects
+channel selection and group state; matching only its enable-bit mask is
+insufficient. Channel-information scan scores must retain their original meaning,
+separate from Open8030's diagnostic sample counts. Getter error/null cases,
+unused reply bytes, invalid/duplicate indices, band restrictions, current-channel
+removal, lifecycle reset and backend startup all remain comparison requirements.
+Original scan scoring and interrupt ordering remain separate open work.
+
+This investigation changes no firmware bytes. Fresh 10-second stock and
+20-second accepted-native HDMI-to-USB captures show the same dark textured scene;
+all 23 native samples remain linked with advancing AP time and zero sampled
+socket drops. The accepted image was retained in RAM. These observations do not
+establish controlled freshness, image quality or measured latency.
 
 Next, extend the core inventory through the transport dispatchers and indirect
 callbacks, and bind each command's behavior to its comparison tests. Then cover
