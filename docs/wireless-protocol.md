@@ -20,6 +20,7 @@ verified scope.
 - [Layers and terminology](#layers-and-terminology)
 - [MAC packet layout](#mac-packet-layout)
 - [AP broadcast control](#ap-broadcast-control)
+- [Logical peer slots](#logical-peer-slots)
 - [DEV uplink report](#dev-uplink-report)
 - [Acquisition and login](#acquisition-and-login)
 - [Internal command stream](#internal-command-stream)
@@ -220,6 +221,48 @@ Indices 248–255 return zero. Starting from accumulator zero, update it with
 `step(accumulator XOR byte)`. The full form processes its declared length with
 byte 2 treated as zero and compares the result with byte 2. The compact form
 processes only bytes 1–5 and compares with byte 0.
+
+## Logical peer slots
+
+The recovered full AP control contains **eight logical peer-slot records,
+numbered 0–7**. The DEV report also uses **8 as an unassigned sentinel**; it is
+not a ninth usable peer slot. The matched transmitter is the AP/coordinator,
+and the receiver obtains its assignment during login.
+
+| Term | Meaning and evidence |
+| --- | --- |
+| Peer-slot record 0–7 | One of eight LE16 entries at full-control offsets 12–27; carries contextual state/availability and an assignment token |
+| Assigned slot 0 | The login assignment used by the current connected Open8030 receiver path |
+| Assigned slot 8 | Unassigned value, including the idle/acquisition report before successful assignment |
+| Selected transmit context | Local acquisition/hardware selection; context 0 can coexist with assigned slot 8 before login |
+| Hardware receive user | A separate hardware context, such as logical RX user 8 monitored for FCH loss; it is not peer-slot numbering |
+
+The admission helper searches entries 0–7 for compatible availability. The
+normal mode-0 path selects context 0; additional mode-3 decisions exist in the
+compared helper but do not establish runtime support for those modes. Login
+extension 0 has its own eight-bit bitmap: each set bit identifies a ten-byte
+record for that slot, packed in ascending slot order. Thus a bitmap containing
+only bits 0 and 3 describes slots 0 and 3, not slots 0 and 1. A matching local
+identity and token identify the assignment; state and synchronization checks
+must still succeed. A changed assignment token invalidates the existing lock.
+
+**The slot structure suggests provision for multiple peers under one
+coordinator.** In the observed roles, that is consistent with one transmitter
+coordinating multiple receivers, including their return traffic. This is an
+inference from the control structure, not a verified multi-receiver operating
+mode or a statement of vendor intent.
+
+Open8030 currently admits and forwards payloads for the tested **mode-0,
+slot-0, single-active-peer relationship**. Other candidate identities are
+alternatives for acquisition; the candidate list is not a set of simultaneous
+links. We have not demonstrated eight concurrent receivers, equal airtime
+windows per slot, independent video per slot, multiple aircraft transmitters
+feeding one ground receiver, or mesh relaying. The relationship between peer
+assignments and a complete multi-peer airtime schedule remains to be established.
+
+Sources: [slot layout](../include/ar_mac.h), [control parsing](../src/mac.c),
+[admission and login](../src/dev.c), [runtime integration](../src/rf_device.c)
+and [payload forwarding](../src/socket_rx.c).
 
 ## DEV uplink report
 
