@@ -159,6 +159,15 @@ the same dark textured scene, with 23 linked/AP-time samples and zero sampled
 socket drops. This is a baseline video recheck, not hardware validation of the
 new helpers. See [work-list helper contracts](parity.md#work-list-helper-contracts).
 
+Selector-1 channel policy now also has a source-only implementation matching
+3,440 original-instruction cases. The comparison includes manual requests,
+entering/leaving hopping, backup-channel messages, nested lock order, timer
+arming and queue/PHY failures. Its dedicated sanitizer suite and the catalog/
+channel-work dependency suites pass. The runtime still needs the queued
+channel-change consumer and protocol completion/rollback behavior before these
+helpers can support the backend workflow. See
+[channel policy](parity.md#selector-1-channel-policy).
+
 A separate configuration-only test reproduced acquisition failure at initial
 power level 11 using the accepted AP-time image. No video was delivered;
 restoring the original level-25 configuration restored the stream. This failure

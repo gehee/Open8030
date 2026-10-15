@@ -671,10 +671,63 @@ stock-matching dark scene, with 23 linked/AP-time samples and zero sampled socke
 drops. No fresh stock capture or controlled scene-freshness test was performed
 for this source-only iteration.
 
-The policy wrapper, hopping/backup-message exchange, queued channel-change
+The complete policy wrapper, hopping/backup-message exchange, queued channel-change
 consumer and runtime ownership of auxiliary state remain open. In particular,
 these helpers do not make the catalog getter/work-list setter workflow supported;
 all three host commands remain marked unsupported in the command inventory.
+
+### Selector-1 channel policy
+
+[The policy helper](../src/channel_policy.c) implements selector 1, used by the
+work-list setter, including its auxiliary hopping-mode decisions. It remains
+source-only. The caller supplies the current base-channel catalog, processed
+scores, transmit channel and state; the helper does not infer them from a fixed
+frequency or treat a queued request as a completed tune.
+
+Manual selection updates mode flags and stages a request when the full 32-bit
+requested value differs from the current 16-bit channel. The request payload is
+then truncated to 16 bits. Queue failure is deliberately not returned as policy
+failure: the original returns success while preserving pending request state.
+
+With auxiliary hopping enabled, requesting mode 2 refreshes four ranked backup
+entries. Each selected channel has bit 8 set; unused entries are `0x00ff`. DEV
+sends internal command 10 to slot 0; AP sends to each enabled slot. A 3,000 ms
+timer is armed after the sends, then the auxiliary pending flag is set. Send
+errors do not suppress the timer, and an AP with no enabled slots still arms it.
+Entering hopping from inactive state can instead send a PHY request containing
+the current transmit channel, depending on the auxiliary flags.
+
+Leaving hopping sends a PHY request using the requested low channel byte, or the
+auxiliary channel if no explicit request was supplied. On successful enqueue,
+the local channel/band/group are updated from the auxiliary channel, even when
+the requested channel differs. Ordinary enqueue errors are returned without
+those state changes. The special result `-2` falls through to manual policy.
+This establishes enqueue-side decisions only; peer acknowledgement and physical
+channel completion remain separate work.
+
+Fresh comparison executes the original selector-1 wrapper, auxiliary policy,
+ranking, request staging, band/group lookup and backup broadcast helpers. Across
+3,440 cases it compares 601 executed instruction locations, 1,275 queue posts,
+552 PHY requests, 1,424 internal-command sends, 564 timer arms and paired nested
+lock/unlock effects. Cases cover all 256 auxiliary/request flag values, missing
+arguments, mode/channel boundaries, both catalog banks, counts through 128,
+empty eligible groups, both roles, callback-time mode changes and failed sends.
+Every executed instruction is checked against the matched original payload,
+container and analysis ELF bytes.
+
+Memory utilities, logging/time, locks, queue/PHY/control sends and timer arming
+are intercepted. Their arguments, order and visible state are compared; lock
+contention, actual transmission, timer expiry and queue consumers are not. The
+native helper clears an original unwritten PHY high nibble and request padding.
+Native bounds validation excludes unsafe storage/current indices. Other policy
+selectors and current subchannel states are not covered by this helper.
+
+The policy sanitizer suite and both dependency suites pass. A fresh 20-second
+HDMI-to-USB capture of the unchanged retained image again shows the dark textured
+camera scene, with 23 linked/AP-time samples and zero sampled socket drops. This
+rechecks baseline video, not hardware integration of the new policy. The three
+catalog host commands remain unsupported pending queued channel transitions,
+runtime integration and normal backend/hardware comparison.
 
 Next, extend the core inventory through the transport dispatchers and indirect
 callbacks, and bind each command's behavior to its comparison tests. Then cover
