@@ -69,7 +69,7 @@ and scenario; they must be repeated after relevant changes.
 | Host lifecycle | Explicit stop/start and stop/deinit/init/start tested historically | Every wrong-state/repeated operation, cancellation, pending DMA, failure recovery and complete reset semantics. |
 | Events | All twelve original host subscriptions and declared payload sizes; copied FIFO transport; producers for IDs 0 and 1 | Integrate other producers and internal routes; compare their payload meaning, scheduling, overflow and lifecycle behavior. Subscription success alone does not establish a working producer. |
 | Host sockets | Slot-0 copy-mode data path, deferred close and active-write cancellation; normal backend video/control; stream/handle admission and queue factories compared offline | Stock host ports 0/1 reject opens because their streams already exist; native admission differs. Heap/RTOS internals, table initialization, worker startup, runtime ownership, other modes/slots, retained-descriptor TX, saturation, teardown races and complete capacity/error behavior remain open. |
-| Internal data interfaces | Stock stream occupancy observed; mode-3 graph, event forwarding, framing, route delivery, queued writer, ingress and socket write gate compared offline; constructed parser-to-route composition, native predicates, route-list submission and worker transformations compared | Integrate UART/SBUS, parsers, event producers, shared stream ownership and payload routing; implement native route construction and compose submission with transformed delivery; compare other framing profiles, copied-packet lifetime, real packet ownership, scheduling, modes, timing, teardown and failure recovery. A reserved-port rejection alone does not implement these services. |
+| Internal data interfaces | Stock stream occupancy observed; mode-3 graph, event forwarding, framing, route delivery, queued writer, ingress and socket write gate compared offline; constructed parser-to-route composition, native predicates, route-list submission and worker transformations compared; submission-to-worker composition executes original pool allocation/recycling | Integrate UART/SBUS, parsers, event producers, shared stream ownership and payload routing; implement native route construction and production pool/queue ownership; connect the full parser to transformed delivery; establish copying-action reachability and cleanup, other framing profiles, scheduling, modes, timing, teardown and failure recovery. A reserved-port rejection alone does not implement these services. |
 | MAC framing | Header/descriptor parser and DEV encoder | Other formats/flags, receive ordering, duplicate handling and all original rejection rules. |
 | AP full/compact controls | Selected mode-0/slot-0 admission and connected control | All extensions, remote synchronization effects, changed channels, slots, stale/duplicate controls and unsupported modes. |
 | Internal port-0 commands | Stream parsing; login checksum ACK transmission | Receiving a command currently mainly records it. Inventory and implement each original command's effects, responses and retries. |
@@ -3460,3 +3460,88 @@ remains 16,690 bytes. Image, configuration and boot identity match the retained
 baseline; Open8030 remains running. This unchanged-runtime check does not prove
 fresh stock parity, controlled freshness/latency or a fix for the earlier
 intermittent receive loss.
+
+### Submission, worker delivery and original pool recycling
+
+Stage 224 adds a source-only [worker helper](../src/data_worker.c) that connects
+queued messages to the existing action and delivery helpers. The comparison now
+runs the original submission slice, copies its queue messages unchanged, and
+drains them through the original worker. Original packet allocation, retain,
+release, pool lookup, capacity validation and free-list recycling execute; the
+reference-zero path is no longer bypassed. The initial input packet is also
+allocated by original instructions.
+
+**170 scenarios / 776 submission-and-drain cycles match**, covering mixed action
+lists, both sequential worker-drain orders, default/custom profiles, failed
+posts, repeated copy exhaustion, and logical lengths of 6, 32, 257 and 992 bytes.
+The comparison includes 1,512 allocation attempts, 776 recycled input packets,
+483 failed copy allocations, 404 successfully queued messages and 298 direct
+writes. It checks ordered effects, per-packet references, pool free-list order,
+free/low counters, all live packet backing bytes, head/tail cursors, submission
+and delivery accounting, and pool snapshots before and after worker draining.
+
+There are also **1,552 empty-queue checks**. The original worker converts the
+adapter's failed receive to `-9995`; the native helper now does the same. A failed
+receive leaves queue capacity, packet counters and ownership unchanged. On a
+successful receive the worker increments the queue's free counter while locked,
+unlocks, accounts the incoming length, applies transformations and attempts
+selected destinations. Input accounting precedes transformation, so a later
+worker sharing that packet can observe a length changed by an earlier worker.
+The caller must serialize workers sharing mutable packet or route state.
+
+The pool result is now established for this composed path:
+
+- Non-copying routes return their input buffers after the supplied workers drain.
+- Copying routes leave the allocation's initial reference after the queue
+  reference is released. Failed queue posts leave that initial reference too.
+- In a four-block fixture, repeated action `0x0a` reduces free blocks from four
+  to three, two and one. Later copies fail; the input block still recycles.
+  The three copied blocks each retain one reference.
+
+This is **not a finding that normal stock operation leaks those buffers**.
+The fixture supplies the actions directly; their reachability through normal
+constructors and any cleanup outside this path remain unresolved. The native
+submission helper preserves the observed references. Its pool is a test adapter,
+not a production lifetime policy; tests explicitly release their own remaining
+allocation references during fixture cleanup.
+
+All **1,338 executed instruction locations** match the original payload,
+container and analysis ELF bytes. The fixture provides one pool class with
+1,024-byte capacity, 1,088-byte block stride and two, four or eight blocks.
+Registry, routes, workers and drain schedules are synthetic. Queue, mutex,
+scheduler notification and destination-write endpoints are intercepted. No ISA
+model changes were needed. Synthetic ELF, pointers, ABI and partial ISA remain
+analysis metadata. Detailed evidence stays in ignored
+`.local/stage224-route-lifetime/`.
+
+The original worker's discard-control byte is zero in this fixture, and its
+message timestamp and current tick are both zero. The discard path, queue-age
+threshold and additional diagnostic/error counters are not implemented by the
+new wrapper or closed by this comparison. Malformed-message guard results below
+are native policy, not a claim to match the original's separate error codes.
+
+Native worker guards reject invalid messages, mismatched packet/storage views,
+missing adapters and capacities above `INT_MAX`. A successfully received nonnull
+packet is released on a guard failure after unlocking. Initial adapter guards
+consume nothing. Action bounds/headroom differences from stage 223 remain
+explicit. The wrapper does not add an extra release for a copy's initial reference.
+Five ASan/UBSan suites and 18 Python tests pass, including shared-packet mutation,
+repeated copy exhaustion, failed-post ownership, malformed messages and counter
+wrap. The original empty-receive comparison caught and corrected the wrapper's
+initial error-code handling.
+
+Full parser-to-transformed-delivery integration, native route construction,
+production pools/queues, multiple pool classes, invalid/double release, concurrent
+scheduling, cleanup elsewhere, UART/SBUS and runtime service ownership remain
+open. The helper remains outside the firmware build, which reproduces stage 215.
+
+A fresh 30-second `/dev/video0` HDMI-to-USB capture shows the dark textured camera
+scene and right-side objects. All 33 samples remain linked with advancing AP time
+and zero socket drops; video delivery increases by 13,440,737 bytes. A separate
+60-sample flow check records zero socket drops or SDIO errors and 24,290,652
+delivered bytes over 59.01 seconds. The lifetime receive high-water counter is
+16,690 bytes, and the maximum descriptor interval is 565,479 ticks (14.137 ms).
+These lifetime maxima do not locate the peaks within this check. Image,
+configuration and boot identity match the retained baseline. Open8030 remains
+running. This unchanged-runtime check does not establish fresh stock parity,
+controlled freshness/latency or resolution of the earlier intermittent loss.

@@ -53,6 +53,7 @@ TESTS = {
     'data_filter': ('data_filter', [], []),
     'data_dispatch': ('data_dispatch data_filter', [], []),
     'data_action': ('data_action data_route', [], []),
+    'data_worker': ('data_worker data_action data_dispatch data_filter data_route', [], []),
     'json': ('json', [], []),
     'config': ('config json power_config power dev_mcs', [], []),
     'power': ('power', [], []),

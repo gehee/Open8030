@@ -686,6 +686,17 @@ Python tests pass. The helper remains source-only and the build reproduces stage
 60 flow samples show no socket drops or SDIO errors. Stage 215 remains running.
 See [worker actions](parity.md#worker-packet-transformations-and-reference-boundaries).
 
+Stage 224 composes submission and worker delivery with the original allocator,
+reference operations and pool recycling. All 170 scenarios / 776 cycles match,
+plus 1,552 empty-receive checks. Non-copying paths recycle their buffers; copying
+paths retain one reference after the tested workers drain and can exhaust copy
+capacity in the synthetic pool. Normal-constructor reachability and cleanup
+elsewhere remain unresolved. Five sanitizer suites and 18 Python tests pass. The
+new worker helper remains source-only; the build reproduces stage 215. See
+[composed lifetime coverage](parity.md#submission-worker-delivery-and-original-pool-recycling).
+Fresh HDMI-to-USB video shows the camera scene with 33 linked samples; 60 flow
+samples show no socket drops or SDIO errors. Stage 215 remains running.
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host

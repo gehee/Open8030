@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Source-only delivery stage for an already selected, untransformed packet.
+/* Source-only delivery stage for an already selected, prepared packet.
  * These are native views, not original object layouts. Mode-3 routes use this
  * action. Parsing, route selection, transforms and worker scheduling are separate.
  * The caller serializes access and supplies one owned packet reference. */
