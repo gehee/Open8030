@@ -69,7 +69,7 @@ and scenario; they must be repeated after relevant changes.
 | Host lifecycle | Explicit stop/start and stop/deinit/init/start tested historically | Every wrong-state/repeated operation, cancellation, pending DMA, failure recovery and complete reset semantics. |
 | Events | All twelve original host subscriptions and declared payload sizes; copied FIFO transport; producers for IDs 0 and 1 | Integrate other producers and internal routes; compare their payload meaning, scheduling, overflow and lifecycle behavior. Subscription success alone does not establish a working producer. |
 | Host sockets | Slot-0 copy-mode data path, deferred close and active-write cancellation; normal backend video/control; stream/handle admission and queue factories compared offline | Stock host ports 0/1 reject opens because their streams already exist; native admission differs. Heap/RTOS internals, table initialization, worker startup, runtime ownership, other modes/slots, retained-descriptor TX, saturation, teardown races and complete capacity/error behavior remain open. |
-| Internal data interfaces | Stock stream occupancy observed; mode-3 graph, event forwarding, framing, route delivery, queued writer, ingress and socket write gate compared offline; constructed parser-to-route composition compared in stage 220 | Integrate UART/SBUS, parsers, event producers, shared stream ownership and payload routing; implement native route construction/selection and compare other framing profiles, route actions, real packet ownership, scheduling, modes, timing, teardown and failure recovery. A reserved-port rejection alone does not implement these services. |
+| Internal data interfaces | Stock stream occupancy observed; mode-3 graph, event forwarding, framing, route delivery, queued writer, ingress and socket write gate compared offline; constructed parser-to-route composition, native predicates and route-list submission compared | Integrate UART/SBUS, parsers, event producers, shared stream ownership and payload routing; implement native route construction and complete downstream actions; compare other framing profiles, copied-packet lifetime, real packet ownership, scheduling, modes, timing, teardown and failure recovery. A reserved-port rejection alone does not implement these services. |
 | MAC framing | Header/descriptor parser and DEV encoder | Other formats/flags, receive ordering, duplicate handling and all original rejection rules. |
 | AP full/compact controls | Selected mode-0/slot-0 admission and connected control | All extensions, remote synchronization effects, changed channels, slots, stale/duplicate controls and unsupported modes. |
 | Internal port-0 commands | Stream parsing; login checksum ACK transmission | Receiving a command currently mainly records it. Inventory and implement each original command's effects, responses and retries. |
@@ -3296,3 +3296,86 @@ and zero socket drops; delivered video bytes increase by 13,359,202. A separate
 and boot identity match the retained baseline. This unchanged-runtime check does
 not establish fresh stock parity, controlled video freshness/latency or resolution
 of the earlier intermittent receive loss.
+
+### Route-list submission and action suppression
+
+Stage 222 adds the source-only [submission helper](../src/data_dispatch.c) around
+the route predicates. It walks a supplied route list, selects workers, submits
+packet messages and updates submission counters. It does not execute downstream
+action transformations or construct the list and queues.
+
+**227 original cases match** across mixed action lists, predicate failures,
+worker mappings/counts, copy allocation failures, queue failures, zero/short/long
+packets, counter wrap and exhausted bookkeeping counters. The comparison records
+**264 queue attempts**, **96 copy attempts**, **85 queue failures** and **179
+scheduler notifications**. It compares ordered effects, packet identities and
+bytes, source/metadata/route fields, reference calls, worker counters and per-route
+accounting. The original route-list slice and its predicate lookup, capacity
+helper and packet-copy instructions execute; allocation, reference operations,
+queue APIs, mutexes and diagnostics are adapters.
+
+The observed submission rules are:
+
+- Every successful predicate increments the match count, including matches whose
+  action is subsequently suppressed.
+- Actions with either flag `0x08` or `0x20` share a suppression group. After the
+  first such action is attempted, later matching actions in that group are
+  skipped. Copy allocation or queue failure still establishes suppression.
+  Other actions continue to be attempted.
+- Flag `0x20` forces worker 0. Otherwise the route's logical worker byte indexes
+  the worker map. An index outside the configured worker count increments the
+  invalid-worker counter, releases the caller's packet reference and stops with
+  internal result `-4998`; that route's byte/packet counters are not incremented.
+- Flags `0x02`/`0x04` request a packet copy before posting. Other actions retain
+  and post the existing packet. The native copy adapter owns the capacity/head
+  metadata which is outside the helper's native packet view.
+- Submission adds one reference before posting. A failed post releases that
+  added reference and increments queue failures. A successful post transfers it
+  to the queue, decrements the worker's free counter, updates its low-water mark
+  and posts scheduler byte `0xff`. Notification failure does not undo the packet
+  transfer. The free counter is bookkeeping, not the admission check: it wraps
+  from zero if the supplied queue adapter nevertheless reports success.
+- Each attempted route increments its byte/packet counters even when copying or
+  posting fails. Suppressed matches leave those counters unchanged. The caller's
+  original packet reference is released after traversal.
+
+No match yields internal result `-4996` and increments the unmatched counter.
+Otherwise normal traversal yields zero, even if every queue attempt failed.
+These are results at the route-list exit, **not the full parser's externally
+returned status**; later parser normalization is outside this comparison.
+
+Copying actions expose an unresolved downstream ownership detail: with the
+fixture's initial allocation reference of one, a successful copied-packet post
+leaves two references at this boundary, and a failed post leaves the allocation
+reference. The helper preserves the observed retain/release calls; it does not
+silently release the copy's initial reference. Native tests explicitly clean up
+references owned by their copy adapter. This establishes neither final lifetime
+balance nor an original memory leak. Copying-action worker processing must be
+compared before these actions can be integrated into the runtime.
+
+All **435 executed instruction locations** match the original payload/container/
+analysis-ELF bytes. Source interface, route/action objects, packet storage and
+worker objects are synthetic. Some injected action combinations are not proven
+reachable through normal constructor admission. The copy allocator supplies the
+requested capacity; undersized allocation, missing worker objects, real packet
+pools, locking/scheduling and downstream actions remain outside the comparison.
+Native missing-adapter, map-bound and filter guards return `-22`; initial argument
+guards take no ownership, while guards encountered during traversal release the
+caller reference. Synthetic ELF, ABI, pointers and partial ISA remain analysis
+metadata. Detailed evidence stays in ignored `.local/stage222-route-dispatch/`.
+
+Three ASan/UBSan suites and 18 Python tests pass. Native tests use independent
+copy storage and deferred queue ownership, including failed-first suppression,
+ignored wake errors, invalid workers, native guards and counter wrap. The helper
+remains outside the firmware build; runtime internal routing is not enabled.
+
+The build reproduces the retained stage-215 image. A fresh 30-second `/dev/video0`
+HDMI-to-USB capture shows the dark textured camera scene and right-side objects.
+All 33 samples are linked with advancing AP time and zero socket drops; video
+delivery increases by 13,384,580 bytes. A separate 60-sample flow check records
+zero socket drops or SDIO errors and 24,905,771 delivered bytes over 59.00 seconds.
+The lifetime receive high-water counter is now 16,690 bytes; that counter does
+not establish when the peak occurred. Image, configuration and boot identity
+match the retained baseline, and Open8030 remains running. This unchanged-runtime
+check does not establish fresh stock parity, controlled freshness/latency or a
+fix for the earlier intermittent receive loss.

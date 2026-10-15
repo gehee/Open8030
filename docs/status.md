@@ -667,6 +667,15 @@ shows the camera scene with 33 linked samples, and 60 flow samples show no socke
 drops or SDIO errors. Stage 215 remains running. See
 [route predicate coverage](parity.md#admitted-route-selection-predicates).
 
+Stage 222 adds native route-list submission, worker mapping and action-group
+suppression. All 227 original cases match, including queue/copy failures and
+counter wrap. Three sanitizer suites and 18 Python tests pass. Copying actions
+retain an allocation reference at the submission boundary; downstream lifetime
+and action processing remain open. The helper remains source-only and the build
+reproduces stage 215. Fresh HDMI-to-USB video shows the camera scene with 33 linked
+samples; 60 flow samples show no socket drops or SDIO errors. Stage 215 remains
+running. See [submission coverage](parity.md#route-list-submission-and-action-suppression).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host
