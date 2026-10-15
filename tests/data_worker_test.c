@@ -22,6 +22,8 @@ struct fixture {
 	int locked, fail_enqueue;
 	uint8_t output[64], metadata;
 	uint32_t length;
+	uint32_t ticks;
+	unsigned clock_reads;
 };
 static struct owned *owned(struct ar_data_packet *packet) { return (struct owned *)packet; }
 static struct owned *allocate(struct fixture *f)
@@ -62,7 +64,7 @@ static int enqueue(unsigned worker, struct ar_data_dispatch_node *node,
 	if (f->fail_enqueue) { return -7; }
 	unsigned index = (unsigned)(node - f->nodes); assert(index < 3);
 	f->messages[f->queued++] = (struct ar_data_worker_message){packet,
-		&f->actions[index], metadata, source};
+		&f->actions[index], metadata, source, f->ticks};
 	return 0;
 }
 static int wake(uint8_t value, void *context)
@@ -113,8 +115,12 @@ static void diagnose(struct ar_data_destination *d, void *context)
 {
 	(void)d; (void)context; assert(0 && "unexpected diagnostic");
 }
+static uint32_t ticks(void *context)
+{
+	struct fixture *f = context; assert(!f->locked); f->clock_reads++; return f->ticks;
+}
 static const struct ar_data_worker_ops ops = {lock, receive, unlock, buffer,
-	{source}, {find, retain, destination_enqueue, release, diagnose}};
+	{source}, {find, retain, destination_enqueue, release, diagnose}, ticks};
 static void init(struct fixture *f)
 {
 	static const uint8_t prefix = 0xc8;
@@ -186,7 +192,7 @@ int main(void)
 			f.actions[0].flags = 0x10a;
 		}
 		if (guard == 4) { p->buffer.storage = NULL; }
-		assert(ar_data_worker_step(&f.worker, &ops, &f) == -22);
+		assert(ar_data_worker_step(&f.worker, &ops, &f) == (guard == 0 ? -4999 : -22));
 		assert(!p->references && !f.writes && f.queue.free == 128 && !f.locked);
 	}
 	/* Missing adapters do not receive a queued reference. */
@@ -198,5 +204,53 @@ int main(void)
 	assert(ar_data_worker_step(&f.worker, &ops, &f) == 0);
 	assert(f.worker.bytes == 5 && f.worker.packets == 0 && f.queue.free == 0);
 	assert(!f.pool[0].references && !f.locked);
+
+	/* Queue age is modular and strictly greater than 50. A future timestamp
+	 * also yields a large unsigned delta; no signed-age special case exists. */
+	const uint32_t ages[][3] = {
+		{50, 0, 0}, {51, 0, 1}, {0, UINT32_MAX, 0},
+		{0, UINT32_MAX - 49, 0}, {0, UINT32_MAX - 50, 1}, {0, 1, 1},
+	};
+	for (unsigned i = 0; i < sizeof ages / sizeof ages[0]; ++i) {
+		init(&f); f.ticks = ages[i][1]; submit(&f, action, 1);
+		f.ticks = ages[i][0];
+		assert(ar_data_worker_step(&f.worker, &ops, &f) == 0);
+		assert(f.worker.aged == ages[i][2] && f.clock_reads == 1);
+		assert(ar_data_worker_step(&f.worker, &ops, &f) == -9995);
+		assert(f.clock_reads == 1 && f.worker.packets == 1);
+	}
+	/* Discard precedes action validation, but a missing packet is still an
+	 * error. All successful receives count and sample age before these checks. */
+	for (unsigned have_packet = 0; have_packet < 2; ++have_packet) {
+		for (unsigned have_action = 0; have_action < 2; ++have_action) {
+			for (unsigned discard = 0; discard < 2; ++discard) {
+				init(&f); f.ticks = 51; f.worker.discard = discard ? 255 : 0;
+				struct owned *p = have_packet ? allocate(&f) : NULL;
+				f.actions[0] = (struct ar_data_worker_action){8, 0, {1u << 3, 0, 0}};
+				f.messages[0] = (struct ar_data_worker_message){p ? &p->packet : NULL,
+					have_action ? &f.actions[0] : NULL, 0xa5, 2, 0};
+				f.queued = 1; f.queue.free = 127;
+				f.worker.aged = f.worker.missing_packets = f.worker.missing_actions = UINT64_MAX;
+				int expected = !have_packet ? -9998 : !discard && !have_action ? -4999 : 0;
+				assert(ar_data_worker_step(&f.worker, &ops, &f) == expected);
+				assert(f.worker.packets == 1 && f.worker.bytes == (have_packet ? 6u : 0u));
+				assert(f.worker.aged == 0 && f.clock_reads == 1 && f.queue.free == 128);
+				assert(f.worker.missing_packets == (have_packet ? UINT64_MAX : 0));
+				assert(f.worker.missing_actions == (have_packet && !discard && !have_action ? 0 : UINT64_MAX));
+				assert(f.writes == (have_packet && have_action && !discard));
+				assert(f.releases == have_packet && !f.locked);
+			}
+		}
+	}
+	/* Discard never accesses the mutable packet buffer. It still owns and
+	 * releases the message reference even when that adapter view is invalid. */
+	init(&f); submit(&f, action, 1); f.pool[0].buffer.storage = NULL;
+	f.worker.discard = 1;
+	assert(ar_data_worker_step(&f.worker, &ops, &f) == 0);
+	assert(!f.pool[0].references && !f.writes && f.worker.bytes == 6);
+	init(&f); submit(&f, action, 1); missing = ops; missing.ticks = NULL;
+	assert(ar_data_worker_step(&f.worker, &missing, &f) == -22);
+	assert(!f.read && !f.locks && f.pool[0].references == 1);
+	assert(ar_data_worker_step(&f.worker, &ops, &f) == 0);
 	return 0;
 }

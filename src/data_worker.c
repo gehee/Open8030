@@ -8,7 +8,7 @@ int ar_data_worker_step(struct ar_data_worker *worker,
 	if (!worker || !worker->queue || !ops || !ops->lock || !ops->receive ||
 		!ops->unlock || !ops->buffer || !ops->delivery.find ||
 		!ops->delivery.retain || !ops->delivery.enqueue ||
-		!ops->delivery.release || !ops->delivery.diagnose) { return -22; }
+		!ops->delivery.release || !ops->delivery.diagnose || !ops->ticks) { return -22; }
 	struct ar_data_worker_message message = {0};
 	ops->lock(context);
 	int result = ops->receive(&message, context);
@@ -16,11 +16,18 @@ int ar_data_worker_step(struct ar_data_worker *worker,
 	ops->unlock(context);
 	if (result) { return -9995; }
 	struct ar_data_packet *packet = message.packet;
-	if (!packet) { return -22; }
-	result = -22;
-	if (!message.action || !packet->data || packet->length > INT_MAX) { goto release; }
 	++worker->packets;
-	worker->bytes += packet->length;
+	worker->bytes += packet ? packet->length : 0;
+	if ((uint32_t)(ops->ticks(context) - message.submitted_at) > 50) { ++worker->aged; }
+	if (!packet) { ++worker->missing_packets; return -9998; }
+	if (worker->discard) { result = 0; goto release; }
+	if (!message.action) {
+		++worker->missing_actions;
+		result = -4999;
+		goto release;
+	}
+	result = -22;
+	if (!packet->data || packet->length > INT_MAX) { goto release; }
 	struct ar_data_action_buffer *buffer = ops->buffer(packet, context);
 	if (!buffer || !buffer->storage || buffer->head > buffer->tail ||
 		buffer->tail > buffer->capacity || buffer->capacity > INT_MAX ||

@@ -697,6 +697,15 @@ new worker helper remains source-only; the build reproduces stage 215. See
 Fresh HDMI-to-USB video shows the camera scene with 33 linked samples; 60 flow
 samples show no socket drops or SDIO errors. Stage 215 remains running.
 
+Stage 225 adds worker discard control, modular queue-age accounting and the
+original missing-packet/action errors. All 357 new cases match, and the retained
+170-scenario / 776-cycle composition still matches. Five sanitizer suites and
+18 Python tests pass. This remains source-only; the standard build reproduces
+stage 215. Normal lifecycle configuration and runtime ownership remain open. See
+[worker control coverage](parity.md#worker-discard-control-queue-age-and-errors).
+Fresh HDMI-to-USB video shows the camera scene with 33 linked samples; 60 flow
+samples show no socket drops or SDIO errors. Stage 215 remains running.
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host

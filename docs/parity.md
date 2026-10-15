@@ -69,7 +69,7 @@ and scenario; they must be repeated after relevant changes.
 | Host lifecycle | Explicit stop/start and stop/deinit/init/start tested historically | Every wrong-state/repeated operation, cancellation, pending DMA, failure recovery and complete reset semantics. |
 | Events | All twelve original host subscriptions and declared payload sizes; copied FIFO transport; producers for IDs 0 and 1 | Integrate other producers and internal routes; compare their payload meaning, scheduling, overflow and lifecycle behavior. Subscription success alone does not establish a working producer. |
 | Host sockets | Slot-0 copy-mode data path, deferred close and active-write cancellation; normal backend video/control; stream/handle admission and queue factories compared offline | Stock host ports 0/1 reject opens because their streams already exist; native admission differs. Heap/RTOS internals, table initialization, worker startup, runtime ownership, other modes/slots, retained-descriptor TX, saturation, teardown races and complete capacity/error behavior remain open. |
-| Internal data interfaces | Stock stream occupancy observed; mode-3 graph, event forwarding, framing, route delivery, queued writer, ingress and socket write gate compared offline; constructed parser-to-route composition, native predicates, route-list submission and worker transformations compared; submission-to-worker composition executes original pool allocation/recycling | Integrate UART/SBUS, parsers, event producers, shared stream ownership and payload routing; implement native route construction and production pool/queue ownership; connect the full parser to transformed delivery; establish copying-action reachability and cleanup, other framing profiles, scheduling, modes, timing, teardown and failure recovery. A reserved-port rejection alone does not implement these services. |
+| Internal data interfaces | Stock stream occupancy observed; mode-3 graph, event forwarding, framing, route delivery, queued writer, ingress and socket write gate compared offline; constructed parser-to-route composition, native predicates, route-list submission and worker transformations compared; submission-to-worker composition executes original pool allocation/recycling; worker discard, age and errors compared | Integrate UART/SBUS, parsers, event producers, shared stream ownership and payload routing; implement native route construction and production pool/queue ownership; connect the full parser to transformed delivery; establish copying-action reachability and cleanup, other framing profiles, scheduling, modes, timing, teardown and failure recovery. A reserved-port rejection alone does not implement these services. |
 | MAC framing | Header/descriptor parser and DEV encoder | Other formats/flags, receive ordering, duplicate handling and all original rejection rules. |
 | AP full/compact controls | Selected mode-0/slot-0 admission and connected control | All extensions, remote synchronization effects, changed channels, slots, stale/duplicate controls and unsupported modes. |
 | Internal port-0 commands | Stream parsing; login checksum ACK transmission | Receiving a command currently mainly records it. Inventory and implement each original command's effects, responses and retries. |
@@ -3545,3 +3545,70 @@ These lifetime maxima do not locate the peaks within this check. Image,
 configuration and boot identity match the retained baseline. Open8030 remains
 running. This unchanged-runtime check does not establish fresh stock parity,
 controlled freshness/latency or resolution of the earlier intermittent loss.
+
+### Worker discard control, queue age and errors
+
+Stage 225 extends the [worker helper](../src/data_worker.c) with the original
+control and accounting order. The previous composition fixed discard control and
+both timestamps at zero; this comparison varies them explicitly.
+
+After a successful receive, the worker restores one queue slot under its lock,
+unlocks, increments received packets, adds the incoming length and samples the
+clock. A missing packet contributes zero bytes but still counts as a received
+message. The unsigned 32-bit difference `current_tick - submitted_at` increments
+the aged counter only when it is **greater than 50**. This is accounting, not
+packet expiry: crossing the threshold does not prevent delivery. Wrap and
+apparently future timestamps follow unsigned subtraction. The adapter supplies
+the clock units; this comparison does not establish a physical duration.
+
+The subsequent control order is:
+
+| Condition | Result and ownership |
+| --- | --- |
+| Receive returns nonzero | Return `-9995`; no message/age accounting or reference transfer. |
+| Received packet is null | Increment missing-packet counter and return `-9998`; no reference to release. |
+| Discard byte is nonzero | Release the packet and return zero, before inspecting the action or transforming/delivering data. |
+| Action is null | Increment missing-action counter, release the packet and return `-4999`. |
+| Valid action | Apply transformations and delivery, then release the received reference as previously compared. |
+
+**357 cases match**, including 48 failed receives, 144 missing packets, 24
+missing actions, 110 discarded messages and 26 direct writes. There are 141
+age-threshold crossings. Cases combine packet/action presence, discard values
+0/1/255, the exact 50/51 boundary, unsigned clock wrap, 64-bit counter wrap and
+32-bit queue-free counter wrap. Six different nonzero receive results normalize
+to `-9995`. Results, known counters, packet/pool state, ownership effects and
+output bytes match. Missing-packet handling emits 144 original diagnostic calls;
+their endpoint is checked privately, but diagnostic text is not reproduced or
+included in native effect matching.
+
+All **979 executed instruction locations** are bound to the matched original
+payload/container/analysis-ELF bytes. The original worker, allocation, reference
+release, pool recycling, packet cursors and interface lookups execute. Queue
+receive, mutex, logging and destination-write endpoints are adapters. The
+fixture supplies valid packet storage when present, one 1,024-byte pool class,
+synthetic worker/source/action objects and fixed per-case clock values. It does
+not dereference arbitrary stale pointers or exercise concurrent mutation.
+Synthetic ELF, pointers, ABI and partial ISA remain analysis metadata. Evidence
+stays in ignored `.local/stage225-worker-control/`.
+
+The immutable stage-224 traces also still match with the updated native worker:
+**170 scenarios / 776 cycles and 1,552 empty receives**. Five ASan/UBSan suites
+and 18 Python tests pass. New sanitizer cases check error precedence, modular
+age, counter wrap, discard without accessing mutable storage and the absence
+of clock/accounting effects after failed receives. Native storage/capacity and
+missing-adapter guards remain separate `-22` checks; the original null-worker
+case is outside this comparison.
+
+The helper remains source-only. Setting the original discard control through its
+normal lifecycle, real timestamp production/clock timing, scheduler races,
+constructor reachability, pool ownership outside the tested path and runtime
+UART/SBUS services remain open. The build reproduces the retained stage-215 image.
+
+A fresh 30-second `/dev/video0` HDMI-to-USB capture shows the dark textured camera
+scene and right-side objects. All 33 samples remain linked with advancing AP time
+and zero socket drops; video delivery increases by 13,226,466 bytes. A separate
+60-sample flow check records zero socket drops or SDIO errors and 24,374,829
+delivered bytes over 59.00 seconds. Image, configuration and boot identity match
+the retained baseline, and Open8030 remains running. This unchanged-runtime check
+does not establish fresh stock parity, controlled video freshness/latency or a
+fix for the earlier intermittent receive loss.
