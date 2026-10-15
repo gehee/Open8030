@@ -2003,3 +2003,60 @@ Its 91,136-byte container has SHA-256
 `5a574f6b296eb8aa4eee3aaf09c258b97735727848822776dfdb560183db36c5`.
 The standard build reproduces it; RAM usage is 677,520 of 704,512 bytes.
 Bootstrap and private board-profile hashes are unchanged.
+
+### TX queue producer and backpressure
+
+Stage 202 adds a source-only queue producer to `src/tx_stream.c`, compared with
+the matched original body at `0x21b500`. This supplies the write side of the
+previous acquisition/release work. It does not replace the runtime socket copy
+path or establish retained-entry publication and socket teardown behavior.
+
+The original distinguishes occupied bytes from bytes still available for TX
+acquisition. Its discard option rewinds the write cursor by the available count,
+subtracts those bytes from occupancy and the 64-bit written counter, and clears
+availability. Already acquired bytes remain occupied. Discard happens before
+the whole-request space check, so a `-12` rejection can still have discarded
+queued data. Discard is applied again on each wait-loop pass; the returned copy
+count is therefore not a guarantee that every counted byte remains queued.
+
+Writes use up to two free spans around the ring. Every pass publishes copied
+bytes, updates the high-water and written counters, and wakes readers while the
+queue mutex is held, even when no bytes fit. The caller-supplied pending increment
+is added only when the full request has been copied. Partial nonblocking writes
+return their copied count and increment the short-write counter. Disabling the
+queue during a wait returns `-10`, even if earlier passes already published bytes.
+Null queue/input or zero length returns `-6` without a queue operation.
+
+Positive timeouts use a wrapping millisecond deadline and waits capped at 100 ms.
+Every signed-negative timeout selects indefinite 100-ms retries. This differs
+from the acquisition helper's handling of negative values other than `-1`.
+Lock and wait results are ignored in the compared original path. The native API
+adds `-22` guards for unsafe storage metadata and missing adapters; these guards
+are not original error behavior. Callers must provide stable, nonoverlapping
+storage, serialization and eventual wait/clock progress.
+
+Fresh original execution passes **1,554 scenarios**, including **18 composed
+write/acquire/release sequences** and 64 scenarios that wait. The comparison
+checks copied bytes, return values, every queue field, reference changes, output
+spans and ordered effects: 1,742 clock reads, 1,854 locks and unlocks, 1,355 wakes
+and 200 waits. Cases cover both free-span layouts, full queues, partial writes,
+discard with acquired bytes, counter wrap, deadline wrap, disable and mutex/signal
+changes across waits. All 745 executed instruction locations match the reference
+payload, container and analysis ELF bytes.
+
+The original copy, arithmetic, acquisition, registry lookup/drop, release and
+queue-consumption bodies execute. RTOS locks, waits/wakes and clock endpoints are
+intercepted. Wait fixtures simulate consumption or disable; they do not prove
+scheduler or DMA concurrency. Synthetic ELF, ABI, pointers and partial ISA
+semantics remain analysis metadata. Native malformed-storage guards and large
+address-space limits are outside this bounded original comparison.
+
+Four ASan/UBSan suites and 18 Python tests pass. The standard build reproduces
+stage 201 exactly. A fresh 30-second `/dev/video0` HDMI-to-USB capture records
+MJPEG 1920×1080 at nominal 30 fps; inspected frames at 5 and 27 seconds show the
+camera texture and right-side features. All 33 samples stay linked with advancing
+AP time and zero sampled socket drops. Device image/configuration hashes and
+retained-session identity are recorded privately. Stage 201 remains running in
+RAM; this capture confirms continuity, not hardware integration of the new helper
+or controlled video freshness. Runtime ownership, pending-DMA teardown and full
+original-firmware coverage remain open.

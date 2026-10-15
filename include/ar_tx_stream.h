@@ -18,6 +18,8 @@ struct ar_tx_stream_queue {
 	size_t entry_count;
 	uint32_t flags, acquire, available, data_address, ready_signal;
 	uint64_t acquired_bytes;
+	uint32_t high_water, short_writes;
+	uint64_t written_bytes;
 };
 struct ar_tx_stream {
 	uint32_t references;
@@ -42,6 +44,32 @@ struct ar_tx_stream_acquire_ops {
 	uint64_t (*clock_us)(void *context);
 	int (*wait)(uint32_t signal, uint32_t timeout_ms, void *context);
 };
+struct ar_tx_stream_write_ops {
+	int (*lock)(uint32_t mutex, uint32_t timeout, void *context);
+	void (*unlock)(uint32_t mutex, void *context);
+	void (*wake)(uint32_t signal, void *context);
+	uint64_t (*clock_us)(void *context);
+	int (*wait)(uint32_t signal, uint32_t timeout_ms, void *context);
+};
+/* Source-only queue producer. Storage is a stable native mapping of the queue's
+ * data area; it must cover capacity bytes and must not overlap input. Retained
+ * entry serialization belongs to the caller. Full writes add pending_increment;
+ * partial writes still publish available bytes, update counters and wake readers.
+ * discard_available removes unacquired bytes before the space check, preserving
+ * acquired bytes. require_space returns -12 without copying if the whole request
+ * does not fit, but preceding discard effects remain. Disabled queues return -10,
+ * even after a partial write. Null queue/input or zero amount returns -6.
+ * Zero timeout returns immediately; any signed-negative timeout retries 100-ms
+ * waits indefinitely. Positive deadlines use signed 32-bit deltas and waits of
+ * at most 100 ms. Lock/wait results are ignored. Adapters must serialize state,
+ * keep storage live and provide eventual clock/wait progress. Unsafe native
+ * metadata or missing adapters returns -22, not an original firmware result.
+ * This does not establish RTOS scheduling, DMA ownership or runtime integration. */
+int ar_tx_queue_write(struct ar_tx_stream_queue *queue, uint8_t *storage,
+	size_t storage_size, const uint8_t *input, uint32_t amount,
+	uint32_t timeout_ms, unsigned require_space, unsigned discard_available,
+	uint32_t pending_increment, const struct ar_tx_stream_write_ops *ops,
+	void *context);
 /* Source-only comparison of acquisition. Budget is the wrapped 32-bit product
  * of amount and percentage divided by 100, with a minimum of one. Nonempty
  * output retains the lookup reference; a corresponding release consumes it.

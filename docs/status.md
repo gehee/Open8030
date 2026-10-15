@@ -455,6 +455,15 @@ RAM. These observations do not establish exact interrupt timing, peer reception,
 sustained adaptation under controlled loss or full retained-buffer ownership.
 See [attempt-history coverage](parity.md#runtime-tx-attempt-history).
 
+Stage 202 compares the queue producer against 1,554 original scenarios, including
+18 write/acquire/release sequences. It covers partial publication, ring wrap,
+overwrite of unacquired bytes, space rejection, disable during a write, timeout
+and counter behavior. Four sanitizer suites and 18 Python tests pass. This is
+source-only ownership work; the standard build still reproduces stage 201.
+A fresh 30-second HDMI-to-USB capture shows the camera scene, with 33 linked
+samples and zero sampled socket drops. Stage 201 remains running in RAM.
+See [queue producer coverage](parity.md#tx-queue-producer-and-backpressure).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host

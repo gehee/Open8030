@@ -2,6 +2,93 @@
 #include "ar_tx_stream.h"
 #include <string.h>
 
+int ar_tx_queue_write(struct ar_tx_stream_queue *queue, uint8_t *storage,
+	size_t storage_size, const uint8_t *input, uint32_t amount,
+	uint32_t timeout_ms, unsigned require_space, unsigned discard_available,
+	uint32_t pending_increment, const struct ar_tx_stream_write_ops *ops,
+	void *context)
+{
+	if (!queue || !input || !amount)
+		return -6;
+	if (!storage || !ops || !ops->lock || !ops->unlock || !ops->wake ||
+	    !ops->clock_us || !ops->wait)
+		return -22;
+	uint32_t deadline = timeout_ms + (uint32_t)(ops->clock_us(context) / 1000);
+	uint32_t total = 0;
+	for (;;) {
+		(void)ops->lock(queue->mutex, UINT32_MAX, context);
+		if (!(queue->flags & 2)) {
+			ops->unlock(queue->mutex, context);
+			return -10;
+		}
+		uint32_t capacity = queue->capacity;
+		if (!capacity || capacity > storage_size || queue->write >= capacity ||
+		    queue->read >= capacity || queue->used > capacity ||
+		    queue->available > queue->used) {
+			ops->unlock(queue->mutex, context);
+			return -22;
+		}
+		if (discard_available && queue->available) {
+			uint32_t discard = queue->available;
+			queue->write = (queue->write + capacity - discard) % capacity;
+			queue->available = 0;
+			queue->used -= discard;
+			queue->written_bytes -= discard;
+		}
+		uint32_t first = 0, second = 0, cursor = queue->write;
+		if (queue->used < capacity) {
+			if (cursor < queue->read) {
+				first = queue->read - cursor;
+			} else {
+				first = capacity - cursor;
+				second = queue->read;
+			}
+		}
+		if (require_space && first + second < amount) {
+			ops->unlock(queue->mutex, context);
+			return -12;
+		}
+		if (first > amount - total)
+			first = amount - total;
+		if (first)
+			memcpy(storage + cursor, input + total, first);
+		total += first;
+		if (second > amount - total)
+			second = amount - total;
+		if (second)
+			memcpy(storage, input + total, second);
+		total += second;
+		uint32_t copied = first + second;
+		queue->write = (queue->write + copied) % queue->capacity;
+		queue->used += copied;
+		if (total == amount)
+			queue->pending += pending_increment;
+		queue->available += copied;
+		if (queue->high_water < queue->used)
+			queue->high_water = queue->used;
+		queue->written_bytes += (uint64_t)(int64_t)(int32_t)copied;
+		ops->wake(queue->ready_signal, context);
+		ops->unlock(queue->mutex, context);
+		if (total >= amount)
+			return (int32_t)total;
+		uint32_t remaining = 100;
+		if (!timeout_ms) {
+			queue->short_writes++;
+			return (int32_t)total;
+		}
+		if (timeout_ms <= INT32_MAX) {
+			remaining = deadline - (uint32_t)(ops->clock_us(context) / 1000);
+			if (!remaining || remaining > INT32_MAX) {
+				queue->short_writes++;
+				return (int32_t)total;
+			}
+			if (remaining > 100)
+				remaining = 100;
+		}
+		(void)ops->wait(queue->signal, remaining, context);
+	}
+}
+
 static void drop(struct ar_tx_stream_registry *registry,
 	struct ar_tx_stream *stream, const struct ar_tx_stream_ops *ops, void *context)
 {
