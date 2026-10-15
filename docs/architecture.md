@@ -109,9 +109,12 @@ already belong to existing streams, so external opens fail. Open8030 currently
 admits these opens because it lacks the original internal owners. The original
 interface layer includes role/configuration gating and socket-backed interfaces.
 Mode 3 routes UART1/SBUS through internal socket port 0. Internal socket port 1
-routes to an event bridge on DEV and UART2 on AP. Its source-only event forwarding
-helper is compared, but stream parsing, service ownership and runtime routing
-remain pending. See [internal data coverage](parity.md#mode-3-internal-data-graph-and-event-forwarding).
+routes to an event bridge on DEV and UART2 on AP. Source-only event forwarding
+and socket-port-1 framing helpers are compared. The latter preserves fragmented
+frames in a ring, verifies CRC8-D5 and separates malformed data from valid frames.
+Service ownership and runtime parser/routing integration remain pending. See
+[internal data coverage](parity.md#mode-3-internal-data-graph-and-event-forwarding)
+and [framing coverage](parity.md#internal-socket-port-1-framing).
 
 Important compiled bounds include a 4,096-byte frame payload, four SDIO transmit
 queue entries, four socket ports, up to 56,320 receive bytes per port and two
@@ -151,6 +154,7 @@ are implementation limits, not CLI tuning parameters.
 | `src/dev_mcs.c`, `fch_monitor.c` | Modulation/coding policy and monitor timing/threshold calculation |
 | `src/socket_rx.c`, `event.c` | Host socket streams, completions and events |
 | `src/data_event.c` | Compared source-only internal interface-to-event buffer and forwarding contract; not yet connected to runtime streams or host event subscriptions |
+| `src/data_framing.c` | Compared source-only internal socket-port-1 stream parser; fragmentation, CRC8-D5 and resynchronization; other profiles and runtime integration pending |
 | `src/power*.c`, `flash*.c`, `sfdp.c`, `factory*.c` | Calibration planning and read-only factory-data lookup |
 | `src/power_control.c` | Compared power-cache ordering and band-offset fields; initial loader user0 application integrated; tuning/host-policy callbacks pending |
 | `tools/`, `tests/` | Build/loading tools and offline validation |

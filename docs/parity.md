@@ -69,7 +69,7 @@ and scenario; they must be repeated after relevant changes.
 | Host lifecycle | Explicit stop/start and stop/deinit/init/start tested historically | Every wrong-state/repeated operation, cancellation, pending DMA, failure recovery and complete reset semantics. |
 | Events | Subscription and delivery for IDs 0 and 1 | Other original IDs, payload layouts, ordering, cancellation and overflow behavior. |
 | Host sockets | Slot-0 copy-mode data path, deferred close and active-write cancellation; normal backend video/control; stream/handle admission and queue factories compared offline | Stock host ports 0/1 reject opens because their streams already exist; native admission differs. Heap/RTOS internals, table initialization, worker startup, runtime ownership, other modes/slots, retained-descriptor TX, saturation, teardown races and complete capacity/error behavior remain open. |
-| Internal data interfaces | Stock stream occupancy observed; mode-3 graph and source-only event forwarding compared offline | Integrate UART/SBUS, packet parsing, event subscriptions, shared stream ownership and payload routing; compare other modes, timing, teardown and failure recovery. A reserved-port rejection alone does not implement these services. |
+| Internal data interfaces | Stock stream occupancy observed; mode-3 graph, source-only event forwarding and socket-port-1 framing compared offline | Integrate UART/SBUS, parsers, event subscriptions, shared stream ownership and payload routing; compare other framing profiles, modes, timing, teardown and failure recovery. A reserved-port rejection alone does not implement these services. |
 | MAC framing | Header/descriptor parser and DEV encoder | Other formats/flags, receive ordering, duplicate handling and all original rejection rules. |
 | AP full/compact controls | Selected mode-0/slot-0 admission and connected control | All extensions, remote synchronization effects, changed channels, slots, stale/duplicate controls and unsupported modes. |
 | Internal port-0 commands | Stream parsing; login checksum ACK transmission | Receiving a command currently mainly records it. Inventory and implement each original command's effects, responses and retries. |
@@ -2627,3 +2627,71 @@ drops stay zero. Device image/configuration and retained-session identity are
 recorded privately. Stage 206 remains running in RAM. This is a regression
 check, not hardware execution of the source-only bridge, physical UART testing
 or a controlled freshness/latency measurement.
+
+### Internal socket-port-1 framing
+
+Stage 212 compares `src/data_framing.c` with original parser entry `0x2132b2`
+using the custom profile configured for internal socket port 1. This is distinct
+from MAC packet framing and from the separate internal command stream. The
+normal interface uses a 1,024-byte ring. Its byte-stream envelope is:
+
+| Offset | Length | Meaning |
+| --- | --- | --- |
+| 0 | 1 | Sync byte `0xc8` |
+| 1 | 1 | Encoded length `L`, including the trailing CRC but excluding these first two bytes |
+| 2 | `L - 1` | Body, at least one byte |
+| `L + 1` | 1 | CRC8, polynomial `0xd5`, initial zero, non-reflected, no final XOR; covers only the body |
+
+Total frame size is `L + 2`, from 4 through 257 bytes. The parser retains the
+**entire frame**, including sync, length and CRC, at the packet-storage boundary.
+It waits for incomplete headers/bodies, supports wraparound, and can extract
+multiple frames from one read. It separates noise before sync, invalid lengths
+and CRC failures into error segments, searching again from the byte after the
+rejected sync. A later sync can occur inside a damaged frame. Error counters
+count skipped bytes, not bad-frame counts. This profile alone does not establish
+compatibility with an external protocol specification or its application data.
+
+**893 matching original scenarios / 3,118 feed calls** compare return values,
+segment bytes and classifications, allocation outcomes, complete ring storage,
+read/write/search cursors, pending-header state and nine counters. Cases include
+every one-byte body value and length-field value; whole, split and byte-at-a-time
+frames; maximum length; wraparound; adjacent frames; invalid lengths; 80 single
+bit corruptions; 64 deterministic mixed-stream sequences; and allocation failure
+followed by continued parsing. Allocation failure consumes the selected segment
+without retry, as in the original. Valid frames and error segments are accounted
+separately from final delivery.
+
+A separate **exact-capacity probe intentionally differs**. The original direct
+parser accepts enough input to fill the ring, then treats equal cursors as no
+new data and leaves it unparsed. Its normal worker reserves one byte. The native
+feed API preserves that reservation and rejects the input with `-9999`, without
+overwriting the buffered bytes. This guard is not counted as a matching case.
+The native adapter also bounds pointers, capacity and input length. Smaller
+synthetic rings reproduce the original possibility of waiting for a declared
+frame that cannot fit; production integration must use suitable capacities.
+
+**863 executed instruction locations** match the original payload, container
+and analysis ELF. Original sync search, ring writes/reads, length parsing,
+CRC calculation, resynchronization and counters execute. The original route
+table is deliberately empty in these fixtures: valid frames take the no-route
+path, while error segments reach the default-worker path. Packet allocation,
+head/length adapters, release, locks, queue posting and diagnostics are
+intercepted. This does not compare actual route delivery, worker scheduling,
+physical UART signaling or the other configurable framing profiles. Synthetic
+addresses, ABI, ELF and partial ISA remain analysis metadata. Detailed receipts
+and original instructions stay in ignored `.local/stage212-data-framing/`.
+
+The new helper remains **source-only**. Two native ASan/UBSan suites also check
+512 fragmentation/wrap combinations and explicit synchronous composition with
+the event bridge, ensuring error segments do not become valid-frame events.
+This test adapter does not establish the missing runtime route. Eighteen Python
+tests pass, and the build reproduces stage 206 exactly.
+
+A fresh 30-second `/dev/video0` HDMI-to-USB capture at MJPEG
+1920×1080/nominal 30 fps shows the dark textured camera scene and right-side
+features. All 33 samples remain linked, AP time advances and sampled socket
+drops remain zero. The accepted stage-206 image remains running in RAM. This
+is a video regression check, not hardware validation of the source-only parser
+or a controlled freshness/latency measurement. Other parsers, route/packet
+ownership, event subscriptions, reverse traffic and service teardown remain
+required before closing the internal-data coverage item.

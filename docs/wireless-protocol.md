@@ -289,7 +289,7 @@ host socket ports 0 and 1. On DEV, they serve the UART1/SBUS path and an event
 bridge respectively. On AP, the second path instead connects UART2. This
 explains why stock rejects external opens of those already-owned host ports.
 
-The event bridge wraps decoded data in a 1,024-byte event body: a two-byte
+The event bridge wraps supplied data in a 1,024-byte event body: a two-byte
 little-endian payload length, the payload, and a cleared tail. Bridge port 0
 uses event ID 8. This event representation is distinct from the radio stream's
 packet framing, whose parser and routing still need runtime implementation.
@@ -297,6 +297,18 @@ Open8030 currently lacks these internal owners and supports host event
 subscriptions only for IDs 0 and 1. A source-only forwarding helper and original
 mode-3 graph comparisons are described in
 [internal data coverage](parity.md#mode-3-internal-data-graph-and-event-forwarding).
+
+The original internal socket-port-1 parser uses `c8 | L | body | CRC8`:
+the one-byte `L` counts body plus CRC, and total frame length is `L + 2`.
+The body contains 1..254 bytes. CRC8 uses polynomial `0xd5`, initial zero,
+non-reflected bits and no final XOR, over the body only. The parser keeps the
+complete envelope when producing a packet; it does not strip these bytes.
+It retains fragmented frames, handles ring wraparound and searches again after
+invalid length or CRC. Malformed bytes use a separate error-segment path.
+This is a recovered internal stream profile, not a new MAC envelope or a claim
+of full compatibility with an external protocol. Its source-only implementation
+and comparison limits are documented in
+[framing coverage](parity.md#internal-socket-port-1-framing).
 
 ## Internal command stream
 

@@ -561,6 +561,17 @@ The build reproduces stage 206; a fresh 30-second HDMI-to-USB capture shows the
 camera scene, with 33 linked samples and zero sampled socket drops. The accepted
 image remains running in RAM. See [internal data coverage](parity.md#mode-3-internal-data-graph-and-event-forwarding).
 
+Stage 212 adds a source-only parser for internal socket port 1. It matches
+893 original scenarios across 3,118 feed calls, covering fragmentation, ring
+wrap, CRC8-D5, malformed-data recovery and allocation failures. One extra guard
+rejects an exactly full ring, following the original worker's reserved-byte
+policy; it is recorded separately from matching behavior. Two sanitizer suites
+and 18 Python tests pass. Other profiles, runtime routing and internal services
+remain open. The build still reproduces stage 206; a fresh 30-second
+HDMI-to-USB capture shows the camera scene with 33 linked samples and zero
+sampled socket drops. The accepted image remains running in RAM. See
+[framing coverage](parity.md#internal-socket-port-1-framing).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host
