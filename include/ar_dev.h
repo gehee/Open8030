@@ -37,7 +37,8 @@ struct ar_dev_acquisition {
 int ar_dev_idle_evaluate(const struct ar_dev_idle_config *config,
 	const struct ar_dev_control *control, struct ar_dev_acquisition *next);
 
-/* Mode-0, non-pairing lock-state decision. ASSIGNMENT means a matching
+/* Mode-0 lock-state decision, including matching pairing advertisements.
+ * ASSIGNMENT means a matching
  * login record; remote synchronization must still execute before state 2.
  * Inputs/views are read-only and have the same successful-decode contract. */
 enum ar_dev_lock_result {

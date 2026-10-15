@@ -23,6 +23,7 @@ verified scope.
 - [Logical peer slots](#logical-peer-slots)
 - [DEV uplink report](#dev-uplink-report)
 - [Acquisition and login](#acquisition-and-login)
+- [Button binding and host coordination](#button-binding-and-host-coordination)
 - [Internal command stream](#internal-command-stream)
 - [PHY control messages](#phy-control-messages)
 - [MCS negotiation](#mcs-negotiation)
@@ -390,10 +391,76 @@ not been fully recovered. The exchange above documents the implemented receiver
 path and the transmitter messages it consumes; it is not a complete AP state
 machine or proof of simultaneous multi-receiver operation.
 
-The pure admission helper includes decisions for additional modes and pairing;
-that does not establish support for their RF transitions in the running firmware.
+The pure admission helper includes decisions for additional modes; that does not
+establish support for their RF transitions in the running firmware. DEV mode-0
+pairing support and its validation boundaries are described below.
 Sources: [dev.c](../src/dev.c), `dev_admit`, `dev_observe_lock` and
 `receive_complete` in [rf_device.c](../src/rf_device.c).
+
+## Button binding and host coordination
+
+Binding selects a peer; acquisition and login establish a radio session with that
+peer. The matched Linux backend handles receiver button events, starts its
+binding worker, requests radio pairing, polls the result and saves the selected
+four-byte identity. The radio implements pairing admission and the over-air
+exchange. Binding is therefore not solely a host feature.
+
+The original backend's worker uses these commands:
+
+| Request | Role in binding |
+| --- | --- |
+| `0x01000000` | Read radio status/role before pairing |
+| `0x02000002` | Enable or disable pairing using a 14-byte request |
+| `0x01000001` | Poll a 164-byte pairing-result record |
+| `0x02000004` | Update candidates; the successful workflow first clears them |
+| `0x02000003` | Select the discovered peer in the DEV role |
+
+The pairing request contains an enable byte, an AP slot mask (ignored by the
+original DEV branch), and three four-byte identities that suppress pairing
+interpretation for those peers. Enabling pairing selects a shared zero PHY
+identity and sets bit 6 of byte 4 in the DEV report. The ordinary configured-peer
+and local-position admission requirements are replaced by the pairing checks
+when a matching pairing advertisement is received. Wire validity, channel,
+supported mode and login-token checks still apply.
+
+The result contains a slot bitmap at byte 0, eight four-byte peer identities
+starting at byte 1, and eight 16-byte measurement records starting at byte 36.
+Only bitmap-selected entries are meaningful. Discovery alone does not publish a
+completed result: the DEV path records it after matching login reaches state 2.
+The stock backend polls at approximately 20 ms intervals within a 30-second
+budget, checks repeated identity observations and then disables pairing and
+selects the peer. It saves the identity in its Linux-side JSON configuration.
+The radio command does not itself persist that file or establish encryption-key
+exchange.
+
+A physical receiver-button trace on the accepted stage-232 firmware reached
+the Linux binding worker and sent `0x02000002` once, with enable and mask both 1.
+The backend stopped at its pairing-enable error path because that image did not
+implement the command. The current development implementation adds the three
+missing commands, the report flag, pairing identity selection and result
+publication for DEV mode 0/slot 0. The stage-233 hardware trial completed physical
+button binding through the original host worker. The selected peer appeared in
+the host's saved list and was admitted again after a receiver reboot and firmware
+reload. Synthetic peripheral tests additionally cover an unknown peer's
+acquisition/login and host selection; the physical test used the existing pair.
+
+Enabling pairing restarts acquisition through deferred RF recovery, after borrowed
+receive buffers and DMA are released. Clearing candidates during successful
+pairing does not tear down the newly discovered link. Disabling an unfinished
+pairing restores normal acquisition, including the saved candidate list; merely
+restoring the configured-peer filter can strand a receiver whose active peer came
+from that list. The stage-234 cancellation fix reacquires on hardware in about one
+second, and repeated disable leaves the recovered link intact.
+
+Final-revision button binding and video acceptance remain open: captures show
+video socket drops and image corruption, in addition to the previously observed
+warm-load black-camera symptom. This is not yet an accepted hardware baseline or
+support for AP, other frame modes or nonzero connected slots.
+
+Sources: [binding.c](../src/binding.c), [dev.c](../src/dev.c),
+[dev_tx.c](../src/dev_tx.c), [rf_device.c](../src/rf_device.c), and
+[binding tests](../tests/binding_test.c). Matched host disassembly and device logs
+are retained privately rather than distributed with this repository.
 
 ## Internal data services
 

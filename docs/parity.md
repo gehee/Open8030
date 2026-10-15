@@ -97,8 +97,8 @@ implemented features or a firmware coverage percentage.
 | Core family | Recognized IDs | Current native coverage |
 | --- | ---: | --- |
 | Initialization/configuration (`0x00…`) | 12 | Direct commands unsupported; loader JSON is a separate, partial configuration path |
-| Getters (`0x01…`) | 35 | Status, DEV AP time and register read have partial behavior/scenario coverage; 32 unsupported |
-| Setters (`0x02…`) | 56 | Candidate list has partial coverage; 55 unsupported |
+| Getters (`0x01…`) | 35 | Status, DEV AP time and register read have partial behavior/scenario coverage; development pairing-result getter adds a fourth partial handler; 31 unsupported |
+| Setters (`0x02…`) | 56 | Candidate list has partial coverage; development pairing control and peer selection add two partial handlers; 53 unsupported |
 | Extension (`0x06000000`) | 1 | Unsupported; original callback contract unresolved |
 | Lifecycle (`0x0b…`) | 4 | Start, stop, init and deinit have partial behavior/scenario coverage |
 

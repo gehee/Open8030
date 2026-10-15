@@ -65,6 +65,16 @@ static void lock_tests(void)
 	}
 	packet[8] ^= 1; control = decode(packet);
 	assert(ar_dev_lock_evaluate(&config, &lock, &control, &login) == AR_DEV_LOCK_PEER);
+	packet[8] ^= 1;
+	config.pairing = 1;
+	control = decode(packet);
+	assert(ar_dev_lock_evaluate(&config, &lock, &control, &login) == AR_DEV_LOCK_PROFILE);
+	packet[12] = 13; control = decode(packet);
+	assert(ar_dev_lock_evaluate(&config, &lock, &control, &login) == AR_DEV_LOCK_ASSIGNMENT);
+	assert(login.slot == 0 && login.ap_state == 2);
+	config.pairing = 0;
+	assert(ar_dev_lock_evaluate(&config, &lock, &control, &login) == AR_DEV_LOCK_PROFILE);
+	packet[12] = 5; packet[8] ^= 1;
 	packet[8] ^= 1; packet[7] = 3; control = decode(packet);
 	assert(ar_dev_lock_evaluate(&config, &lock, &control, &login) == AR_DEV_LOCK_PROFILE);
 	packet[7] = 2; packet[3] = 1; control = decode(packet);

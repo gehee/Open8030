@@ -5,6 +5,7 @@
 #include "ar_rf_device.h"
 #include "ar_mac.h"
 #include "ar_dev.h"
+#include "ar_binding.h"
 #include "ar_dev_tx.h"
 #include "ar_dev_mcs.h"
 #include "ar_fch_monitor.h"
@@ -87,6 +88,7 @@ const struct ar_rf_scan_info *ar_rf_scan_information(void) { return &scan_info; 
 const struct ar_command_program *ar_rf_command_information(void) { return &command_program; }
 #endif
 static struct ar_dev_idle_config dev_config;
+static struct ar_binding binding;
 static uint8_t dev_candidates[AR_DEV_MAX_CANDIDATES][4], dev_status_a, dev_status_b;
 static unsigned host_prepared;
 static unsigned host_initialized, host_start_required;
@@ -1263,6 +1265,13 @@ static void dev_observe_lock(const struct ar_dev_control *control)
 	field(0xb4c0305, 1); field(0xcf41501, 1);
 	link_event(2, receiver.dev_state);
 	receiver.dev_state = 2; receiver.connected_elapsed_us = elapsed;
+	if (dev_config.pairing) {
+		/* Original 0x22ef.. snapshots the peer and a fresh logical-user-8
+		 * measurement only after the pairing login reaches state 2. */
+		const uint8_t *sample = phy.samples &&
+			(uint32_t)(elapsed_us() - phy.sample_elapsed_us) <= 200000 ? phy.sample : NULL;
+		ar_binding_complete(&binding, login.slot, receiver.accepted_peer, sample);
+	}
 	if (receive_operation >= 67) { dev_mcs_apply(ar_dev_mcs_connect(dev_mcs_context(), 1)); }
 }
 
@@ -1296,7 +1305,7 @@ static void dev_preencode(void)
 	struct ar_dev_report report = {.state = receiver.dev_state, .assigned_slot = receiver.assigned_slot,
 		.receive_channel = dev_config.receive_channel,
 		.slot_value = dev_power_index,
-		.status_a = dev_status_a, .status_b = dev_status_b};
+		.status_a = dev_status_a, .status_b = dev_status_b, .pairing = binding.enabled};
 	memcpy(report.local, dev_config.local, 4);
 	const struct ar_dev_tx_packet *packet;
 	unsigned ack = receiver.sync_ack_pending && (receiver.last_tx_budget & ~7u) >= 33;
@@ -1521,6 +1530,7 @@ static int prepare_host(uint32_t frequency, uint32_t milliseconds, uint8_t ident
 {
 	int result = configure_monitor(frequency, milliseconds, identity_hash, 76, channels, length, deferred, power);
 	if (result) { return result; }
+	memset(&binding, 0, sizeof binding);
 	memmove(host_config.channels, channels, length);
 	host_config.length = length; host_config.frequency = frequency;
 	host_config.milliseconds = milliseconds; host_config.identity = identity_hash;
@@ -1551,6 +1561,57 @@ int ar_rf_prepare_config(uint32_t frequency, uint8_t identity_hash,
 	return prepare_host(frequency, 0, identity_hash, channels, length, search ? 3 : 2, power);
 }
 
+static void binding_identity(void)
+{
+	uint8_t hash = 0;
+	if (!binding.enabled) {
+		for (unsigned i = 0; i < 4; i++) { hash ^= dev_config.configured_peer[i]; }
+	}
+	/* Original DEV pairing setter: 0x22b92c(8, hash), then
+	 * 0x222cac(8, hash). Pairing uses the shared zero identity. */
+	field(0xb841008, hash); field(0xb601008, hash);
+	field(0xde00008, hash); field(0xdf00008, hash);
+}
+
+int ar_rf_host_pairing(const uint8_t *data, size_t length)
+{
+	if (!data || length != 14) { return -22; }
+	if (receive_operation != 76 || !host_initialized || information.error) { return -11; }
+	unsigned was_pairing = binding.enabled;
+	int result = ar_binding_set(&binding, data, length);
+	if (result) { return result; }
+	dev_config.pairing = binding.enabled;
+	memcpy(dev_config.pairing_skip, binding.skip, sizeof binding.skip);
+	if (information.phase == AR_RF_RECEIVING &&
+	    (binding.enabled || (was_pairing && receiver.dev_state != 2))) {
+		/* Reacquire with pairing admission. Defer teardown until borrowed
+		 * RX views/DMA are released, as for normal peer replacement. An
+		 * unfinished pairing must restart normal search on cancellation:
+		 * restoring the configured-peer filter alone can strand acquisition
+		 * when the previously active peer came from the host candidate list. */
+		request_recovery(4);
+	} else if (binding.enabled || was_pairing) { binding_identity(); }
+	return 0;
+}
+
+int ar_rf_host_pairing_result(uint8_t output[164])
+{
+	if (receive_operation != 76 || !host_initialized || information.error) { return -11; }
+	return ar_binding_result(&binding, output);
+}
+
+int ar_rf_host_peer(const uint8_t *data, size_t length)
+{
+	if (!data || length != 4) { return -22; }
+	if (receive_operation != 76 || !host_initialized || information.error) { return -11; }
+	memcpy(dev_config.configured_peer, data, 4);
+	/* Persist in saved loader state for stop/start and deferred recovery;
+	 * durable storage is still performed by the stock Linux backend. */
+	memcpy(host_config.channels + 8, data, 4);
+	if (!binding.enabled) { binding_identity(); }
+	return 0;
+}
+
 int ar_rf_host_candidates(const uint8_t *data, size_t length)
 {
 	/* Original 0x221dca copies count four-byte addresses; 0x21b3e2
@@ -1560,7 +1621,7 @@ int ar_rf_host_candidates(const uint8_t *data, size_t length)
 	if (receive_operation != 76 || !host_initialized || information.error ||
 	    (!host_prepared && information.phase != AR_RF_RECEIVING && !host_start_required)) { return -11; }
 	unsigned remove_peer = 0;
-	if (dev_active && memcmp(receiver.accepted_peer, dev_config.configured_peer, 4)) {
+	if (!binding.enabled && dev_active && memcmp(receiver.accepted_peer, dev_config.configured_peer, 4)) {
 		unsigned match = 0;
 		for (unsigned i = 0; i < data[1]; i++) {
 			if (!memcmp(receiver.accepted_peer, data + 2 + i * 4, 4)) { match = 1; break; }
@@ -2605,6 +2666,9 @@ static int prepare_saved_host(void)
 		host_config.has_power ? &host_config.power : NULL);
 	if (!result) {
 		memcpy(dev_candidates, candidates, count * 4); dev_config.candidate_count = count;
+		dev_config.pairing = binding.enabled;
+		memcpy(dev_config.pairing_skip, binding.skip, sizeof binding.skip);
+		if (binding.enabled) { binding_identity(); }
 	}
 	return result;
 }
@@ -2659,6 +2723,7 @@ int ar_rf_host_control(unsigned operation, size_t payload_length)
 	}
 	if (!host_initialized || information.phase == AR_RF_RECEIVING) { return -7; }
 	host_initialized = host_prepared = 0; host_start_required = 1; lifecycle.deinitializations++;
+	memset(&binding, 0, sizeof binding);
 	return 0;
 }
 const struct ar_rf_lifecycle_info *ar_rf_lifecycle_information(void)

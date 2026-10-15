@@ -184,6 +184,21 @@ static void receive(const struct ar_frame *frame, void *context)
 		size_t size = ar_encode(reply, sizeof reply, &response);
 		(void)ar_sdio_send(reply, size); return;
 	}
+	if (frame->reqid == UINT32_C(0x02000002) || frame->reqid == UINT32_C(0x02000003) ||
+	    frame->reqid == UINT32_C(0x01000001)) {
+		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid};
+		if (frame->status) { response.status = AR_STATUS_INVALID; }
+		else if (frame->reqid == UINT32_C(0x02000002)) {
+			response.status = ar_rf_host_pairing(frame->payload, frame->length);
+		} else if (frame->reqid == UINT32_C(0x02000003)) {
+			response.status = ar_rf_host_peer(frame->payload, frame->length);
+		} else {
+			response.status = frame->length ? AR_STATUS_INVALID : ar_rf_host_pairing_result(transformed);
+			if (!response.status) { response.payload = transformed; response.length = 164; }
+		}
+		size_t size = ar_encode(reply, sizeof reply, &response);
+		(void)ar_sdio_send(reply, size); return;
+	}
 	if (frame->reqid == UINT32_C(0x02000004)) {
 		int status = frame->status ? AR_STATUS_INVALID : ar_rf_host_candidates(frame->payload, frame->length);
 		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid, .status = status};

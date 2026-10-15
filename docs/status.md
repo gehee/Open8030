@@ -5,6 +5,30 @@ Hardware validation currently covers only the Ascent VRX with matched 18.21.10
 board inputs. Other AR8030 receiver variants and transmitter/AP operation remain
 unverified; the supplied loading helpers target the tested Ascent VRX configuration.
 
+## Binding development trial
+
+The development worktree adds DEV mode-0/slot-0 binding commands and radio
+transitions. The stage-233 trial completed physical button binding through the
+original Linux backend: the host reported success, selected the discovered peer,
+and retained that identity in its saved configuration. A receiver reboot followed
+by reloading Open8030 reconnected to the same peer. This used the existing hardware
+pair; acquisition of a previously unknown identity is covered by synthetic
+peripheral tests, not a separate unpaired hardware set.
+
+The stage-234 revision fixes cancellation of unfinished pairing. Hardware checks
+show reconnection in approximately one second, an empty pairing result after
+cancellation and a stable link after repeating disable. All 66 native sanitizer
+suites and 18 Python tests passed before that fix; the affected RF suite was
+rerun and passes afterward. Physical button binding on this final revision is
+still pending.
+
+This trial is **not the accepted baseline**. HDMI-to-USB captures show a visible
+camera scene after a fresh receiver boot, but also video socket drops and image
+corruption. Drops occur in the preceding stage-233 fresh-start capture as well as
+after stage-234 cancellation; their cause has not been isolated. Warm loading also
+reproduced the existing black-camera/live-overlay symptom. See
+[binding coordination](wireless-protocol.md#button-binding-and-host-coordination).
+
 ## Working baseline
 
 The baseline provides a source-built bootstrap, autonomous initialization,

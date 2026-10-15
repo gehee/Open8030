@@ -24,6 +24,21 @@ restore sooner. These timers attempt recovery; they cannot guarantee recovery fr
 a hung kernel or a failed driver reload. A preflight failure can happen before
 any services change or any rollback timer is armed.
 
+## Binding a transmitter
+
+With Open8030 running on the tested Ascent VRX, use the normal binding-button
+procedure on the receiver and transmitter. The original Linux backend controls
+the binding window and saves the selected peer. There is no additional Open8030
+binding command to run on the host computer.
+
+Wait for the stock UI to finish binding, then check the visible camera scene.
+The receiver backend log records entry into pairing, success or failure, and
+peer selection. A saved peer can reconnect after reboot, but a reboot restores
+the stock radio firmware; run Open8030 again to load the replacement.
+
+This path targets the tested DEV mode-0/slot-0 configuration. The protocol details
+and validation boundaries are in [binding coordination](wireless-protocol.md#button-binding-and-host-coordination).
+
 ## Local outputs and receiver logs
 
 | Location | Contents |

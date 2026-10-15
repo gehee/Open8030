@@ -38,6 +38,7 @@ TESTS = {
     'sdio_device': ('sdio_device', ['AR_SDIO_SIMULATED', 'AR_SDIO_STOCK_MEMORY_ATTRIBUTES=1'], []),
     'mac': ('mac', [], []),
     'dev': ('dev mac', [], []),
+    'binding': ('binding', [], []),
     'dev_tx': ('dev_tx mac dev', [], []),
     'dev_mcs': ('dev_mcs', [], []),
     'ap_time': ('ap_time', [], []),
@@ -70,7 +71,7 @@ TESTS = {
     'sfdp': ('sfdp', [], []),
     'factory_storage': ('flash flash_spi sfdp factory power_config power json', [], ['-lz']),
     'boot': ('boot config json power_config power dev_mcs factory flash_spi sfdp flash', [], []),
-    'rf_device': ('rf_device mac dev dev_tx dev_mcs tx_mcs interleaver tx_irq fch_monitor channel_monitor power power_control ap_time command scan scan_scores tune phy_control phy_receive', ['AR_RF_SIMULATED'], []),
+    'rf_device': ('rf_device mac dev binding dev_tx dev_mcs tx_mcs interleaver tx_irq fch_monitor channel_monitor power power_control ap_time command scan scan_scores tune phy_control phy_receive', ['AR_RF_SIMULATED'], []),
     'bootstrap': ('', ['AR_BOOTSTRAP_SIMULATED'], []),
 }
 

@@ -1790,6 +1790,68 @@ int main(void)
 	assert(ar_rf_power_information()->level[0]==25);
 	/* Bounded diagnostics own their field setup independently. Returning to
 	 * normal operation must await a fresh preparation, not reuse stale cache. */
+	/* Binding must admit a previously unknown peer without a local-position
+	 * list, then expose a result only after matching login. */
+	uint8_t pairing_request[14] = {1,1}, pairing_result[164];
+	uint8_t pair_advert[32] = {32,1,0,0x40,1,0,0,0,9,10,11,12,9};
+	uint8_t pair_login[43]; memcpy(pair_login,login_control,sizeof pair_login);
+	memcpy(pair_login+8,pair_advert+8,4);
+	pair_login[6]=pair_login[7]=0; pair_login[12]=13;
+	memset(pair_login+39,0,4);
+	unsigned binding_writes=writes;
+	assert(ar_rf_host_pairing(pairing_request,13)==-22);
+	assert(ar_rf_host_peer(pair_advert+8,3)==-22 && writes==binding_writes);
+	pairing_request[0]=0;
+	assert(!ar_rf_host_pairing(pairing_request,14) && writes==binding_writes);
+	pairing_request[0]=1;
+	inject_receive=0;
+	assert(!ar_rf_host_pairing(pairing_request,14));
+	assert(recovery->pending==4);
+	ar_rf_poll();
+	assert(!recovery->pending && recovery->last_reason==4);
+	assert(!(*reg(0x0a110de0)&255) && !(*reg(0x0a110df0)&255));
+	assert(!ar_rf_host_pairing_result(pairing_result) && !pairing_result[0]);
+	for (unsigned step=0;step<2;step++) {
+		uint8_t *p=step?pair_login:pair_advert;
+		size_t size=step?sizeof pair_login:sizeof pair_advert;
+		p[2]=0; checksum=0;
+		for(unsigned i=0;i<size;i++) { checksum=ar_mac_crc8_step(checksum^p[i]); }
+		p[2]=checksum;
+		assert(!ar_mac_encode(valid_packet,sizeof valid_packet,step,0,p,size,NULL,0,&packet_size));
+		*reg(0x0a110f90)=packet_size; inject_receive=1; injected=0; ar_rf_poll(); ar_rf_poll();
+		assert(search->dev_state==step+1);
+		assert(!ar_rf_host_pairing_result(pairing_result));
+		assert(pairing_result[0]==step);
+	}
+	assert(!memcmp(pairing_result+1,pair_advert+8,4));
+	/* The host clears candidates after success, before disabling pairing
+	 * and selecting the peer. That must not tear down the new link. */
+	candidates[1]=0;
+	assert(!ar_rf_host_candidates(candidates,sizeof candidates) && !recovery->pending);
+	pairing_request[0]=0;
+	assert(!ar_rf_host_pairing(pairing_request,14));
+	assert(!ar_rf_host_pairing_result(pairing_result) && !pairing_result[0]);
+	assert(!ar_rf_host_peer(pair_advert+8,4));
+	assert((*reg(0x0a110de0)&255)==4 && (*reg(0x0a110df0)&255)==4);
+	assert(!ar_rf_host_status(0,host_status) && !memcmp(host_status+254,pair_advert+8,4));
+	assert(!ar_rf_stop_host());
+	assert(!ar_rf_host_control(0,0));
+	assert(!ar_rf_host_status(0,host_status) && !memcmp(host_status+254,pair_advert+8,4));
+	/* Restore the fixture's peer/candidates for subsequent failure tests. */
+	assert(!ar_rf_host_peer(search_plan+8,4));
+	candidates[1]=1;
+	inject_receive=0;
+	pairing_request[0]=1;
+	assert(!ar_rf_host_pairing(pairing_request,14)); ar_rf_poll();
+	assert(!search->dev_state);
+	pairing_request[0]=0;
+	assert(!ar_rf_host_pairing(pairing_request,14) && recovery->pending==4);
+	ar_rf_poll();
+	assert(!recovery->pending && !ar_rf_host_pairing_result(pairing_result) && !pairing_result[0]);
+	/* Normal search restores the zero acquisition identity, rather than
+	 * leaving the configured-peer-only hash from cancelled pairing. */
+	assert(!(*reg(0x0a110de0)&255) && !(*reg(0x0a110df0)&255));
+	inject_receive=1;
 	assert(!ar_rf_stop_host());
 	assert(!ar_rf_monitor_plan(5770000,100,4,64,connected_plan,sizeof connected_plan));
 	assert(!(*reg(0x0a110480)&2) && compensation_writes > loaded_writes);

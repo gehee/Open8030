@@ -177,14 +177,14 @@ enum ar_dev_lock_result ar_dev_lock_evaluate(const struct ar_dev_idle_config *co
 	    !config->channel_count || config->receive_channel >= config->channel_count) {
 		return AR_DEV_LOCK_BAD_CONFIG;
 	}
-	/* Retuning, pairing and other frame modes require additional effects.
+	/* Retuning and other frame modes require additional effects.
 	 * Keep them explicit instead of extending this fixed-mode decision. */
-	if (config->mode || config->pairing || control->mode ||
+	if (config->mode || control->mode ||
 	    control->slot_bitmap != config->slot_bitmap ||
 	    control->receive_channel != config->receive_channel ||
 	    control->transmit_channel != config->receive_channel ||
 	    ((control->data[3] >> 5) & 1) != config->relay ||
-	    pairing_match(config, control, 0, 8) != 0) { return AR_DEV_LOCK_PROFILE; }
+	    pairing_match(config, control, 0, 8) < 0) { return AR_DEV_LOCK_PROFILE; }
 	/* 0x228b12 compares against the admitted peer once the node is locked;
 	 * another configured candidate cannot replace that identity here. */
 	if (memcmp(lock->peer, control->peer, 4)) { return AR_DEV_LOCK_PEER; }

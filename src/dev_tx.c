@@ -11,7 +11,7 @@ int ar_dev_report_encode(uint8_t *output, size_t capacity, const struct ar_dev_r
 	 * offset 8. 0x238630..0x238762 fills the mode-0/no-extension report. */
 	uint8_t bytes[16] = {16};
 	unsigned slot = report->state ? report->assigned_slot : 8;
-	bytes[4] = report->state | (uint8_t)(slot << 2);
+	bytes[4] = report->state | (uint8_t)(slot << 2) | (report->pairing ? 0x40 : 0);
 	bytes[5] = report->receive_channel;
 	bytes[6] = slot == 8 ? 0 : slot < 12 ? report->slot_value : 63;
 	bytes[6] |= (((report->status_a ^ 2) >> 1) & 1) << 6;

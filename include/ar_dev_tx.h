@@ -11,7 +11,7 @@ struct ar_dev_report {
 	uint8_t state, assigned_slot, receive_channel, slot_value;
 	/* Raw status bytes corresponding to original 0x26a874 and 0x26a884.
 	 * Their physical semantics remain unresolved; preserve the observed bits. */
-	uint8_t status_a, status_b;
+	uint8_t status_a, status_b, pairing;
 };
 int ar_dev_report_encode(uint8_t *output, size_t capacity, const struct ar_dev_report *report);
 

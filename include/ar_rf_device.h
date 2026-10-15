@@ -310,6 +310,9 @@ struct ar_rf_recovery_info {
 };
 const struct ar_rf_recovery_info *ar_rf_recovery_information(void);
 int ar_rf_host_candidates(const uint8_t *data, size_t length);
+int ar_rf_host_pairing(const uint8_t *data, size_t length);
+int ar_rf_host_pairing_result(uint8_t output[164]);
+int ar_rf_host_peer(const uint8_t *data, size_t length);
 const struct ar_rf_rx_info *ar_rf_receive_information(void);
 /* Matched GET_STATUS wire layout. Available after a DEV4 fixed-channel plan;
  * unrequested/reserved bytes are zero. Stopped monitors never report linked. */

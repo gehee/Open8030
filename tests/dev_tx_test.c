@@ -30,6 +30,12 @@ int main(void)
 	assert(ar_dev_tx_retire(&context, 1) == 0 && context.owned == 0);
 	assert(ar_dev_tx_prepare(&context, &report, 31, &packet) == 0);
 	assert(!memcmp(packet->bytes, expected, 24));
+	uint8_t paired_report[16];
+	report.pairing = 1;
+	assert(!ar_dev_report_encode(paired_report, sizeof paired_report, &report));
+	assert(paired_report[4] == 0x61);
+	assert((paired_report[2] | (unsigned)paired_report[3] << 8) == crc16(paired_report, 16));
+	report.pairing = 0;
 	assert(context.owned == 1 && context.sequence == 1);
 	assert((uintptr_t)packet->bytes % 4 == 0 && (uintptr_t)(packet->bytes + 8) % 4 == 0);
 	struct ar_dev_tx_context before = context;
