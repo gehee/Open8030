@@ -2,12 +2,12 @@
   "baseline": "working-video",
   "target": "VRX/GND Ascent VRX; matched 18.21.10 inputs",
   "runtime": {
-    "bytes": 60920,
-    "sha256": "fc9d233882485851b50576bfa6dc7e9e540d17bf79910d244d8279ecd8e83380",
+    "bytes": 61104,
+    "sha256": "151b3109f5ac888895c788e1e0af627a06a4da25a7db70585c327b94dd54f8d6",
     "load_address": "0x204000"
   },
   "ram": {
-    "used_bytes": 659888,
+    "used_bytes": 660400,
     "capacity_bytes": 704512
   },
   "private_board_profile": {
@@ -19,20 +19,20 @@
     "sha256": "c69e46c57bbb3e5fc7fe0c5581e59fb5735dcf8a97bf0e05ae7aaa0273657768"
   },
   "container": {
-    "bytes": 78848,
-    "sha256": "8078789789a9bef44c5ffe005b0461fa45ae38d8284c543da19837712b61c773",
+    "bytes": 79360,
+    "sha256": "7794d8629f70419237b3a5579c758c87e87f2943556405ce06f1a23ec6261877",
     "payload_alignment": 512
   },
   "original_stock_sha256": "dc58247910af564376350404383c5c411cbec21663873fba24e70c61a3584e3c",
   "external_config_sha256": "5cf0cd31645d4786c6b04399c6c609386d427ffc4c6d7f6e42d81e3e770c2a74",
   "scope": "Experimental Ascent VRX 18.21.10 native video baseline; private inputs not distributed",
   "generated_container": {
-    "bytes": 78848,
-    "sha256": "8078789789a9bef44c5ffe005b0461fa45ae38d8284c543da19837712b61c773",
+    "bytes": 79360,
+    "sha256": "7794d8629f70419237b3a5579c758c87e87f2943556405ce06f1a23ec6261877",
     "payload_alignment": 512,
     "configuration": "zero-filled 16 KiB; external loader JSON required",
     "hardware_verified": true,
-    "verification_scope": "Ascent VRX 18.21.10: GET_REG stock/native reply checks; 30-second direct HDMI capture with dark camera scene matching fresh stock, 33 linked/AP-time samples and zero sampled socket drops; uncontrolled scene and no measured latency or full telemetry parity",
+    "verification_scope": "Ascent VRX 18.21.10: compensation retained through stop/start and deinit/init/start; 65 seconds of direct HDMI capture with dark camera scene matching fresh stock, 77 linked/AP-time samples and zero sampled socket drops; warm restoration required reboot; no controlled freshness, measured latency or full telemetry parity",
     "verified_utc_date": "2026-10-15"
   }
 }

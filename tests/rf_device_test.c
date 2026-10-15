@@ -8,6 +8,7 @@
 
 static struct { uint32_t address, value; } registers[1024];
 static unsigned used, writes;
+static unsigned compensation_writes;
 static uint64_t ticks;
 static unsigned emulate_otp;
 static uint32_t otp_words[64];
@@ -109,6 +110,10 @@ uint32_t ar_rf_test_read(uint32_t address)
 }
 void ar_rf_test_write(uint32_t address, uint32_t value)
 {
+	if (address == 0x0a110480 || address == 0x0a11048c ||
+	    address == 0x0a1104a0 || address == 0x0a1104a4 || address == 0x0a1104a8) {
+		compensation_writes++;
+	}
 	/* Reject an accidentally enlarged encoded BB offset, rather than treating
 	 * unmapped MMIO as a harmless synthetic register. */
 	assert((address >= 0x0a110000 && address < 0x0a111000) ||
@@ -1503,6 +1508,17 @@ int main(void)
 	assert(search->acquisition_ready && search->transition_status == 1 && !(*reg(0x0a110800) & 4));
 	restarts = search->search_restarts; ticks += 100 * 40000; ar_rf_poll();
 	assert(search->search_suspended && search->search_restarts == restarts);
+	/* Load the calibrated context through a real preparation notification.
+	 * Restart and recovery must retain it even if pre-encode is polled before
+	 * the next preparation IRQ. A register equality check after reloading
+	 * would miss the unsafe interval, so also count compensation writes. */
+	*reg(0x0a110e6c) = 0; inject_command = 1; ar_rf_poll();
+	assert(*reg(0x0a110480) & 2);
+	const uint32_t compensation_addresses[] = {0x0a110480,0x0a11048c,0x0a1104a0,0x0a1104a4,0x0a1104a8};
+	uint32_t compensation_saved[5];
+	for (unsigned i=0;i<5;i++) { compensation_saved[i]=*reg(compensation_addresses[i]); }
+	unsigned loaded_writes = compensation_writes;
+	inject_command = 1; ar_rf_poll(); assert(compensation_writes == loaded_writes);
 	const struct ar_rf_lifecycle_info *life = ar_rf_lifecycle_information();
 	assert(life->version == 1 && life->state == 2);
 	unsigned starts = life->starts, stops = life->stops, cancelled = life->cancelled_rx;
@@ -1537,6 +1553,8 @@ int main(void)
 		}
 		assert(!ar_rf_host_control(0,0) && life->starts==starts+cycle+1);
 		assert(ar_rf_lifecycle_information()->state==2 && !search->acquisition_ready);
+		assert(compensation_writes == loaded_writes);
+		for (unsigned i=0;i<5;i++) { assert(*reg(compensation_addresses[i])==compensation_saved[i]); }
 		if (cycle == 1) { assert(ar_rf_host_ap_time()==UINT32_MAX); }
 		else {
 			uint32_t elapsed = (uint32_t)((ticks-old_ticks)/40000);
@@ -1547,6 +1565,10 @@ int main(void)
 		/* The latest host candidates survived every native state rebuild. */
 		injected = 0; ar_rf_poll(); ar_rf_poll();
 		assert(search->acquisition_ready && search->transition_status==1);
+		*reg(0xe080117c) |= 1; ar_rf_poll(); /* Pre-encode precedes prepare. */
+		assert(compensation_writes == loaded_writes && (*reg(0x0a110480)&2));
+		*reg(0x0a110e6c) = 0; inject_command = 1; ar_rf_poll();
+		assert(compensation_writes == loaded_writes);
 	}
 	assert(life->cancelled_rx==cancelled+1);
 	/* Normal sessions reacquire autonomously. Unrelated PHY users cannot
@@ -1562,6 +1584,8 @@ int main(void)
 		*reg(0x0a110f00) = 0x80; *reg(0xe0801168) |= 1; ar_rf_poll();
 	}
 	assert(recovery->completed==recovered+1 && recovery->fch_losses==lost+1 && !recovery->failures);
+	assert(compensation_writes == loaded_writes);
+	for (unsigned i=0;i<5;i++) { assert(*reg(compensation_addresses[i])==compensation_saved[i]); }
 	assert(ar_rf_information()->phase==AR_RF_RECEIVING && !search->acquisition_ready && !search->dev_state);
 	assert_channel_plls(5770000);
 	/* Candidate removal drains a pending DMA without delivering its old
@@ -1606,11 +1630,24 @@ int main(void)
 			assert(!ar_rf_host_control(0,0));
 		}
 	}
+	assert(compensation_writes == loaded_writes);
+	/* Bounded diagnostics own their field setup independently. Returning to
+	 * normal operation must await a fresh preparation, not reuse stale cache. */
+	assert(!ar_rf_stop_host());
+	assert(!ar_rf_monitor_plan(5770000,100,4,64,connected_plan,sizeof connected_plan));
+	assert(!(*reg(0x0a110480)&2) && compensation_writes > loaded_writes);
+	ticks += 100*40000; ar_rf_poll();
+	assert(!ar_rf_prepare_config(5770000,4,search_plan,sizeof search_plan,1));
+	assert(!ar_rf_host_candidates(candidates,sizeof candidates));
+	assert(!(*reg(0x0a110480)&2));
 	/* Recovery failure cannot reuse an outstanding DMA slot or resume TX. */
 	ticks+=11*40000; ar_rf_poll();
 	assert(!ar_mac_encode(valid_packet,sizeof valid_packet,0,0,control,sizeof control,NULL,0,&packet_size));
 	*reg(0x0a110f90)=packet_size; injected=0; ar_rf_poll(); ar_rf_poll();
 	assert(search->acquisition_ready);
+	loaded_writes = compensation_writes;
+	*reg(0x0a110e6c) = 0; inject_command = 1; ar_rf_poll();
+	assert((*reg(0x0a110480)&2) && compensation_writes > loaded_writes);
 	/* A stuck DMA must fail stop within its bound, keep its storage owned and
 	 * refuse start/init. A late completion cannot revive the stopped session. */
 	delay_dma=1; injected=0; ar_rf_poll();

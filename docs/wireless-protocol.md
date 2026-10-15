@@ -435,7 +435,12 @@ look-ahead bandwidth programming. Calibration selection, board switching and
 TX-buffer ownership are distinct parts of this process.
 
 Open8030 currently implements the fixed frame, the observed 5–6 GHz TX controls
-and a single calibrated context. It does not yet implement the original metadata
+and a single calibrated context. Loaded compensation survives normal stop/start,
+deinit/init/start and native recovery. Probe, default loading, calibration and
+transitions to/from diagnostic modes invalidate that cache. Normal restart no
+longer clears compensation while waiting for another preparation notification.
+This has hardware stop/start and deinit/init/start coverage; recovery retention
+has synthetic coverage. Open8030 does not yet implement the original metadata
 cursor and all preparation transitions. In particular, matching gain registers
 does not establish equivalent command ordering or calibration lifetime. The
 [parity checklist](parity.md#command-preparation-contract-investigation) records

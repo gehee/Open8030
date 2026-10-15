@@ -41,13 +41,31 @@ reboot into stock and remained visible after loading Open8030 again. The same
 warm-restoration symptom recurred before the AP-time candidate was loaded; a full
 receiver reboot again restored stock video. The cause has not been isolated.
 
-The current development image also implements original register-read request
+The preceding development image added original register-read request
 `0x01000064`, with 360 original-instruction comparisons and stock/native wire
 checks. Its 30-second direct HDMI capture shows the same dark textured camera
 scene as fresh stock. All 33 native status samples are linked, with advancing AP
 time and zero sampled socket drops. Scene lighting/freshness was not controlled;
 this is not a new bright-scene quality or latency measurement. The image was
 retained after inspection.
+
+The current image fixes calibration lifetime across normal context rebuilds:
+loaded high-band TX compensation survives stop/start and stop/deinit/init/start.
+The previous code cleared it until another preparation notification. Validation
+includes 128 original-reset cases, regression tests that fail on the previous
+code, all 21 native C suites and 18 Python tests. Hardware register checks confirm
+retention across both lifecycle sequences. Startup, post-transition and final
+reload captures total 65 seconds with 77 linked samples, advancing AP time and
+zero sampled socket drops; the dark textured scene matches freshly rebooted
+stock. This is not controlled freshness or bright-scene quality verification.
+
+The first test window expired before retention. A subsequent warm reload showed
+the disconnected HDMI background despite a radio link; rebooting into stock and
+reloading restored the scene. The final candidate was inspected and retained in
+RAM. Candidate-removal calibration retention has synthetic coverage only: its
+planned hardware check stopped before mutation when the large RX diagnostic
+returned an unexpected backend response. See [calibration lifetime](parity.md#calibration-lifetime-across-normal-restart)
+for the original-comparison assumptions and remaining preparation gaps.
 
 A separate configuration-only test reproduced acquisition failure at initial
 power level 11 using the preceding accepted image. No video was delivered;

@@ -362,6 +362,7 @@ int ar_rf_probe(void)
 {
 	memset(&information, 0, sizeof information);
 	receive_operation = 0; host_prepared = 0;
+	dev_compensation_loaded = 0;
 	pins_configured = 0;
 	/* Stock Ascent VRX application entry sets these two system-control bits
 	 * before baseband initialization (0x20abba); preserve all other bits. */
@@ -437,6 +438,7 @@ int ar_rf_load_defaults(const uint8_t *records, size_t length)
 		if (offset % 4 || offset > 0xdfc || records[i + 2] || records[i + 3]) { return failure(-22); }
 	}
 	if (!information.default_writes) { configure_clocks(); }
+	dev_compensation_loaded = 0;
 	for (size_t i = 0; i < length; i += 8) {
 		unsigned offset = records[i] | (unsigned)records[i + 1] << 8;
 		write32(BB + offset, le32(records + i + 4));
@@ -469,6 +471,7 @@ static int idle(void)
 int ar_rf_calibrate(void)
 {
 	if (information.phase != AR_RF_DEFAULTS || information.default_writes != 704) { return failure(-22); }
+	dev_compensation_loaded = 0;
 	for (unsigned user = 0; user < 11; user++) {
 		uint32_t offset = ((user >> 1) + 0x2ca) * 0x40000;
 		field(user == 10 ? 0xb600d01 : offset | ((user & 1) * 0x1000 + 0x700) | 1, 1);
@@ -1454,7 +1457,12 @@ static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t 
 	memset(&mcs_info, 0, sizeof mcs_info); mcs_info.first_observed_mcs = 25;
 	if (operation < 67) { memset(&dev_mcs, 0, sizeof dev_mcs); mcs_sync_mmio = 0; }
 	memset(phy_header_valid, 0, sizeof phy_header_valid); memset(phy_eop_seen, 0, sizeof phy_eop_seen);
-	dev_active = dev_compensation_loaded = 0;
+	dev_active = 0;
+	/* Stock's preparation cache belongs to the calibrated radio, not a link
+	 * session. Mode-0 engine resets preserve it. Only normal host contexts
+	 * may reuse this single supported band; diagnostics can replace fields
+	 * independently and must not share their cached state with normal use. */
+	if (operation != 76 || receive_operation != 76) { dev_compensation_loaded = 0; }
 	memset(&fch_monitor, 0, sizeof fch_monitor); recovery_reset_pending = 0;
 	receiver.before_monitor_header = read_header_status();
 	read_control_header(receiver.before_monitor_control);
@@ -1521,14 +1529,16 @@ static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t 
 	}
 	field(0xb601008, identity_hash); field(0xb601803, 1); field(0xb601b02, 1);
 	if (operation >= 44) {
-		/* Stock initializer and trial-67 prestart agree: these compensation
-		 * fields retain defaults before command processing. 0x223128 applies
-		 * calibration conditionally, not globally at receive startup. Restore
-		 * only the affected fields so prior diagnostics cannot leak into this
-		 * control; full transmit pre-command scheduling is still unported. */
-		field(0x4800101, 0);
-		field(0x4a00010, 0); field(0x4a41010, 0);
-		field(0x48c0008, read32(BB + 0x48c) & 0x33);
+		/* Before the first TX preparation, retain initializer defaults. Once
+		 * loaded, preserve compensation through normal restart/recovery, as
+		 * 0x223128's cached-bank check and mode-0 reset helpers do. Clearing it
+		 * here could expose a pre-encode before the next prepare notification.
+		 * Full command metadata and multi-band preparation remain unported. */
+		if (!dev_compensation_loaded) {
+			field(0x4800101, 0);
+			field(0x4a00010, 0); field(0x4a41010, 0);
+			field(0x48c0008, read32(BB + 0x48c) & 0x33);
+		}
 	} else {
 		/* Historical globally-applied compensation diagnostic. */
 		field(0x4800101, 1);

@@ -73,7 +73,7 @@ and scenario; they must be repeated after relevant changes.
 | AP full/compact controls | Selected mode-0/slot-0 admission and connected control | All extensions, remote synchronization effects, changed channels, slots, stale/duplicate controls and unsupported modes. |
 | Internal port-0 commands | Stream parsing; login checksum ACK transmission | Receiving a command currently mainly records it. Inventory and implement each original command's effects, responses and retries. |
 | PHY commands | See command table below | Exact callbacks, TTL/replacement ordering and side effects for every command. |
-| Hardware command preparation | Fixed frame and selected TX preparation effects | Original command-ring selection, per-direction board callbacks, calibration-bank/cache transitions, look-ahead programming and buffer-ownership effects. The original routine has an offline contract trace; the native handler does not yet implement that complete contract. |
+| Hardware command preparation | Fixed frame, selected TX preparation effects and normal-session calibration retention | Original command-ring selection, per-direction board callbacks, calibration-bank/cache transitions, look-ahead programming and buffer-ownership effects. The original routine has an offline contract trace; the native handler does not yet implement that complete contract. |
 | MCS adaptation | RX adaptation and limited TX increase | TX decrease/interleaver drain, all PHY keys, retry/expiry, loss interactions and sustained adaptation. |
 | Power and calibration | Initial user-0 setup at level 25 | Level 11 also fails acquisition in the accepted image with only its loader setting changed. Resolve the low-power transmit path, then normal backend power writes, all users, peer policy and calibration effects. |
 | Channel/band selection | Configured search and matched channel | Independent uplink changes, subchannels, hopping, scan scoring, automatic policies, rollback and cross-band operation. |
@@ -307,6 +307,37 @@ No firmware candidate was loaded for this investigation. A direct 10-second
 HDMI-to-USB capture of the retained register-read image still shows the dark
 camera scene, with 13 linked samples, valid AP time and zero sampled socket
 drops. Lighting, controlled freshness and clear-scene quality remain unverified.
+
+### Calibration lifetime across normal restart
+
+The current native image preserves loaded high-band TX compensation through
+normal stop/start and stop/deinit/init/start. Previously, rebuilding the receive
+context cleared these fields and its software cache, leaving an interval before
+the next TX preparation with compensation disabled. Probe, default loading,
+calibration and transitions to/from diagnostic modes still invalidate the cache.
+
+An independent offline comparison executes four original successful engine-reset
+helpers across 128 cases and binds 127 instruction locations to the matched
+original bytes. These cases retain the original calibration cache and seeded
+compensation fields. Peripheral acknowledgement is simulated and field writes
+are intercepted: this does not execute the complete original lifecycle task graph
+or establish hardware reset effects independently. The previous preparation
+trace supplies the separate cached-bank contract.
+
+Native regression tests count writes as well as checking final values, so a
+clear-and-reload cannot conceal the disabled interval. The new tests fail against
+the previous native implementation and pass with the fix. They cover pre-encode
+before the next preparation, normal restart, recovery and diagnostic transitions.
+Hardware stop/start and stop/deinit/init/start preserve the five observed
+compensation words and restore the stock-matching dark camera scene. This does
+not close multi-bank preparation, low-power acquisition or RF-power accuracy.
+
+A planned hardware candidate-removal test stopped before mutation: the large
+native RX diagnostic received an unexpected backend response. The cause remains
+unresolved; candidate-removal calibration retention currently has synthetic
+coverage only. A warm stock restoration followed by candidate reload also
+reproduced the known disconnected HDMI output. A full receiver reboot restored
+stock video before the final candidate reload and inspection.
 
 Next, extend the core inventory through the transport dispatchers and indirect
 callbacks, and bind each command's behavior to its comparison tests. Then cover
