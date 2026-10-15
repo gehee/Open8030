@@ -216,11 +216,21 @@ The accepted image remains in RAM. See
 
 A source-only PHY transport helper now matches 17,912 original-instruction cases
 covering enqueue, transmit countdown, cancellation, AP time generation and shared
-receive-timer dispatch. Its sanitizer suite passes. Receive validation/cache
-replacement, callback bodies and runtime integration remain open. A fresh
+receive-timer dispatch. Its sanitizer suite passes. Callback bodies and runtime
+integration remain open. A fresh
 20-second HDMI-to-USB capture rechecks the unchanged accepted image, with the
 reference dark scene, 23 linked/AP-time samples and zero sampled socket drops.
 See [pending PHY command transport](parity.md#pending-phy-command-transport).
+
+The source-only receive helper now matches 26,120 original-instruction cases for
+validation, cache replacement, mode-3 flags, command-0 admission records and
+timer decisions. Another 6,455 receive-then-expire sequences confirm that cached
+command 0 or 7 does not dispatch through the original callback table. Both PHY
+sanitizer suites and the prior 17,912 transport comparisons pass. This does not
+close runtime command effects or physical timer/IRQ integration. A fresh
+20-second HDMI-to-USB capture of the unchanged accepted image shows the reference
+dark scene, 23 linked/AP-time samples and zero sampled socket drops; that image
+remains running. See [receive coverage](parity.md#phy-control-receive-and-cache-replacement).
 
 A separate configuration-only test reproduced acquisition failure at initial
 power level 11 using the accepted AP-time image. No video was delivered;

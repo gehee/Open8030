@@ -360,6 +360,15 @@ dispatch, including retained payload tails and mode-3 checksum handling. It is
 not yet connected to Open8030's runtime channel-policy path. See
 [transport coverage and boundaries](parity.md#pending-phy-command-transport).
 
+The separately compared receive helper covers the original mode-3 header
+behavior: only the checksum's low nibble is checked, while the high nibble
+provides per-slot retransmission bits. The high nibble of byte 2 supplies a
+per-slot disable mask. A matching command-0 record can synthesize an admission
+request for an unconnected DEV. These effects remain outside the runtime build;
+the table above describes current runtime effects. A cached command 0 or 7 does
+not cancel an earlier timer, but its eventual expiry has no registered command
+callback. See [receive comparison and limits](parity.md#phy-control-receive-and-cache-replacement).
+
 ### AP-time synchronization
 
 Command 7 uses the header's usual TTL bits differently. Timestamp bits 0–27

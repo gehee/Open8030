@@ -1032,6 +1032,54 @@ in RAM. No fresh stock capture or controlled freshness/latency measurement was
 performed. The new transport helpers still need receive-path, callback, worker
 and runtime integration before they can support normal channel-policy traffic.
 
+### PHY control receive and cache replacement
+
+[The receive helper](../src/phy_receive.c) now compares the original seven-byte
+read, checksum/length validation, shared cache, mode-3 side effects, command-0
+admission construction and timer decisions. It is outside the runtime build;
+the existing restricted runtime command effects remain unchanged.
+
+Read failure or invalid format leaves the previous cache intact. Mode 3 checks
+only the checksum's low nibble. For DEV role 1 it prepares retransmission state
+when needed, consumes the slot's high-nibble bit and updates the disable flag
+and corresponding field from byte 2. Other roles skip these DEV effects. An
+unconnected DEV with matching MAC XOR and position can synthesize a 150-byte
+admission record from command 0. The record is compared byte for byte; admission
+itself remains a callback boundary, including callback mutations and errors.
+
+Command 7 replaces the AP-time offset without cancelling an earlier timer.
+Other nonzero commands dispatch at TTL 31, stop the timer and dispatch at TTL 1,
+or arm it at TTL 2–30 using wrapping 32-bit frame-duration arithmetic. TTL 0
+does nothing further. Dispatch re-reads the cache after the stop callback, so a
+callback's replacement message is retained. Command 0 accepts every declared
+length; in mode 3, admission can use that record even when its length is not 3.
+
+Fresh original execution matches **26,120 receive cases** and **6,455 subsequent
+expiry sequences**. Cases cover command/length/TTL boundaries, checksum failures,
+mode/role differences, every retransmission phase byte, slot masks, admission
+matching, clock/frame wrap, read failures and callback mutation. Complete state
+and ordered effects match, including 1,262 field writes, 2,680 timer stops,
+1,680 timer starts, 2,734 dispatches, 1,280 preparations and 126 admission calls.
+The complete DEV and retransmission objects are checked for collateral writes.
+All 371 executed instruction locations, descriptor lengths, callback presence
+and CRC table bytes are bound to the matched original payload/container/analysis
+ELF. Original callbacks are absent for commands 0, 7 and 9.
+
+The expiry sequences exposed an overly broad native storage guard: a valid
+command-0 cache can declare more than four bytes, yet expiry must be a no-op
+when no callback is registered. The guard now checks dispatchability under the
+control lock before rejecting an unsafe callback length. Both PHY sanitizer
+suites pass, and replay of the prior 17,912 original transport traces passes.
+
+Locks, physical reads/field writes, allocation, timers, admission, dispatch and
+clock/logging boundaries are intercepted. Fixed clocks do not prove elapsed
+timing. Synthetic layouts and ABI are analysis metadata. This establishes helper
+decisions, not actual admission, RF transmission or timer/IRQ integration.
+A fresh 20-second HDMI-to-USB capture checks the unchanged accepted image:
+the reference dark textured scene, 23 linked/AP-time samples and zero sampled
+socket drops. No new stock capture or controlled freshness/latency test was
+performed. Physical callback effects and runtime integration remain open.
+
 Next, extend the core inventory through the transport dispatchers and indirect
 callbacks, and bind each command's behavior to its comparison tests. Then cover
 radio messages, timers and state transitions in the same way. Dynamic power still

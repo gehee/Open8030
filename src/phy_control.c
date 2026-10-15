@@ -101,9 +101,11 @@ int ar_phy_control_cancel(struct ar_phy_control *state,
 int ar_phy_control_expire(struct ar_phy_control *state,
 	const struct ar_phy_control_ops *ops, void *context)
 {
-	if (!valid(state,ops) || ((state->rx[2] >> 1) & 7) > 4) { return -22; }
+	if (!valid(state,ops)) { return -22; }
 	ops->lock(context);
 	unsigned command = state->rx[1] & 15;
+	if (ttl(state->rx) && command < 10 && (state->callbacks & (1u << command)) &&
+		((state->rx[2] >> 1) & 7) > 4) { ops->unlock(context); return -22; }
 	if (ttl(state->rx) && command < 10 && (state->callbacks & (1u << command))) {
 		ops->dispatch(0,command,state->rx+3,(state->rx[2] >> 1) & 7,context);
 	}
