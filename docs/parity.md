@@ -69,7 +69,7 @@ and scenario; they must be repeated after relevant changes.
 | Host lifecycle | Explicit stop/start and stop/deinit/init/start tested historically | Every wrong-state/repeated operation, cancellation, pending DMA, failure recovery and complete reset semantics. |
 | Events | Subscription and delivery for IDs 0 and 1 | Other original IDs, payload layouts, ordering, cancellation and overflow behavior. |
 | Host sockets | Slot-0 copy-mode data path, deferred close and active-write cancellation; normal backend video/control; stream/handle admission and queue factories compared offline | Stock host ports 0/1 reject opens because their streams already exist; native admission differs. Heap/RTOS internals, table initialization, worker startup, runtime ownership, other modes/slots, retained-descriptor TX, saturation, teardown races and complete capacity/error behavior remain open. |
-| Internal data interfaces | Stock stream occupancy confirmed on the matched board; native internal owners are missing | Inventory UART/SBUS and other interface creation, role/configuration gating, shared stream ownership, payload routing, timing, teardown and failure recovery. A reserved-port rejection alone does not implement these services. |
+| Internal data interfaces | Stock stream occupancy observed; mode-3 graph and source-only event forwarding compared offline | Integrate UART/SBUS, packet parsing, event subscriptions, shared stream ownership and payload routing; compare other modes, timing, teardown and failure recovery. A reserved-port rejection alone does not implement these services. |
 | MAC framing | Header/descriptor parser and DEV encoder | Other formats/flags, receive ordering, duplicate handling and all original rejection rules. |
 | AP full/compact controls | Selected mode-0/slot-0 admission and connected control | All extensions, remote synchronization effects, changed channels, slots, stale/duplicate controls and unsupported modes. |
 | Internal port-0 commands | Stream parsing; login checksum ACK transmission | Receiving a command currently mainly records it. Inventory and implement each original command's effects, responses and retries. |
@@ -2537,3 +2537,93 @@ alongside the recovery evidence. Capture settings are MJPEG 1920×1080 at nomina
 30 fps. The inspected dark textured scene and right-side features establish
 visible camera output; they do not establish controlled freshness, RF/camera
 frame rate, telemetry accuracy or end-to-end latency.
+
+### Mode-3 internal data graph and event forwarding
+
+Stage 211 executes the original mode-3 table selection and interface preflight,
+the route admission prefix, and construction of enabled socket-backed interfaces.
+The original configuration contains five interfaces: UART2, UART1, an event
+bridge at port 0, and socket-backed interfaces at host ports 0 and 1. With the
+matched UART settings and no console/AT conflict, it requests these internal
+streams before external host opens:
+
+| Internal interface | Selector | Open flags | TX capacity | RX capacity | MAC stream port |
+| --- | --- | --- | --- | --- | --- |
+| Socket port 0 | 0 | `0x13` | 1,024 | 1,024 | 1 |
+| Socket port 1 | 0 | `3` | 524 | 1,024 | 2 |
+
+Both directions are created. These requests explain the occupancy observed in
+stage 210, but this is execution with configured emulator inputs, not a live
+dump of the stock registry or a complete boot trace. The original JSON parser
+does not execute here. Work mode 3 and baseband AP/DEV role are separate settings.
+
+The six configured directed routes select the following pairs:
+
+| Role | Selected bidirectional routes |
+| --- | --- |
+| DEV | UART1 ↔ socket port 0; event bridge port 0 ↔ socket port 1 |
+| AP | UART1 ↔ socket port 0; UART2 ↔ socket port 1 |
+
+UART1 is the SBUS-related path. Its matched loader settings are 100,000 baud,
+8 data bits, parity value 1 and stop-bit value 3. UART2's matched settings are
+115,200 baud, 8 data bits, parity 0 and stop-bit value 1. These are configuration
+values, not new verification of physical signaling. UART2 remains in the mode-3
+interface table on DEV even though its two radio routes are role-filtered out.
+The preflight reference counts are computed before that role filtering; table
+membership alone therefore does not establish an active data route.
+
+**64 original graph scenarios** vary baseband roles 0/1, console selection 0..3
+and all eight combinations of UART AT flags. They check configuration changes,
+route admission and internal stream-open arguments. Console/AT conflicts can
+disable routes and unreferenced interfaces. The original preflight checks a
+destination's AT flag but rechecks the source console flag; it does not apply
+a symmetric destination-console exclusion. This ordering is retained in the
+private comparison, rather than assuming a generic graph rule. Actual UART and
+event-interface construction, route workers, heap, stream open, synchronization
+and task startup remain execution boundaries; only the socket-backed interface
+constructor runs through its allocation/task adapters.
+
+`src/data_event.c` independently implements the interface-to-event bridge at
+original entry `0x2119f6`. It caches a 1,024-byte buffer, clears all of it for each
+message, writes a two-byte little-endian payload length, and copies the payload
+after that prefix. Interface ports 0, 1 and 2 dispatch event IDs 8, 10 and 11.
+The original host event-size table also assigns 1,024 bytes to those IDs.
+This is the event representation, not a claim that the over-air data stream
+uses the same framing. Packet parsing must precede this bridge.
+
+The original returns the input length when allocation fails, despite emitting
+nothing. An invalid interface port returns zero after preparing the buffer;
+an injected nonzero event-hub result also returns zero. The actual original hub
+normally returns zero regardless of individual subscriber results, so the
+injected error cases only describe the bridge's callback boundary. Null interface
+and data pointers return `-1` and `-2`. The native helper adds `-22` guards for
+missing adapters/state and payloads above 1,022 bytes; the original unbounded
+copy can overrun its buffer. Oversized inputs are not sent to hardware or counted
+as matching cases. The caller owns the cache and must serialize use and copy
+notifications before the buffer is reused.
+
+**155 original event-bridge cases** match native results, allocation/emission
+order and all 1,024 buffer bytes. They cover cached/new/failed allocation, zero
+and maximum bounded payloads, valid/invalid ports, null inputs, callback outcomes
+and a port change during allocation. Across both comparisons, **555 executed
+instruction locations** and the relevant tables match the reference payload,
+container and analysis ELF. Copy/clear instructions execute; event emission,
+allocation and diagnostic endpoints are intercepted. Synthetic ELF, pointers,
+ABI and partial ISA remain analysis metadata.
+
+The helper is source-only. Runtime host event subscriptions still support only
+IDs 0 and 1; this change does not enable event 8 or internal MAC ports 1/2.
+Integration requires the original stream packet parser, UART/SBUS service,
+event ownership/queueing, host-to-radio path and lifecycle behavior. Other work
+modes and full firmware parity remain open.
+
+Two native ASan/UBSan suites and 18 Python tests pass. Real-storage tests check
+cache reuse, complete clearing after a shorter message, allocation failure,
+callback-time port changes and the extra overflow guard. The standard build
+reproduces stage 206 exactly. A fresh 30-second `/dev/video0` HDMI-to-USB capture
+at MJPEG 1920×1080/nominal 30 fps shows the dark textured scene and right-side
+features; all 33 samples remain linked, AP time advances and sampled socket
+drops stay zero. Device image/configuration and retained-session identity are
+recorded privately. Stage 206 remains running in RAM. This is a regression
+check, not hardware execution of the source-only bridge, physical UART testing
+or a controlled freshness/latency measurement.

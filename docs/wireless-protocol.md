@@ -281,6 +281,23 @@ that does not establish support for their RF transitions in the running firmware
 Sources: [dev.c](../src/dev.c), `dev_admit`, `dev_observe_lock` and
 `receive_complete` in [rf_device.c](../src/rf_device.c).
 
+## Internal data services
+
+MAC stream ports 1 and 2 also carry original internal services. The matched
+mode-3 configuration opens both directions on these streams, corresponding to
+host socket ports 0 and 1. On DEV, they serve the UART1/SBUS path and an event
+bridge respectively. On AP, the second path instead connects UART2. This
+explains why stock rejects external opens of those already-owned host ports.
+
+The event bridge wraps decoded data in a 1,024-byte event body: a two-byte
+little-endian payload length, the payload, and a cleared tail. Bridge port 0
+uses event ID 8. This event representation is distinct from the radio stream's
+packet framing, whose parser and routing still need runtime implementation.
+Open8030 currently lacks these internal owners and supports host event
+subscriptions only for IDs 0 and 1. A source-only forwarding helper and original
+mode-3 graph comparisons are described in
+[internal data coverage](parity.md#mode-3-internal-data-graph-and-event-forwarding).
+
 ## Internal command stream
 
 MAC port 0 is a byte stream. A command can span multiple descriptors or packets,

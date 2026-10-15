@@ -551,6 +551,16 @@ the visible scene. Repeating all seven native opens/closes during a fresh
 socket drops. The observer is removed and stage 206 is retained in RAM. The
 warm-restoration cause, controlled freshness and measured latency remain open.
 
+Stage 211 traces mode-3 internal provisioning in 64 original-instruction
+scenarios. Socket port 0 serves UART1/SBUS; socket port 1 routes to the event
+bridge on DEV and UART2 on AP. A new source-only event-forwarding helper matches
+155 original cases, including cached buffers and allocation failures. It adds
+a bound for the original unchecked copy. Two sanitizer suites and 18 Python tests
+pass. Runtime event subscriptions and internal services are still unintegrated.
+The build reproduces stage 206; a fresh 30-second HDMI-to-USB capture shows the
+camera scene, with 33 linked samples and zero sampled socket drops. The accepted
+image remains running in RAM. See [internal data coverage](parity.md#mode-3-internal-data-graph-and-event-forwarding).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host

@@ -43,6 +43,7 @@ TESTS = {
     'ap_time': ('ap_time', [], []),
     'fch_monitor': ('fch_monitor', [], []),
     'event': ('event', [], []),
+    'data_event': ('data_event', [], []),
     'json': ('json', [], []),
     'config': ('config json power_config power dev_mcs', [], []),
     'power': ('power', [], []),
