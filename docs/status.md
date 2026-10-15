@@ -394,6 +394,16 @@ stage 189, and a fresh 30-second HDMI-to-USB capture shows the camera scene with
 33 linked samples and zero sampled socket drops. See
 [the bounds correction](parity.md#corrected-tx-bookkeeping-bounds).
 
+Stage 197 compares TX stream acquisition in 3,356 original scenarios, including
+128 acquire/release sequences. Nonempty acquisition holds the reference later
+consumed by release. Both retained-entry and byte-ring paths cover span budgets,
+wrap, empty results and timeout behavior. The earlier 3,600 release scenarios
+also pass regression replay. Three sanitizer suites and 18 Python tests pass.
+The helper remains source-only: allocation, teardown, concurrency and runtime
+integration are still open. The build reproduces accepted stage 189; a fresh
+30-second HDMI-to-USB capture shows the camera scene with 33 linked samples and
+zero sampled socket drops. See [acquisition coverage](parity.md#stream-acquisition-and-reference-ownership).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host

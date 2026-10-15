@@ -1581,6 +1581,9 @@ the alternate direction. It increments a found object's reference counter.
 The consumer subsequently drops two references, each saturating at zero.
 This count behavior is compared, but it does not by itself establish which
 producer owns the additional reference or when its storage may be destroyed.
+The [subsequent acquisition comparison](#stream-acquisition-and-reference-ownership)
+identifies the held reference; storage creation/destruction and concurrent
+ownership still need separate comparison.
 
 With flag bit 2 clear, the consumer removes the requested byte count from the
 queue if enough bytes are present. With that bit set, it advances retained-entry
@@ -1669,6 +1672,70 @@ accepted stage 189. A fresh 30-second direct HDMI-to-USB capture has 33 linked
 samples, advancing AP time and zero sampled socket drops; inspected frames show
 the dark textured camera scene and OSD. No controlled freshness/latency claim is
 made. Retry-limit and ownership producers remain under comparison.
+
+### Stream acquisition and reference ownership
+
+Stage 197 extends source-only `tx_stream.c` with acquisition, comparing the
+original body at `0x232ca6` and its actual lookup, reference-drop, entry traversal,
+memory clear/copy and software arithmetic routines. A nonempty result retains
+the reference added by lookup. Release looks the object up again, then drops
+both references. Empty acquisition drops its lookup reference. This establishes
+that local acquire/release relationship; it does not establish object lifetime
+through allocation, teardown or concurrent DMA.
+
+The requested budget multiplies the request by the stream's percentage byte,
+wraps the product to 32 bits, divides by 100 and truncates, then clamps zero to
+one. The native implementation uses integer division; comparison executes the
+original floating-point conversion/division instructions and checks the original
+100.0 constant against the matched payload. The two storage paths differ:
+
+- Retained entries return at most five address/length spans, skip fully produced
+  entries, and advance 16-bit produced offsets with wrap. Acquisition leaves the
+  pending-byte accounting counter unchanged. It traverses from the queue's read
+  position toward its write position under the queue mutex.
+- The byte ring returns at most two spans, advances a separate acquisition
+  cursor, subtracts from available bytes and adds to a 64-bit acquired counter.
+  Its available count gates access; span sizes come from the cursor geometry,
+  preserving the original subtraction wrap for inconsistent count fixtures.
+  Disabled queues return empty. Empty enabled queues can retry after waits:
+  finite deadlines use signed 32-bit millisecond differences; `UINT32_MAX`
+  requests repeated 100-ms waits. Lock and wait return values are ignored.
+
+Zero requests return `-1` without clearing output. A missing stream returns `-1`
+after clearing only the first two spans. Successful retained mode writes five
+spans; byte mode writes two and leaves the remaining three untouched. Missing
+queues return empty success with the corresponding output size. These details
+are included in state/effect comparisons rather than normalized away.
+
+Fresh original execution matches **3,356 scenarios**: 1,629 retained-entry and
+1,727 byte-ring cases, including **128 composed acquire/release sequences**.
+The cases cover budget and address wrap, produced-offset wrap, empty/full/partial
+entries, five-span limits, ring boundaries, missing objects/queues, selectors,
+directions, reference wrap, disabled queues and finite/infinite wait behavior.
+Eighteen cases wait; selected wait fixtures publish bytes, disable the queue or
+change mutex tokens. Comparisons check state at 7,717 lock and 7,717 unlock calls,
+1,668 clock calls, 24 waits, 100 wakes and 36 buffer callbacks. All **728 executed
+instruction locations** match the original payload, container and analysis ELF.
+Twelve additional release-diagnostic clock calls are recorded but excluded from
+native effects, consistent with the previously intercepted diagnostic path.
+
+Replay of the earlier release traces also passes all **3,600 scenarios**,
+including 96 composed retirement sequences. This is regression replay with the
+expanded native structures, not new original execution. RTOS endpoints, clocks,
+wait publications and buffer callbacks remain synthetic. The partial ISA model,
+analysis ABI and pointer tokens are analysis metadata. Native guards reject
+unsafe storage and missing adapters, release acquired locks and drop the lookup
+reference; they cannot undo earlier produced-offset changes. Their `-22` errors
+are additional native behavior, not original error parity.
+
+Three sanitizer suites and 18 Python tests pass. The standard build remains
+byte-identical to accepted stage 189, which stays running on the device. A fresh
+30-second direct `/dev/video0` HDMI-to-USB capture has 33 linked samples,
+advancing AP time and zero sampled socket drops. Inspected frames show the dark
+textured camera scene, right-side features and camera OSD. This validates the
+retained runtime, not hardware execution of the new helper or controlled
+freshness/latency. Packet-builder composition, enqueue/allocation/teardown,
+backpressure, concurrent ownership and runtime integration remain open.
 
 Next, compare the remaining ownership and retry-limit producers, connect the
 compared TX helpers to the runtime, and isolate low-power acquisition

@@ -24,6 +24,7 @@ TESTS = {
     'tx_irq': ('tx_irq', [], []),
     'tx_retire': ('tx_retire', [], []),
     'tx_stream': ('tx_stream tx_retire', [], []),
+    'tx_acquire': ('tx_stream', [], []),
     'tune': ('tune', [], []),
     'socket_rx': ('socket_rx', [], []),
     'sdio_device': ('sdio_device', ['AR_SDIO_SIMULATED', 'AR_SDIO_STOCK_MEMORY_ATTRIBUTES=1'], []),
