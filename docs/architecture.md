@@ -83,15 +83,25 @@ system clock are disabled, and RF/SDIO work is polled. This is not yet a complet
 interrupt-driven Zephyr platform port. The QEMU build uses UART for protocol
 testing and has no physical radio backend.
 
-Each hardware loop receives host frames, services pending socket writes and polls
-RF. Outbound events take priority; socket read data and write completions then
-alternate. Extra RF polls surround copying/framing work. One SDIO queue entry is
+Each hardware loop receives host frames, services pending socket writes and
+closes, and polls RF. Outbound events take priority, followed by ready close
+replies; socket read data and write completions then alternate. Extra RF polls
+surround copying/framing work. One SDIO queue entry is
 reserved for host replies so bulk traffic cannot consume every reply slot.
 
 Received RF payloads enter bounded copy-mode socket queues. A queue's bytes are
 consumed only after SDIO accepts their framed copy. In the other direction, pending
 host writes are serviced without blocking RF polling, and bytes are committed
 when the RF transport owns a copy. Completion does not prove peer reception.
+
+Close stops new endpoint transfers and waits for any active write completion to
+reach SDIO. A partially copied active write completes with `-10`; queued writes
+that have not started are discarded. Cleanup precedes the close reply, which
+remains retryable until SDIO accepts it. The port stays unavailable for reopening
+until that copy succeeds. RF/SDIO copies already submitted own their storage;
+close does not revoke them or prove over-air completion. This cooperative
+copy-mode adaptation does not implement original retained-buffer ownership or
+RTOS worker scheduling. See [close coverage](parity.md#cooperative-socket-close).
 
 Important compiled bounds include a 4,096-byte frame payload, four SDIO transmit
 queue entries, four socket ports, up to 56,320 receive bytes per port and two
@@ -118,7 +128,7 @@ are implementation limits, not CLI tuning parameters.
 | `src/tx_retire.c` | Compared source-only slot reservation, retained-descriptor retirement and release-call ordering; composed with packet preparation and stream consumers offline |
 | `src/tx_stream.c` | Compared source-only queue writes, acquisition/release, reference updates, disable and close; allocation, RTOS ownership and runtime integration pending |
 | `src/tx_handle.c` | Compared source-only handle lookup and close, including active-bit updates after stream retirement; runtime integration pending |
-| `src/socket_shutdown.c` | Compared source-only close requests, TX/RX shutdown and worker-exit notifications; cooperative runtime adaptation and actual scheduling/ownership validation pending |
+| `src/socket_shutdown.c` | Compared source-only close requests, TX/RX shutdown and worker-exit notifications; informs the copy-mode adaptation in `socket_rx.c`; actual RTOS scheduling and retained ownership remain pending |
 | `src/tx_packet.c` | Compared source-only packet assembly, admission gates, segment ordering, counter resets and timestamped statistics through retirement; full pre-encode handler and hardware integration pending |
 | `src/tune.c` | Compared channel resolution and per-user tuning; runtime use limited to measurement RX11 |
 | `src/scan.c`, `scan_scores.c` | Independent measurement scheduling and base-channel averaging; full automatic selection remains unintegrated |

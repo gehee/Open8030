@@ -239,8 +239,18 @@ static void receive(const struct ar_frame *frame, void *context)
 		size_t size = ar_encode(reply, sizeof reply, &response);
 		(void)ar_sdio_send(reply, size); return;
 	}
-	if (ar_socket_rx_request(&sockets, frame, &socket_response)) {
-		size_t size = ar_encode(reply, sizeof reply, &socket_response);
+	int socket_handled = ar_socket_rx_request(&sockets, frame, &socket_response);
+	if (socket_handled) {
+		if (socket_handled == 1) {
+			size_t size = ar_encode(reply, sizeof reply, &socket_response);
+			(void)ar_sdio_send(reply, size);
+		}
+		return;
+	}
+	if (diagnostic_reqid == AR_REQ_SOCKET_CLOSE_INFO && !frame->status && !frame->length) {
+		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid,
+			.payload = (const uint8_t *)&sockets.close_info, .length = sizeof sockets.close_info};
+		size_t size = ar_encode(reply, sizeof reply, &response);
 		(void)ar_sdio_send(reply, size); return;
 	}
 	if (diagnostic_reqid == AR_REQ_SOCKET_RX_INFO && !frame->status && !frame->length) {
@@ -382,6 +392,7 @@ int main(void)
 		if (length) { ar_feed(&parser, data, length, receive, NULL); }
 		else { arch_nop(); }
 		ar_socket_tx_service(&sockets);
+		ar_socket_close_service(&sockets);
 		ar_rf_poll();
 		struct ar_frame frame;
 		/* Leave one entry for a reply to an already granted host request. */
@@ -395,7 +406,8 @@ int main(void)
 			 * owned here while RF appends to the independent endpoint queue. */
 			uint8_t *payload = reply + AR_HEADER_SIZE;
 			unsigned event = ar_event_peek(&events, payload, &frame);
-			if (event) { ready = 1; }
+			unsigned close = !event && ar_socket_close_peek(&sockets, &frame);
+			if (event || close) { ready = 1; }
 			else if (completion_first) {
 				ready = ar_socket_tx_completion(&sockets, payload, &frame) ||
 					ar_socket_rx_peek(&sockets, payload, chunk, &frame);
@@ -413,9 +425,10 @@ int main(void)
 				if (!ar_sdio_send(reply, size)) {
 					unsigned completion = (frame.reqid >> 16 & 255) == 1;
 					if (event) { ar_event_commit(&events); }
+					else if (close) { ar_socket_close_commit(&sockets, &frame); }
 					else if (completion) { ar_socket_tx_complete(&sockets, &frame); }
 					else { ar_socket_rx_commit(&sockets, &frame); }
-					if (!event) { completion_first = !completion; }
+					if (!event && !close) { completion_first = !completion; }
 				}
 			}
 		}

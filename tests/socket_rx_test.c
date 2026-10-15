@@ -11,7 +11,19 @@ static int command(unsigned action, unsigned slot, unsigned port, uint32_t msgid
 {
 	struct ar_frame request = {.reqid = 0x04000000u | action << 16 | slot << 8 | port,
 		.msgid = msgid, .payload = options, .length = length};
-	assert(ar_socket_rx_request(&sockets, &request, &response));
+	int handled = ar_socket_rx_request(&sockets, &request, &response);
+	assert(handled);
+	if (handled == 2) {
+		struct ar_frame frame;
+		/* Existing endpoint tests use a fully drained cooperative close.
+		 * deferred_close() below checks each intermediate ownership state. */
+		if (ar_socket_tx_completion(&sockets, scratch, &frame)) {
+			ar_socket_tx_complete(&sockets, &frame);
+		}
+		ar_socket_close_service(&sockets);
+		assert(ar_socket_close_peek(&sockets, &response));
+		ar_socket_close_commit(&sockets, &response);
+	}
 	assert(response.reqid == request.reqid && response.msgid == msgid);
 	return response.status;
 }
@@ -80,10 +92,11 @@ static void transmit_contract(void)
 	assert(!sockets.ports[2].tx_used && sockets.ports[2].submitted == 15);
 	assert(sockets.ports[2].enqueued == 2 && sockets.ports[2].completed == 2);
 	assert(send_bytes(position + 15, NULL, 0) == -262);
+	ar_socket_tx_service(&sockets);
 	assert(ar_socket_tx_completion(&sockets, scratch, &frame) && frame.status == -7);
 	ar_socket_tx_complete(&sockets, &frame);
 	assert(sockets.ports[2].position == position + 15);
-	/* Close discards endpoint-owned bytes, including a partially copied write. */
+	/* Close cancels a partially copied write before discarding endpoint bytes. */
 	assert(send_bytes(position + 15, input, 20) == -262);
 	ar_socket_tx_service(&sockets);
 	assert(command(3, 0, 2, 44, 0) == 0);
@@ -130,6 +143,119 @@ static void transmit_contract(void)
 	assert(command(0, 0, 2, 44, 12) == -95);
 	configure(2, 0); options[5] = 0x11;
 	assert(command(0, 0, 2, 44, 12) == -259);
+}
+static void deferred_close(void)
+{
+	for (unsigned mode = 0; mode < 5; mode++) {
+		ar_socket_rx_init(&sockets);
+		configure(3, 7); options[4] = 5;
+		assert(command(0, 0, 2, 0xbeef1234, 12) == 0);
+		assert(ar_socket_rx_feed(&sockets, 0, 3, input, 6) == 6);
+		/* Unstarted, partially copied, fully copied, zero-length active,
+		 * and active-but-blocked-before-copy must remain distinct. */
+		unsigned length = mode == 3 ? 0 : mode == 2 ? 4 : 9;
+		if (mode == 4) {
+			assert(send_bytes(0, input, 5) == -262);
+			ar_socket_tx_service(&sockets);
+			struct ar_frame prior;
+			assert(ar_socket_tx_completion(&sockets, scratch, &prior));
+			ar_socket_tx_complete(&sockets, &prior);
+		}
+		unsigned position = mode == 4 ? 5 : 0;
+		assert(send_bytes(position, input, length) == -262);
+		if (mode) { ar_socket_tx_service(&sockets); }
+		assert(send_bytes(position + length, input + 20, 2) == -262);
+		struct ar_socket_rx_port *state = &sockets.ports[2];
+		uint32_t copied = state->pending[state->pending_head].copied;
+		struct ar_frame request = {.reqid = 0x04030002, .msgid = 0x12345678};
+		assert(ar_socket_rx_request(&sockets, &request, &response) == 2);
+		assert(state->flags == 3 && state->closing == 1 && state->pending_count == 2);
+		assert(state->used == 6 && sockets.close_info.pending_mask == 4);
+		/* Duplicate requests do not replace the original completion identity. */
+		request.msgid++;
+		assert(ar_socket_rx_request(&sockets, &request, &response) == 2);
+		assert(sockets.close_info.requested == 1);
+		assert(command(0, 0, 2, 99, 12) == 0x101);
+		assert(!ar_socket_rx_feed(&sockets, 0, 3, input, 1));
+		struct ar_frame frame, retry;
+		unsigned mac_port;
+		assert(!ar_socket_rx_peek(&sockets, scratch, sizeof scratch, &frame));
+		assert(!ar_socket_tx_peek(&sockets, scratch, sizeof scratch, &mac_port));
+		ar_socket_tx_service(&sockets);
+		assert(state->pending[state->pending_head].copied == copied);
+		ar_socket_close_service(&sockets);
+		if (mode) {
+			assert(!ar_socket_close_peek(&sockets, &frame));
+			assert(state->closing == 1 && state->used == 6);
+			assert(ar_socket_tx_completion(&sockets, scratch, &frame));
+			assert(frame.reqid == 0x04010002 && frame.msgid == 0x1234);
+			assert(frame.status == (mode == 2 ? 4 : mode == 3 ? -7 : -10));
+			assert(frame.length == 8 && frame.payload[0] == position);
+			/* Simulate SDIO backpressure: retry unchanged, do not reclaim. */
+			assert(ar_socket_tx_completion(&sockets, scratch, &retry));
+			assert(retry.status == frame.status && retry.msgid == frame.msgid);
+			for (unsigned i = 0; i < 10; i++) { ar_socket_close_service(&sockets); }
+			assert(state->pending_count == 2 && state->closing == 1);
+			retry.status = 999; ar_socket_tx_complete(&sockets, &retry);
+			assert(state->pending_count == 2);
+			ar_socket_tx_complete(&sockets, &frame);
+			assert(state->pending_count == 1);
+			/* Admission before worker exit is retained, then drained. */
+			assert(send_bytes(position + length + 2, input, 1) == -262);
+			ar_socket_close_service(&sockets);
+		}
+		assert(state->closing == 2 && !state->flags && !state->pending_count);
+		assert(!ar_socket_tx_completion(&sockets, scratch, &frame));
+		assert(sockets.close_info.cleaned == 1 && sockets.close_info.discarded_writes == 2);
+		assert(sockets.close_info.discarded_rx_bytes == 6);
+		assert(sockets.close_info.discarded_tx_bytes == (mode == 4 ? 5 : copied));
+		assert(sockets.close_info.cancelled == (mode == 1 || mode == 4));
+		assert(ar_socket_close_peek(&sockets, &frame));
+		assert(frame.reqid == 0x04030002 && frame.msgid == 0x12345678);
+		assert(!frame.status && !frame.length && !frame.payload);
+		assert(ar_socket_close_peek(&sockets, &retry));
+		assert(retry.msgid == frame.msgid && !sockets.close_info.replied);
+		assert(command(0, 0, 2, 99, 12) == 0x101);
+		assert(send_bytes(0, input, 1) == -260);
+		retry.msgid++; ar_socket_close_commit(&sockets, &retry);
+		assert(state->closing == 2);
+		ar_socket_close_commit(&sockets, &frame);
+		ar_socket_close_commit(&sockets, &frame); /* no duplicate reclamation */
+		assert(!state->closing && !sockets.close_info.pending_mask);
+		assert(sockets.close_info.replied == 1);
+		assert(command(0, 0, 2, 99, 12) == 0);
+		assert(!state->used && !state->tx_used && !state->position && !state->pending_count);
+		assert(!ar_socket_tx_completion(&sockets, scratch, &frame));
+		assert(!ar_socket_tx_peek(&sockets, scratch, sizeof scratch, &mac_port));
+		assert(!ar_socket_rx_peek(&sockets, scratch, sizeof scratch, &frame));
+		assert(send_bytes(0, input + 3, 2) == -262);
+		ar_socket_tx_service(&sockets);
+		assert(ar_socket_tx_peek(&sockets, scratch, sizeof scratch, &mac_port) == 2);
+		assert(!memcmp(scratch, input + 3, 2));
+	}
+	/* Closing one port cannot stop another; selected directions and retained
+	 * RX-only mode all close without manufacturing an active TX completion. */
+	ar_socket_rx_init(&sockets);
+	const unsigned flags[] = {1, 2, 3, 0x21};
+	for (unsigned port = 0; port < 4; port++) {
+		configure(flags[port], 7); options[4] = 5;
+		assert(command(0, 0, port, 100 + port, 12) == 0);
+	}
+	assert(ar_socket_rx_feed(&sockets, 0, 1, input, 3) == 3);
+	for (unsigned port = 1; port < 4; port++) {
+		struct ar_frame request = {.reqid = 0x04030000 | port, .msgid = 200 + port};
+		assert(ar_socket_rx_request(&sockets, &request, &response) == 2);
+	}
+	assert(ar_socket_rx_peek(&sockets, scratch, sizeof scratch, &response));
+	assert(response.reqid == 0x04020000 && response.length == 3);
+	ar_socket_close_service(&sockets);
+	for (unsigned port = 1; port < 4; port++) {
+		assert(ar_socket_close_peek(&sockets, &response));
+		assert(response.reqid == (0x04030000 | port) && response.msgid == 200 + port);
+		ar_socket_close_commit(&sockets, &response);
+	}
+	assert(sockets.ports[0].used == 3 && !ar_socket_close_peek(&sockets, &response));
+	assert(sockets.close_info.requested == 3 && sockets.close_info.cleaned == 3 && sockets.close_info.replied == 3);
 }
 int main(void)
 {
@@ -200,6 +326,7 @@ int main(void)
 	}
 	assert(consumed == 6000 && sockets.ports[3].delivered == 6000 && !sockets.ports[3].dropped);
 	transmit_contract();
+	deferred_close();
 	puts("socket RX/TX ownership, stream positions, completion and backpressure contracts passed");
 	return 0;
 }

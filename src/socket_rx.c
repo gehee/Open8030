@@ -38,6 +38,7 @@ static void write_request(struct ar_socket_rx *sockets, struct ar_socket_rx_port
 		struct ar_socket_write *write = &state->pending[
 			(state->pending_head + state->pending_count) % AR_SOCKET_TX_PENDING];
 		write->position = position; write->length = length; write->copied = 0;
+		write->active = write->cancelled = 0;
 		if (length) { memcpy(write->bytes, request->payload + 8, length); }
 		state->pending_count++; state->position += length; state->enqueued++;
 		response->status = -262;
@@ -54,6 +55,13 @@ static void write_request(struct ar_socket_rx *sockets, struct ar_socket_rx_port
 void ar_socket_rx_init(struct ar_socket_rx *sockets)
 {
 	if (sockets) { memset(sockets, 0, sizeof *sockets); }
+}
+
+static void reset_port(struct ar_socket_rx_port *state)
+{
+	/* Clearing the large data buffers here stalls RF/SDIO polling during
+	 * repeated open/close. Queue extents and positions control their lifetime. */
+	memset(state, 0, offsetof(struct ar_socket_rx_port, bytes));
 }
 
 static void open_error(struct ar_socket_rx *sockets, struct ar_frame *response, int32_t error)
@@ -82,12 +90,27 @@ int ar_socket_rx_request(struct ar_socket_rx *sockets, const struct ar_frame *re
 	if (command == 1) { write_request(sockets, state, request, response); return 1; }
 	if (command == 3) {
 		if (request->length) { response->status = AR_STATUS_INVALID; }
+		else if (state->closing) { return 2; }
 		else if (!state->flags) { response->status = 0x103; }
-		else { memset(state, 0, sizeof *state); }
+		else {
+			state->closing = 1; state->close_msgid = request->msgid;
+			sockets->close_info.requested++;
+			sockets->close_info.pending_mask |= 1u << port;
+			if (state->pending_count) {
+				struct ar_socket_write *write = &state->pending[state->pending_head];
+				/* An original blocked writer returns -10 when it next
+				 * observes the disabled queue (disable itself does not wake).
+				 * Already completed copies keep their successful completion. */
+				if (write->active && write->copied != write->length) {
+					write->cancelled = 1; sockets->close_info.cancelled++;
+				}
+			}
+			return 2;
+		}
 		return 1;
 	}
 	if (request->length != 12) { response->status = AR_STATUS_INVALID; return 1; }
-	if (state->flags) { response->status = 0x101; return 1; }
+	if (state->flags || state->closing) { response->status = 0x101; return 1; }
 	uint32_t flags = le32(request->payload), capacity = le32(request->payload + 8);
 	uint32_t tx_capacity = le32(request->payload + 4);
 	/* Retained-descriptor TX (0x20) has a different capacity contract and is
@@ -102,7 +125,7 @@ int ar_socket_rx_request(struct ar_socket_rx *sockets, const struct ar_frame *re
 	    ((flags & 2) && tx_capacity > AR_SOCKET_TX_CAPACITY)) {
 		open_error(sockets, response, -3); return 1;
 	}
-	memset(state, 0, sizeof *state);
+	reset_port(state);
 	state->flags = flags;
 	state->capacity = (flags & 1) ? capacity : 0;
 	state->tx_capacity = (flags & 2) ? tx_capacity : 0;
@@ -116,7 +139,7 @@ size_t ar_socket_rx_feed(struct ar_socket_rx *sockets, unsigned slot, unsigned m
 {
 	if (!sockets || slot || !mac_port || mac_port > AR_SOCKET_RX_PORTS || (!data && length)) { return 0; }
 	struct ar_socket_rx_port *state = &sockets->ports[mac_port - 1];
-	if (!state->capacity) { return 0; }
+	if (!state->capacity || state->closing) { return 0; }
 	size_t copied = state->capacity - state->used;
 	if (copied > length) { copied = length; }
 	state->offered += length; state->accepted += copied; state->dropped += length - copied;
@@ -137,7 +160,7 @@ int ar_socket_rx_peek(struct ar_socket_rx *sockets, uint8_t *scratch, size_t cap
 	for (unsigned i = 0; i < AR_SOCKET_RX_PORTS; i++) {
 		unsigned port = (sockets->next_port + i) % AR_SOCKET_RX_PORTS;
 		struct ar_socket_rx_port *state = &sockets->ports[port];
-		if (!state->used) { continue; }
+		if (!state->used || state->closing) { continue; }
 		size_t copied = state->used < capacity ? state->used : capacity;
 		size_t first = state->capacity - state->head;
 		if (first > copied) { first = copied; }
@@ -155,7 +178,7 @@ void ar_socket_rx_commit(struct ar_socket_rx *sockets, const struct ar_frame *fr
 	if (!sockets || !frame || (frame->reqid & 0xfffffffc) != 0x04020000) { return; }
 	unsigned port = frame->reqid & 3;
 	struct ar_socket_rx_port *state = &sockets->ports[port];
-	if (!state->capacity || frame->msgid != state->msgid || frame->length > state->used) { return; }
+	if (!state->capacity || state->closing || frame->msgid != state->msgid || frame->length > state->used) { return; }
 	state->head = (state->head + frame->length) % state->capacity;
 	state->used -= frame->length; state->delivered += frame->length;
 	sockets->next_port = (port + 1) % AR_SOCKET_RX_PORTS;
@@ -166,8 +189,9 @@ void ar_socket_tx_service(struct ar_socket_rx *sockets)
 	if (!sockets) { return; }
 	for (unsigned port = 0; port < AR_SOCKET_RX_PORTS; port++) {
 		struct ar_socket_rx_port *state = &sockets->ports[port];
-		if (!state->pending_count) { continue; }
+		if (!state->pending_count || state->closing) { continue; }
 		struct ar_socket_write *write = &state->pending[state->pending_head];
+		write->active = 1;
 		size_t count = write->length - write->copied;
 		if (count > state->tx_capacity - state->tx_used) { count = state->tx_capacity - state->tx_used; }
 		if (!count) { continue; }
@@ -188,10 +212,11 @@ int ar_socket_tx_completion(struct ar_socket_rx *sockets, uint8_t scratch[8], st
 		struct ar_socket_rx_port *state = &sockets->ports[port];
 		if (!state->pending_count) { continue; }
 		struct ar_socket_write *write = &state->pending[state->pending_head];
-		if (write->copied != write->length) { continue; }
+		if (!write->active || (!write->cancelled && write->copied != write->length)) { continue; }
 		put64(scratch, write->position);
 		*frame = (struct ar_frame){.reqid = 0x04010000u | port, .msgid = state->msgid,
-			.status = write->length ? (int32_t)write->length : -7, .payload = scratch, .length = 8};
+			.status = write->cancelled ? -10 : (write->length ? (int32_t)write->length : -7),
+			.payload = scratch, .length = 8};
 		return 1;
 	}
 	return 0;
@@ -205,11 +230,57 @@ void ar_socket_tx_complete(struct ar_socket_rx *sockets, const struct ar_frame *
 	struct ar_socket_rx_port *state = &sockets->ports[port];
 	if (!state->pending_count || frame->msgid != state->msgid) { return; }
 	struct ar_socket_write *write = &state->pending[state->pending_head];
-	if (write->copied != write->length || write->position != le64(frame->payload) ||
-	    frame->status != (write->length ? (int32_t)write->length : -7)) { return; }
+	if (!write->active || (!write->cancelled && write->copied != write->length) ||
+	    write->position != le64(frame->payload) ||
+	    frame->status != (write->cancelled ? -10 : (write->length ? (int32_t)write->length : -7))) { return; }
 	state->pending_head = (state->pending_head + 1) % AR_SOCKET_TX_PENDING;
 	state->pending_count--; state->completed++;
 	sockets->next_completion = (port + 1) % AR_SOCKET_RX_PORTS;
+}
+
+void ar_socket_close_service(struct ar_socket_rx *sockets)
+{
+	if (!sockets) { return; }
+	for (unsigned port = 0; port < AR_SOCKET_RX_PORTS; port++) {
+		struct ar_socket_rx_port *state = &sockets->ports[port];
+		if (state->closing != 1) { continue; }
+		if (state->pending_count && state->pending[state->pending_head].active) { continue; }
+		/* The original TX worker completes its active call before exiting,
+		 * then releases queued writes. Here RX and TX exit in one poll. No
+		 * endpoint pointers survive a MAC/SDIO copy, so there is no DMA
+		 * reference to this storage. Retained TX needs a different adapter. */
+		sockets->close_info.discarded_writes += state->pending_count;
+		sockets->close_info.discarded_rx_bytes += state->used;
+		sockets->close_info.discarded_tx_bytes += state->tx_used;
+		state->pending_count = state->used = state->tx_used = state->flags = 0;
+		state->closing = 2; sockets->close_info.cleaned++;
+	}
+}
+
+int ar_socket_close_peek(struct ar_socket_rx *sockets, struct ar_frame *frame)
+{
+	if (!sockets || !frame) { return 0; }
+	for (unsigned port = 0; port < AR_SOCKET_RX_PORTS; port++) {
+		const struct ar_socket_rx_port *state = &sockets->ports[port];
+		if (state->closing != 2) { continue; }
+		/* Original worker scratch metadata is not stable. Echo the saved
+		 * close request ID and initialize status instead of leaking residue. */
+		*frame = (struct ar_frame){.reqid = 0x04030000u | port, .msgid = state->close_msgid};
+		return 1;
+	}
+	return 0;
+}
+
+void ar_socket_close_commit(struct ar_socket_rx *sockets, const struct ar_frame *frame)
+{
+	if (!sockets || !frame || (frame->reqid & 0xfffffffc) != 0x04030000 ||
+	    frame->status || frame->length) { return; }
+	unsigned port = frame->reqid & 3;
+	struct ar_socket_rx_port *state = &sockets->ports[port];
+	if (state->closing != 2 || frame->msgid != state->close_msgid) { return; }
+	reset_port(state);
+	sockets->close_info.replied++;
+	sockets->close_info.pending_mask &= ~(1u << port);
 }
 
 size_t ar_socket_tx_peek(struct ar_socket_rx *sockets, uint8_t *scratch,
@@ -219,7 +290,7 @@ size_t ar_socket_tx_peek(struct ar_socket_rx *sockets, uint8_t *scratch,
 	for (unsigned i = 0; i < AR_SOCKET_RX_PORTS; i++) {
 		unsigned port = (sockets->next_tx_port + i) % AR_SOCKET_RX_PORTS;
 		struct ar_socket_rx_port *state = &sockets->ports[port];
-		if (!state->tx_used) { continue; }
+		if (!state->tx_used || state->closing) { continue; }
 		size_t count = state->tx_used < capacity ? state->tx_used : capacity;
 		size_t first = state->tx_capacity - state->tx_head;
 		if (first > count) { first = count; }
@@ -235,7 +306,7 @@ void ar_socket_tx_commit(struct ar_socket_rx *sockets, unsigned mac_port, size_t
 {
 	if (!sockets || !mac_port || mac_port > AR_SOCKET_RX_PORTS || !length) { return; }
 	struct ar_socket_rx_port *state = &sockets->ports[mac_port - 1];
-	if (!state->tx_capacity || length > state->tx_used) { return; }
+	if (!state->tx_capacity || state->closing || length > state->tx_used) { return; }
 	state->tx_head = (state->tx_head + length) % state->tx_capacity;
 	state->tx_used -= length; state->submitted += length;
 	sockets->next_tx_port = mac_port % AR_SOCKET_RX_PORTS;

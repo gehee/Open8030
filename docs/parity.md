@@ -68,7 +68,7 @@ and scenario; they must be repeated after relevant changes.
 | Host setters and configuration | Candidate list and restricted loader configuration | Full dispatcher inventory, dynamic power, channel/band policies, reset/default behavior and runtime configuration changes. |
 | Host lifecycle | Explicit stop/start and stop/deinit/init/start tested historically | Every wrong-state/repeated operation, cancellation, pending DMA, failure recovery and complete reset semantics. |
 | Events | Subscription and delivery for IDs 0 and 1 | Other original IDs, payload layouts, ordering, cancellation and overflow behavior. |
-| Host sockets | Slot-0 copy-mode data path; normal backend video/control | Other modes/slots, retained-descriptor TX, backpressure, teardown races and original capacity/error behavior. |
+| Host sockets | Slot-0 copy-mode data path, deferred close and active-write cancellation; normal backend video/control | Original admission/allocation, other modes/slots, retained-descriptor TX, saturation, teardown races and complete capacity/error behavior. |
 | MAC framing | Header/descriptor parser and DEV encoder | Other formats/flags, receive ordering, duplicate handling and all original rejection rules. |
 | AP full/compact controls | Selected mode-0/slot-0 admission and connected control | All extensions, remote synchronization effects, changed channels, slots, stale/duplicate controls and unsupported modes. |
 | Internal port-0 commands | Stream parsing; login checksum ACK transmission | Receiving a command currently mainly records it. Inventory and implement each original command's effects, responses and retries. |
@@ -2246,3 +2246,73 @@ sampled socket drops. Device image/configuration hashes and retained-session
 identity are recorded privately; stage 201 remains running in RAM. Runtime
 shutdown integration, allocation/publication, direct TX ownership and hardware
 pending-work tests remain open, along with full original-firmware parity.
+
+### Cooperative socket close
+
+Stage 206 adapts the compared shutdown ordering to the live copy-mode endpoint.
+A valid close now defers its reply. It stops new RX/MAC transfers from that
+endpoint and cancels a partially copied active write with `-10`. An active write
+whose copy already finished keeps its normal completion; a serviced empty write
+keeps `-7`. The completion retains the open message ID's low halfword and the
+write's original 64-bit position. The endpoint waits until SDIO accepts that
+completion, then discards unstarted queued writes and remaining endpoint bytes.
+It keeps the empty close reply retryable until SDIO accepts it, and only then
+allows the port to reopen. Other ports continue running.
+
+This is an explicit cooperative adaptation, not a port of the original worker
+queues or tasks. It uses the ordering established by stages 202–205 without
+linking their source-only allocation/reference models into the runtime. In the
+current transport, MAC and SDIO own immutable copies after submission; neither
+retains an endpoint pointer. Close cannot retract those copies and does not prove
+DMA completion or peer receipt. Retained-descriptor TX still needs the original
+reference/retirement lifecycle. Native close replies initialize status to zero
+and retain the first close request's message ID; duplicate requests during close
+share that pending operation. Original worker scratch residue is not reproduced.
+
+Fresh execution of the original byte-worker continuation at `0x240666` through
+its output-queue post matches **180 native completion cases**. All 76 executed
+instruction locations match the original payload, container and analysis ELF.
+The cases cover four host ports, high and low open IDs, 64-bit position boundaries,
+`-10`, `-7`, and successful lengths 1, 13 and 4,088. Comparisons check completion
+request/message IDs, status, length and position. SDK write results, virtual
+message methods, two eight-byte copies and the final queue post are intercepted.
+The original signed written-byte statistic executes but is not compared with the
+polling endpoint. This continuation comparison does not independently establish
+the SDK cancellation race; disabled-queue results and shutdown ordering have the
+separate stage 202–205 evidence. Synthetic frames, ELF, pointers and partial ISA
+remain analysis metadata.
+
+Opening and reclaiming an endpoint reset its metadata without clearing its large
+payload buffers in the polling loop. Queue extents and per-write initialization
+prevent stale bytes or completions from being exposed after reopening. Native
+sanitizer tests cover unstarted, partial, completed, empty and completely blocked
+writes; repeated close, reply backpressure, port isolation and clean reopening.
+
+Project diagnostic `0x0c5a0029` (daemon alias `0x015a0029`) returns eight
+little-endian 32-bit words: closes requested, cleaned and replied; active writes
+cancelled; queued writes discarded; RX and TX endpoint bytes discarded; and a
+pending-close port mask. These are native diagnostic counters, not original
+telemetry fields.
+
+The accepted image passes 24 hardware open/close cycles on spare host port 0,
+including four active-write cancellations and four queued-write discards. The
+original Linux daemon consumes the chip close reply and closes the TCP client;
+subsequent opens succeed. An earlier candidate's rapid 18-cycle test increased
+video endpoint drops by 87,488 bytes while open/close cleared the full data
+buffers. Repeating that workload after switching to metadata-only reset produces
+zero endpoint drops. This is bounded stress coverage, not a sustained-load limit.
+
+Nine ASan/UBSan suites and 18 Python tests pass. Six fresh 20-second `/dev/video0`
+HDMI-to-USB captures cover startup, close checks, rapid close/reopen, stop/start,
+deinit/init/start and candidate removal/readmission. The inspected images show
+the dark textured camera scene and right-side features also seen on fresh stock.
+All 138 status samples remain linked, with advancing AP time and zero sampled
+socket drops. The accepted image is retained in RAM. Capture cadence does not
+measure RF/camera frame rate, controlled scene freshness or end-to-end latency.
+
+The stock daemon rejected spare host-port-0 opens with status `-259` for the
+attempted flags-3 capacities of 64 and 2,048 bytes; Open8030 admits them. The
+underlying stock allocation/admission cause remains unresolved. Native spare-port
+close tests must therefore not be presented as matched stock open/close parity.
+Complete socket allocation, capacity/error behavior, original worker scheduling,
+retained-buffer TX and pending-DMA teardown remain open.

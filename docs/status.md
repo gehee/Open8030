@@ -491,6 +491,20 @@ The model remains source-only; the build reproduces stage 201. A fresh
 and zero sampled socket drops. Stage 201 remains running in RAM. See
 [socket shutdown coverage](parity.md#socket-worker-shutdown-and-close-replies).
 
+Stage 206 integrates cooperative copy-mode socket close: finish or cancel the
+active write, discard queued work, and retain the close reply until SDIO accepts
+it. Metadata-only endpoint reset removes the large buffer clears that caused
+video drops during rapid open/close testing. The final image passes 24 hardware
+close/reopen cycles, including four active-write cancellations, with zero socket
+drops. Completion replies match 180 original-instruction cases; nine sanitizer
+suites and 18 Python tests pass. Six HDMI-to-USB captures total 120 seconds across
+startup, close stress, restart, reinitialization and recovery. All 138 samples are
+linked with advancing AP time and zero sampled socket drops; inspected camera
+frames match the fresh stock scene. Stage 206 is the retained RAM baseline.
+Original spare-port admission differs and remains unresolved; retained TX and
+actual RTOS/DMA ownership are still incomplete. See
+[cooperative close coverage](parity.md#cooperative-socket-close).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host

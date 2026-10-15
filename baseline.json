@@ -2,12 +2,12 @@
   "baseline": "working-video",
   "target": "VRX/GND Ascent VRX; matched 18.21.10 inputs",
   "runtime": {
-    "bytes": 72912,
-    "sha256": "baad0d33a1a60b5417fbdf8e981af8fa4c2216af2d5dd950b78124c175110428",
+    "bytes": 72944,
+    "sha256": "2ee2d0d9787080cc676108709cd577028ba14b93d2b2608ce034b541bdd7a200",
     "load_address": "0x204000"
   },
   "ram": {
-    "used_bytes": 677520,
+    "used_bytes": 677648,
     "capacity_bytes": 704512
   },
   "private_board_profile": {
@@ -20,7 +20,7 @@
   },
   "container": {
     "bytes": 91136,
-    "sha256": "5a574f6b296eb8aa4eee3aaf09c258b97735727848822776dfdb560183db36c5",
+    "sha256": "0bfb3fe921b41b57515185ec16d70999df147486e1040e96061b2ff9eaf3b233",
     "payload_alignment": 512
   },
   "original_stock_sha256": "dc58247910af564376350404383c5c411cbec21663873fba24e70c61a3584e3c",
@@ -28,11 +28,11 @@
   "scope": "Experimental Ascent VRX 18.21.10 native video baseline; private inputs not distributed",
   "generated_container": {
     "bytes": 91136,
-    "sha256": "5a574f6b296eb8aa4eee3aaf09c258b97735727848822776dfdb560183db36c5",
+    "sha256": "0bfb3fe921b41b57515185ec16d70999df147486e1040e96061b2ff9eaf3b233",
     "payload_alignment": 512,
     "configuration": "zero-filled 16 KiB; external loader JSON required",
     "hardware_verified": true,
-    "verification_scope": "Ascent VRX 18.21.10 stage201: user0 preencode attempt-history integrated with TX MCS drain; startup, post-drain, stop/start, deinit/init/start and candidate removal/readmission; 110 seconds inspected direct HDMI-to-USB capture matching fresh stock dark scene, 125 linked/AP-time samples and zero sampled socket drops. Startup/restart/recovery observed 1/1/3 completed decreases, with 5/3/13 eligible attempts and history mask1; restart/recovery samples show MCS2-to1-to2 and register changes. History resets on context rebuild. Full IRQ/retained ownership, retry policy, low-power acquisition, broader keys and full protocol parity remain open",
+    "verification_scope": "Ascent VRX 18.21.10 stage206: cooperative copy-mode socket close, active-write cancellation, reply retry and metadata-only endpoint reset; 180 original completion comparisons, 24 hardware open/close cycles including four cancelled active writes and four discarded queued writes. Startup, close stress, stop/start, deinit/init/start and candidate removal/readmission: 120 seconds inspected direct HDMI-to-USB capture matching fresh stock dark scene; 138 linked/AP-time samples and zero sampled socket drops. Original spare-port admission, retained TX, pending-DMA ownership, RTOS scheduling, low-power acquisition and full firmware parity remain open",
     "verified_utc_date": "2026-10-15"
   }
 }
