@@ -138,6 +138,19 @@ static void receive(const struct ar_frame *frame, void *context)
 		size_t size = ar_encode(reply, sizeof reply, &socket_response);
 		(void)ar_sdio_send(reply, size); return;
 	}
+	if (frame->reqid == UINT32_C(0x01000064)) {
+		unsigned malformed = frame->status || frame->length != 4;
+		/* Stock allocates the declared 256-byte reply even on a range error.
+		 * Initialize it so errors cannot return a previous response's bytes. */
+		memset(transformed, 0, 256);
+		int status = malformed ? AR_STATUS_INVALID :
+			ar_rf_host_registers(frame->payload[0] | (unsigned)frame->payload[1] << 8,
+				frame->payload[2] | (unsigned)frame->payload[3] << 8, transformed);
+		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid,
+			.status = status, .payload = transformed, .length = malformed ? 0 : 256};
+		size_t size = ar_encode(reply, sizeof reply, &response);
+		(void)ar_sdio_send(reply, size); return;
+	}
 	if (frame->reqid == UINT32_C(0x0100000c)) {
 		uint8_t output[4];
 		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid};

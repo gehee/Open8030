@@ -64,7 +64,7 @@ and scenario; they must be repeated after relevant changes.
 | Container, bootstrap and loader | Working matched-board baseline | Repeated cold starts; bad/truncated configuration and failed preparation; ordering and recovery across original loader paths. |
 | OTP, flash and factory data | Identity and read-only lookup; hardware covers zero-offset fallback | Valid factory records, partition variants, corrupt records and hardware-calibrated offsets. |
 | Host framing and SDIO | Framing, enumeration and cooperative transport | Original error/reset semantics, saturation, concurrent traffic, reconnect and interrupted DMA. |
-| Host getters | Main status and DEV AP-time getter | Complete field semantics, all remaining getters, unavailable states and original error responses. |
+| Host getters | Main status, DEV AP time and baseband register read | Complete field semantics, all remaining getters, unavailable states and original error responses. |
 | Host setters and configuration | Candidate list and restricted loader configuration | Full dispatcher inventory, dynamic power, channel/band policies, reset/default behavior and runtime configuration changes. |
 | Host lifecycle | Explicit stop/start and stop/deinit/init/start tested historically | Every wrong-state/repeated operation, cancellation, pending DMA, failure recovery and complete reset semantics. |
 | Events | Subscription and delivery for IDs 0 and 1 | Other original IDs, payload layouts, ordering, cancellation and overflow behavior. |
@@ -74,7 +74,7 @@ and scenario; they must be repeated after relevant changes.
 | Internal port-0 commands | Stream parsing; login checksum ACK transmission | Receiving a command currently mainly records it. Inventory and implement each original command's effects, responses and retries. |
 | PHY commands | See command table below | Exact callbacks, TTL/replacement ordering and side effects for every command. |
 | MCS adaptation | RX adaptation and limited TX increase | TX decrease/interleaver drain, all PHY keys, retry/expiry, loss interactions and sustained adaptation. |
-| Power and calibration | Initial user-0 setup | Normal backend startup power writes, all users, peer-driven power, compensation and calibration effects. Earlier dynamic-power candidates broke acquisition. |
+| Power and calibration | Initial user-0 setup at level 25 | Level 11 also fails acquisition in the accepted image with only its loader setting changed. Resolve the low-power transmit path, then normal backend power writes, all users, peer policy and calibration effects. |
 | Channel/band selection | Configured search and matched channel | Independent uplink changes, subchannels, hopping, scan scoring, automatic policies, rollback and cross-band operation. |
 | Time synchronization | DEV AP-time decoding/getter; original-instruction comparison and hardware startup/restart checks | Physical peer-loss/stale time, long-run hardware wrap and other roles/modes. |
 | Link recovery | Candidate removal/readmission and bounded recovery machinery | Physical peer silence/restart, pending work, sustained reacquisition and repeated failures. |
@@ -95,7 +95,7 @@ implemented features or a firmware coverage percentage.
 | Core family | Recognized IDs | Current native coverage |
 | --- | ---: | --- |
 | Initialization/configuration (`0x00…`) | 12 | Direct commands unsupported; loader JSON is a separate, partial configuration path |
-| Getters (`0x01…`) | 35 | Status and DEV AP time have partial behavior/scenario coverage; 33 unsupported |
+| Getters (`0x01…`) | 35 | Status, DEV AP time and register read have partial behavior/scenario coverage; 32 unsupported |
 | Setters (`0x02…`) | 56 | Candidate list has partial coverage; 55 unsupported |
 | Extension (`0x06000000`) | 1 | Unsupported; original callback contract unresolved |
 | Lifecycle (`0x0b…`) | 4 | Start, stop, init and deinit have partial behavior/scenario coverage |
@@ -233,6 +233,48 @@ captures show the camera scene after each sequence. This closes the implemented
 DEV clock path for these scenarios, not every time-related behavior in stock.
 The accepted image and hardware limits are recorded in [status](status.md) and
 [baseline.json](../baseline.json); detailed receipts remain private.
+
+### Register-read command
+
+`0x01000064` accepts two little-endian 16-bit values: byte offset and byte count.
+The original allows unaligned windows, counts from 0 through 256, and an end
+offset no greater than 4,096. Each returned byte performs its own aligned
+32-bit register read. A changing register can therefore contribute bytes from
+different instants; the reply is not an atomic snapshot.
+
+Valid four-byte requests return a 256-byte payload, including range errors
+(`-6`). Open8030 zeroes the unused tail and error payload instead of returning
+previous buffer contents. Malformed native requests return `-22` without a
+payload; pre-probe native reads return `-11`. Those additional validation paths
+are not claimed as exact original behavior.
+
+The native read function matches 360 original-instruction cases for statuses,
+requested bytes and read addresses/counts, with 99 instruction locations bound
+to original bytes. Cases include changing synthetic registers, unaligned reads,
+empty/full windows and boundary errors. Clock, time-division and logging helpers
+are intercepted on the original error path. Allocation, serialization and actual
+peripheral read effects are outside this offline comparison.
+
+Hardware comparison covers eight stock/native success/error requests, including
+fixed reply sizes and the active receive PLL bytes. Native checks also cover four
+malformed lengths and fourteen 256-byte register windows while video is running.
+The 30-second HDMI capture shows the same dark textured camera scene as fresh
+stock; all 33 native samples remain linked, with advancing AP time and zero
+sampled socket drops. This does not establish all register side effects, concurrent
+state transitions, sustained polling limits or clear-scene video quality.
+
+### Isolated low-power acquisition failure
+
+Changing only temporary loader `power.manu_init` from 25 to 11, with the accepted
+AP-time firmware bytes unchanged, failed acquisition: 18 samples show states 0/1,
+unavailable AP time and no delivered video. The HDMI capture shows the disconnected
+receiver background. A full reboot and restoration of the original configuration
+restore link state 2 and the dark camera scene also seen on stock.
+
+This reproduces failure without the shelved dynamic-power implementation. It
+narrows the problem to existing low-power acquisition behavior; it does not identify
+the defective RF setting, prove emitted power or validate the dynamic setter.
+The temporary configuration was discarded. The retained baseline still uses 25.
 
 Next, extend the core inventory through the transport dispatchers and indirect
 callbacks, and bind each command's behavior to its comparison tests. Then cover

@@ -34,7 +34,7 @@ request_id,family,core_route,original_reply_bytes,behavior,native_status,compari
 0x01000014,getter,recognized,136,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
 0x01000015,getter,recognized,136,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
 0x01000016,getter,recognized,1792,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
-0x01000064,getter,recognized,256,Baseband register read,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
+0x01000064,getter,recognized,256,Baseband register read,partial,360 original-instruction cases; stock/native wire and video checks; see parity.md,"Zeroed unused/error bytes and extra validation differ; peripheral read effects, state transitions and sustained polling limits remain"
 0x01000065,getter,recognized,1024,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
 0x01000066,getter,recognized,1,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
 0x01000069,getter,recognized,136,System information,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"

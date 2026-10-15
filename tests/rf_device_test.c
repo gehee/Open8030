@@ -18,6 +18,8 @@ static unsigned inject_valid;
 static unsigned delay_dma;
 static unsigned complete_dma_reads;
 static unsigned measurement_banks;
+static unsigned trace_register_reads, volatile_register_reads, register_reads;
+static uint32_t register_read_addresses[256];
 static uint8_t valid_packet[256];
 static unsigned forwarded_count, forwarded_slot, forwarded_port;
 static size_t forwarded_length;
@@ -65,6 +67,11 @@ static uint32_t *reg(uint32_t address)
 }
 uint32_t ar_rf_test_read(uint32_t address)
 {
+	if (trace_register_reads && address >= 0x0a110000 && address < 0x0a111000) {
+		assert(register_reads < 256);
+		register_read_addresses[register_reads++] = address;
+		if (volatile_register_reads) { return *reg(address) ^ (register_reads * 0x01010101u); }
+	}
 	/* Model a DMA that finishes only while its RX producer is not reset.
 	 * This distinguishes drain-before-reset from the old shutdown order. */
 	if (address == 0xe0801164 && complete_dma_reads && !(*reg(0x0a11080c)&4)) {
@@ -151,6 +158,8 @@ static void receive_sync(uint8_t control[7], unsigned seal)
 int main(void)
 {
 	assert(ar_rf_host_ap_time() == UINT32_MAX);
+	uint8_t register_output[256];
+	assert(ar_rf_host_registers(0, 1, register_output) == -11);
 	uint8_t host_status[300];
 	assert(ar_rf_host_status(0x3ff, NULL) == -22);
 	assert(ar_rf_host_status(0x3ff, host_status) == -11);
@@ -161,6 +170,33 @@ int main(void)
 	assert(ar_rf_probe() == 0);
 	assert(*reg(0x0a1060c8) == 0x80000003);
 	assert(ar_rf_information()->phase == AR_RF_PROBED && ar_rf_information()->chip_profile == 1);
+	for (unsigned i = 0; i < 64; i++) { *reg(0x0a110100 + i * 4) = 0x03020100 + i * 0x04040404u; }
+	unsigned register_writes_before = writes;
+	trace_register_reads = 1;
+	assert(!ar_rf_host_registers(0x103, 7, register_output) && register_reads == 7);
+	for (unsigned i = 0; i < 256; i++) { assert(register_output[i] == (i < 7 ? i + 3 : 0)); }
+	for (unsigned i = 0; i < 7; i++) { assert(register_read_addresses[i] == 0x0a110000 + ((0x103 + i) & ~3u)); }
+	register_reads = 0; volatile_register_reads = 1;
+	assert(!ar_rf_host_registers(0x103, 7, register_output) && register_reads == 7);
+	for (unsigned i = 0; i < 7; i++) { assert(register_output[i] == ((i + 3) ^ (i + 1))); }
+	register_reads = 0; volatile_register_reads = 0;
+	assert(!ar_rf_host_registers(0x100, 256, register_output) && register_reads == 256);
+	for (unsigned i = 0; i < 256; i++) { assert(register_output[i] == i); }
+	register_reads = 0; *reg(0x0a110ffc) = 0xa5000000;
+	assert(!ar_rf_host_registers(4095, 1, register_output) && register_reads == 1 && register_output[0] == 0xa5);
+	assert(register_read_addresses[0] == 0x0a110ffc);
+	register_reads = 0;
+	assert(!ar_rf_host_registers(4096, 0, register_output) && !register_reads);
+	for (unsigned i = 0; i < 256; i++) { assert(!register_output[i]); }
+	const unsigned bad_windows[][2] = {{4096, 1}, {4095, 2}, {0, 257}, {65535, 65535}, {UINT32_MAX, 1}, {1, UINT32_MAX}};
+	memset(register_output, 0xa5, sizeof register_output);
+	for (unsigned i = 0; i < sizeof bad_windows / sizeof bad_windows[0]; i++) {
+		assert(ar_rf_host_registers(bad_windows[i][0], bad_windows[i][1], register_output) == -6);
+		assert(!register_reads);
+		for (unsigned j = 0; j < 256; j++) { assert(register_output[j] == 0xa5); }
+	}
+	assert(ar_rf_host_registers(0, 1, NULL) == -22 && !register_reads);
+	assert(writes == register_writes_before); trace_register_reads = 0;
 	assert(*reg(0x0a104080) == 0x80000002 && *reg(0x00140098) == 2);
 	/* OTP identity takes byte14 and unaligned bytes26..29, not a stored MAC. */
 	emulate_otp = 1; otp_words[3] = 0xa5260000; otp_words[6] = 0x1234abcd; otp_words[7] = 0xabcd5678;

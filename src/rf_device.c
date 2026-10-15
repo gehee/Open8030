@@ -2266,6 +2266,25 @@ const struct ar_rf_lifecycle_info *ar_rf_lifecycle_information(void)
 
 const struct ar_rf_rx_info *ar_rf_receive_information(void) { return &receiver; }
 
+int ar_rf_host_registers(unsigned offset, unsigned length, uint8_t output[256])
+{
+	if (!output) { return -22; }
+	/* Original 0x24612c accepts unaligned and empty windows in a 4 KiB
+	 * page. Check bounds before MMIO, including offset 4096 with length 0. */
+	if (length > 256 || offset > 4096 || length > 4096 - offset) { return -6; }
+	if (information.phase == AR_RF_OFF) { return -11; }
+	/* Stock's core handler leaves the unused reply tail untouched. Do not
+	 * expose previous buffer contents through the fixed-size host reply. */
+	memset(output, 0, 256);
+	for (unsigned i = 0; i < length; i++) {
+		unsigned byte = offset + i;
+		/* Preserve one aligned volatile word read per byte, as in stock.
+		 * Coalescing reads would change behavior for changing registers. */
+		output[i] = read32(BB + (byte & ~3u)) >> ((byte & 3) * 8);
+	}
+	return 0;
+}
+
 int ar_rf_read_registers(unsigned offset, unsigned length, uint8_t *output)
 {
 	/* Diagnostic readback is restricted to the known configuration page,

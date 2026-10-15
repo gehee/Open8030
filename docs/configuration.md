@@ -156,9 +156,12 @@ then zero offsets. The two implemented paths use offset elements 0 and 2, and
 clamp selected row levels to 9–39. Unsupported flash identification or controller
 setup is a boot failure, not evidence that factory calibration is absent.
 
-Only initial user-0 power application and the zero-offset storage fallback have
-hardware coverage. Dynamic host power controls and valid factory-record parity
-remain incomplete. See [power_config.c](../src/power_config.c),
+Hardware acceptance uses initial level **25** and the zero-offset storage fallback.
+A configuration-only test of the same accepted firmware with `manu_init: 11`
+failed acquisition and delivered no video; restoring 25 restored the stream.
+Parser acceptance of 9–36 does not establish working RF at those levels.
+Dynamic host power controls and valid factory-record parity remain incomplete.
+See [power_config.c](../src/power_config.c),
 [power.c](../src/power.c) and [status](status.md).
 
 ## Changing configuration

@@ -292,6 +292,9 @@ const struct ar_rf_rx_info *ar_rf_receive_information(void);
  * unrequested/reserved bytes are zero. Stopped monitors never report linked. */
 int ar_rf_host_status(uint16_t users, uint8_t output[300]);
 uint32_t ar_rf_host_ap_time(void);
+/* Original GET_REG byte window; successful replies always contain 256 bytes.
+ * Bytes beyond the requested window are zero; live reads are not atomic. */
+int ar_rf_host_registers(unsigned offset, unsigned length, uint8_t output[256]);
 typedef void (*ar_rf_event_callback)(unsigned id, const uint8_t *data, size_t length, void *context);
 void ar_rf_set_event_callback(ar_rf_event_callback callback, void *context);
 void ar_rf_poll(void);

@@ -41,6 +41,20 @@ reboot into stock and remained visible after loading Open8030 again. The same
 warm-restoration symptom recurred before the AP-time candidate was loaded; a full
 receiver reboot again restored stock video. The cause has not been isolated.
 
+The current development image also implements original register-read request
+`0x01000064`, with 360 original-instruction comparisons and stock/native wire
+checks. Its 30-second direct HDMI capture shows the same dark textured camera
+scene as fresh stock. All 33 native status samples are linked, with advancing AP
+time and zero sampled socket drops. Scene lighting/freshness was not controlled;
+this is not a new bright-scene quality or latency measurement. The image was
+retained after inspection.
+
+A separate configuration-only test reproduced acquisition failure at initial
+power level 11 using the preceding accepted image. No video was delivered;
+restoring the original level-25 configuration restored the stream. This failure
+does not depend on the later, unaccepted dynamic-power code. Low-power operation
+remains unresolved; see [configuration](configuration.md#power-and-factory-data).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host
