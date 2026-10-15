@@ -595,6 +595,18 @@ so the no-drop check fails despite visible video. The cause and stock comparison
 under the same load remain open. Stage 213 remains running in RAM.
 See [route delivery coverage](parity.md#selected-internal-route-delivery).
 
+Stage 215 instruments the video receive/drop path and SDIO descriptor lifetime.
+The stage-213 session also loses 6,452 bytes during a quiet 45-second interval
+with only start/end counter reads, so frequent observation is not required for
+loss. After a fresh stock boot, the instrumented image passes 420 flow samples
+with no dropped bytes or SDIO errors. Its video queue peaks at 12,231 of 56,320
+bytes; the longest poll-observed SDIO descriptor duration is about 13.6 ms.
+Fresh stock and native HDMI-to-USB captures show the camera scene. This is an
+instrumentation checkpoint, not a streaming fix: restart and instrumentation
+effects are not isolated, and the intermittent loss remains open. See
+[flow measurements](parity.md#video-receive-flow-measurements) and the
+[diagnostic layout](architecture.md#host-protocol).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host

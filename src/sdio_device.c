@@ -40,6 +40,7 @@ static size_t transmit_lengths[AR_SDIO_TX_DEPTH];
 static unsigned tx_head, tx_count;
 static struct ar_sdio_stats stats;
 static unsigned ready, rx_armed, tx_pending;
+static uint32_t tx_started;
 #ifdef AR_SDIO_CIS_DIAGNOSTICS
 static uint32_t observed_events;
 #endif
@@ -109,7 +110,9 @@ static void start_transmit(void)
 	control_byte(SDIO_BASE + TX_BLOCKS, (uint8_t)(transmit_lengths[tx_head] >> 9));
 	barrier();
 	tx_pending = 1;
+	tx_started = read32(UINT32_C(0xe000bff8));
 	stats.tx_packets++;
+	stats.tx_wire_bytes += transmit_lengths[tx_head];
 #ifdef AR_SDIO_SIMULATED
 	ar_test_submit(transmit_buffers[tx_head], transmit_lengths[tx_head]);
 #endif
@@ -118,6 +121,9 @@ static void start_transmit(void)
 static void finish_transmit(void)
 {
 	if (!tx_pending) { return; }
+	stats.tx_last_ticks = ar_sdio_active_ticks();
+	if (stats.tx_last_ticks > stats.tx_max_ticks) { stats.tx_max_ticks = stats.tx_last_ticks; }
+	stats.tx_finished++;
 	tx_pending = 0;
 	tx_head = (tx_head + 1) % AR_SDIO_TX_DEPTH;
 	tx_count--;
@@ -291,6 +297,11 @@ int ar_sdio_send(const uint8_t *data, size_t length)
 }
 
 const struct ar_sdio_stats *ar_sdio_statistics(void) { return &stats; }
+
+uint32_t ar_sdio_active_ticks(void)
+{
+	return tx_pending ? read32(UINT32_C(0xe000bff8)) - tx_started : 0;
+}
 
 void ar_sdio_record_fault(uint32_t reason, uint32_t cause, uint32_t pc, uint32_t value)
 {

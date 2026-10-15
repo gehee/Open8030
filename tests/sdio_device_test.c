@@ -52,10 +52,17 @@ int main(void)
 	assert(ar_sdio_receive(&received) == 19 && received != NULL);
 	assert(((uintptr_t)received & 511) == 0);
 	uint8_t hello[27] = {0xaa};
+	*reg(0xe000bff8) = 0xfffffff0;
 	assert(ar_sdio_send(hello, sizeof hello) == 0);
 	assert(*reg(0x0420015c) == 1 && (*reg(0x0420012c) & 0x1fffff) == 512);
+	*reg(0xe000bff8) = 0x90;
+	assert(ar_sdio_active_ticks() == 160); /* Timer wrap during ownership. */
 	*reg(0x04200134) = 2;
 	assert(ar_sdio_receive(&received) == 0);
+	assert(!ar_sdio_active_ticks());
+	assert(ar_sdio_statistics()->tx_finished == 1);
+	assert(ar_sdio_statistics()->tx_last_ticks == 160 && ar_sdio_statistics()->tx_max_ticks == 160);
+	assert(ar_sdio_statistics()->tx_wire_bytes == 512);
 	static uint8_t maximum[4115];
 	assert(ar_sdio_send(maximum, sizeof maximum) == 0);
 	assert(*reg(0x0420015c) == 9 && (*reg(0x0420012c) & 0x1fffff) == 4608);

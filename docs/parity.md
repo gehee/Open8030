@@ -2849,3 +2849,54 @@ then integrate both directions of the selected services with their real stream
 ownership and lifecycle behavior. Each runtime integration still requires
 stock/native checks and direct video inspection. Investigate the observed video
 receive drops before accepting a claim of sustained streaming parity.
+
+### Video receive flow measurements
+
+Stage 215 follows the receive loss observed in stage 214. The unchanged
+stage-213 session loses another **6,452 video bytes in a quiet 45-second
+interval**, using only beginning/end counter reads. This rules out frequent
+observer requests as a necessary condition for that loss; it does not identify
+the cause or establish the original firmware's behavior under the same load.
+
+The new runtime records per-port queue high-water marks, maximum incoming
+fragment size and overflow-call counts. Each overflow saves the available SDIO
+TX entries, active descriptor age, recent/maximum descriptor duration and
+packet counters. SDIO also records completed descriptor durations and padded
+wire bytes started. The read-only `0x015a002a` diagnostic exposes these bounded
+records; [architecture](architecture.md#host-protocol) defines its layout and
+counter lifetime. No new queue allocation, flow-control policy, chunk size or
+polling-order change is introduced.
+
+Descriptor timing uses the matched board's 40 MHz machine timer. It measures
+from local publication to poll-observed completion, including host waiting and
+local scheduling; aborts also finish a descriptor. It is not isolated DMA timing
+or end-to-end video latency. Unsigned counters wrap, and a descriptor stalled
+for a full 32-bit timer period cannot be measured accurately. Native tests
+exercise timer wrap, pending/finished ownership, padded-byte accounting and the
+existing SDIO/socket contracts. Three ASan/UBSan suites and 18 Python tests pass.
+These are project diagnostics, not newly implemented original commands.
+
+A full receiver reboot supplies a fresh stock video reference, followed by the
+instrumented candidate with the same image/configuration provenance checks.
+**420 flow samples** across the initial 120-second and extended 300-second runs
+show zero socket dropped bytes, SDIO errors, invalid RX or attempted full-queue
+TX rejections. The video queue reaches **12,231 / 56,320 bytes** and its largest
+incoming fragment is 1,700 bytes. The maximum finished descriptor duration is
+545,783 timer ticks, about **13.645 ms**. This maximum includes startup and
+control traffic; it is not a video-only timing statistic.
+
+Direct host `/dev/video0` HDMI-to-USB captures use MJPEG 1920×1080 at nominal
+30 fps: stock 20 seconds, initial native 45 seconds and final native 30 seconds.
+The dark textured camera scene and right-side features are visible. Stock's 23
+and native's 81 sampled status responses are linked, with advancing AP time;
+the native capture intervals also have zero sampled socket drops. The candidate
+is retained in RAM after inspection. These captures do not measure controlled
+scene freshness or latency, nor do they compare stock queue overflow counters.
+
+**The intermittent drop issue is not fixed.** The reboot and added timing
+instrumentation are confounded, so a clean bounded run cannot establish which
+change affected the triggering condition. Retain the measurements to capture
+future natural overflows, compare service/host delays when they recur, and test
+the resulting correction against stock and the accepted image. Increasing queue
+capacity or changing scheduling without that evidence would not establish full
+streaming parity. Other original-system coverage gaps remain unchanged.

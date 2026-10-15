@@ -133,6 +133,7 @@ int main(void)
 	assert(ar_diagnostic_request_id(AR_DAEMON_DIAGNOSTIC_BASE | 0x26) == AR_REQ_RF_RECOVERY_INFO);
 	assert(ar_diagnostic_request_id(AR_DAEMON_DIAGNOSTIC_BASE | 0x28) == AR_REQ_RF_TX_HISTORY_INFO);
 	assert(ar_diagnostic_request_id(AR_DAEMON_DIAGNOSTIC_BASE | 0x29) == AR_REQ_SOCKET_CLOSE_INFO);
+	assert(ar_diagnostic_request_id(AR_DAEMON_DIAGNOSTIC_BASE | 0x2a) == AR_REQ_SOCKET_FLOW_INFO);
 	for (unsigned i = 0x10; i <= 0x16; i++) {
 		assert(ar_diagnostic_request_id(AR_DAEMON_DIAGNOSTIC_BASE | i) == (AR_DAEMON_DIAGNOSTIC_BASE | i));
 	}

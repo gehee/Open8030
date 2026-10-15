@@ -198,6 +198,32 @@ with no payload. Zero-byte reads through the end offset are valid. The direct
 ranges. These diagnostic structures are development interfaces, not stable
 vendor APIs; successive ranges are live reads, not one atomic snapshot.
 
+The flow diagnostic `0x015a002a` (direct chip ID `0x0c5a002a`) takes an empty
+request and returns 220 bytes of little-endian 32-bit words:
+
+| Words | Contents, in order |
+| --- | --- |
+| 0–2 | Version (`1`), available SDIO TX entries, active descriptor age in timer ticks |
+| 3–14 | SDIO polls, host enables, RX packets, TX descriptors started, errors, invalid RX, TX backpressure, TX queue high-water mark, TX descriptors finished, last finished duration, maximum finished duration, padded TX wire bytes started |
+| 15–24, 25–34, 35–44, 45–54 | One record for each host socket port 0–3, as described below |
+
+Each port record contains queue high-water bytes, largest incoming fragment,
+drop-call count and bytes lost on the last drop call, followed by the SDIO state
+at that last drop: available TX entries, active descriptor age, last finished
+duration, maximum finished duration, TX descriptors started and RX packets.
+These records persist across socket close/open until firmware restart; combine
+them with current socket capacities and counters from `0x015a001a`. Unused drop
+snapshots are zero. Reading the diagnostic does not clear it.
+
+Timer values use the matched board's 40 MHz machine timer (40 ticks per
+microsecond). Durations include host waiting and the local polling delay before
+completion is observed; they do not isolate DMA transfer time. Aborts also finish
+descriptors, and the wire-byte counter counts starts, not successful delivery.
+Unsigned counters and timer differences wrap at 32 bits; a single descriptor
+stall lasting a full timer period (about 107 seconds) cannot be measured by this
+record. Queue occupancy and these transport measurements supplement direct video
+inspection; neither proves frame freshness or stock streaming parity.
+
 The matched daemon's TCP forwarding wrapper gives its encoder a 4,096-byte
 buffer including the 19-byte frame overhead. The complete RX diagnostic exceeds
 that limit. Bounded reads avoid the oversized response; increasing the native

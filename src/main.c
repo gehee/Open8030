@@ -2,6 +2,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/uart.h>
+#include <string.h>
 #include "ar_frame.h"
 #ifdef CONFIG_SOC_AR8030_BRINGUP
 #include "ar_sdio_device.h"
@@ -11,6 +12,10 @@
 #include "ar_event.h"
 static struct ar_socket_rx sockets;
 static struct ar_events events;
+static struct {
+	uint32_t high_water, largest_feed, drop_calls, last_drop_bytes;
+	uint32_t tx_room, active_ticks, last_ticks, max_ticks, tx_packets, rx_packets;
+} socket_flow[AR_SOCKET_RX_PORTS];
 /* Bounded diagnostic record of real host commands during stack integration. */
 static struct {
 	uint32_t count, overflow, event_drops, reserved;
@@ -34,7 +39,22 @@ static void transmit_commit(unsigned port, size_t length, void *context)
 static void received_payload(unsigned slot, unsigned port, const uint8_t *data, size_t length, void *context)
 {
 	(void)context;
-	(void)ar_socket_rx_feed(&sockets, slot, port, data, length);
+	size_t accepted = ar_socket_rx_feed(&sockets, slot, port, data, length);
+	if (slot || !port || port > AR_SOCKET_RX_PORTS) { return; }
+	unsigned i = port - 1;
+	if (!sockets.ports[i].capacity || sockets.ports[i].closing) { return; }
+	if (sockets.ports[i].used > socket_flow[i].high_water) { socket_flow[i].high_water = sockets.ports[i].used; }
+	if (length > socket_flow[i].largest_feed) { socket_flow[i].largest_feed = length; }
+	if (accepted != length) {
+		const struct ar_sdio_stats *stats = ar_sdio_statistics();
+		socket_flow[i].drop_calls++; socket_flow[i].last_drop_bytes = length - accepted;
+		socket_flow[i].tx_room = ar_sdio_tx_room();
+		socket_flow[i].active_ticks = ar_sdio_active_ticks();
+		socket_flow[i].last_ticks = stats->tx_last_ticks;
+		socket_flow[i].max_ticks = stats->tx_max_ticks;
+		socket_flow[i].tx_packets = stats->tx_packets;
+		socket_flow[i].rx_packets = stats->rx_packets;
+	}
 }
 _Static_assert(sizeof(struct ar_rf_rx_info) <= AR_MAX_PAYLOAD, "RF diagnostics must fit one response");
 #include <zephyr/fatal.h>
@@ -86,6 +106,20 @@ static void receive(const struct ar_frame *frame, void *context)
 #ifdef CONFIG_SOC_AR8030_BRINGUP
 	struct ar_frame socket_response;
 	uint32_t diagnostic_reqid = ar_diagnostic_request_id(frame->reqid);
+	if (diagnostic_reqid == AR_REQ_SOCKET_FLOW_INFO && !frame->status && !frame->length) {
+		/* Version, live SDIO state, cumulative transport stats, then four
+		 * port records. Drop snapshots are lifetime diagnostics, not events. */
+		uint32_t header[] = {1, ar_sdio_tx_room(), ar_sdio_active_ticks()};
+		size_t n = sizeof header;
+		memcpy(transformed, header, n);
+		memcpy(transformed + n, ar_sdio_statistics(), sizeof(struct ar_sdio_stats));
+		n += sizeof(struct ar_sdio_stats);
+		memcpy(transformed + n, socket_flow, sizeof socket_flow); n += sizeof socket_flow;
+		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid,
+			.payload = transformed, .length = n};
+		size_t size = ar_encode(reply, sizeof reply, &response);
+		(void)ar_sdio_send(reply, size); return;
+	}
 	if (diagnostic_reqid == AR_REQ_RF_SCAN_INFO && !frame->status && !frame->length) {
 		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid,
 			.payload = (const uint8_t *)ar_rf_scan_information(), .length = sizeof(struct ar_rf_scan_info)};
