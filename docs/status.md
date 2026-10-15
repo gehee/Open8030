@@ -34,6 +34,10 @@ of the earlier black picture has not been isolated.
 
 ## Remaining work
 
+[Original firmware parity](parity.md) tracks the comparison scope, known host
+request and PHY-command gaps, and the evidence required to close each area.
+Full original-firmware coverage has not been established.
+
 - Dynamic host power controls and broader channel, band and RF policy support.
 - AP-time synchronization and complete telemetry/host-command parity.
 - Wider modes, other hardware variants and transmitter support.
