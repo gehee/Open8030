@@ -40,6 +40,56 @@ static struct ar_tx_stream_entry *entry(struct ar_tx_stream_queue *queue,
 	return &queue->entries[offset / 20];
 }
 
+int ar_tx_stream_available(struct ar_tx_stream_registry *registry,
+	unsigned selector, unsigned port, uint32_t *available,
+	const struct ar_tx_stream_acquire_ops *ops, void *context)
+{
+	if (!registry || !available || !ops || !ops->lock || !ops->unlock)
+		return -22;
+	*available = 0;
+	if (selector > 7 || port > 4)
+		return 0;
+	(void)ops->lock(registry->mutex, UINT32_MAX, context);
+	struct ar_tx_stream *stream = registry->streams[selector][port][0];
+	if (stream)
+		stream->references++;
+	ops->unlock(registry->mutex, context);
+	if (!stream)
+		return 0;
+	struct ar_tx_stream_queue *queue = stream->queue;
+	unsigned retained = stream->flags & 4;
+	uint32_t total = 0;
+	int result = 0;
+	if (queue) {
+		(void)ops->lock(queue->mutex, UINT32_MAX, context);
+		if (retained) {
+			uint32_t offset = queue->read < queue->capacity ? queue->read : 0;
+			size_t visited = 0;
+			int present = !!queue->used;
+			while (present) {
+				struct ar_tx_stream_entry *current = entry(queue, offset);
+				if (!current || visited++ >= queue->entry_count) {
+					result = -22;
+					break;
+				}
+				total += current->length - current->produced;
+				offset += 20;
+				if (offset >= queue->capacity)
+					offset = 0;
+				present = offset != queue->write;
+			}
+		} else {
+			total = queue->available;
+		}
+		ops->unlock(queue->mutex, context);
+	}
+	const struct ar_tx_stream_ops common = {.lock = ops->lock, .unlock = ops->unlock};
+	drop(registry, stream, &common, context);
+	if (!result && total <= INT32_MAX)
+		*available = total;
+	return result;
+}
+
 int ar_tx_stream_acquire(struct ar_tx_stream_registry *registry,
 	unsigned selector, unsigned port, unsigned direction, uint32_t amount,
 	struct ar_tx_stream_span output[5], uint32_t timeout_ms,

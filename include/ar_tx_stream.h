@@ -59,6 +59,12 @@ int ar_tx_stream_acquire(struct ar_tx_stream_registry *registry,
 	unsigned selector, unsigned port, unsigned direction, uint32_t amount,
 	struct ar_tx_stream_span output[5], uint32_t timeout_ms,
 	const struct ar_tx_stream_acquire_ops *ops, void *context);
+/* Prepared-packet availability scan: sum retained length-produced modulo 2^32,
+ * or read byte-ring available; a negative signed result becomes zero. Lookup
+ * and drop bracket the queue lock. This does not reserve the reported bytes. */
+int ar_tx_stream_available(struct ar_tx_stream_registry *registry,
+	unsigned selector, unsigned port, uint32_t *available,
+	const struct ar_tx_stream_acquire_ops *ops, void *context);
 /* Invalid selector/port or an absent stream is a no-op; any nonzero direction
  * selects direction 1. Lookup adds one reference and the consumer drops two,
  * each drop saturating at zero. Acquisition holds one reference when it returns

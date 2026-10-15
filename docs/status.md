@@ -404,6 +404,17 @@ integration are still open. The build reproduces accepted stage 189; a fresh
 30-second HDMI-to-USB capture shows the camera scene with 33 linked samples and
 zero sampled socket drops. See [acquisition coverage](parity.md#stream-acquisition-and-reference-ownership).
 
+Stage 198 compares the prepared TX packet phase in 492 original scenarios,
+including 18 sequences through original descriptor retirement and stream release.
+There are 448 successful outcomes and 44 original assertion paths matched up to
+their failure boundary. A short acquisition can leave submitted segments and
+held references; it is not a clean rollback. The new helper remains source-only,
+with full-handler integration and recovery still open. Four sanitizer suites,
+18 Python tests and 3,356 acquisition regression scenarios pass. The build still
+reproduces stage 189; a fresh 30-second HDMI-to-USB capture shows the camera scene
+with 33 linked samples and zero sampled socket drops. See
+[packet preparation coverage](parity.md#prepared-tx-packet-assembly-and-retirement).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host

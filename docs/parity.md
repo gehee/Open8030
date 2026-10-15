@@ -1737,6 +1737,72 @@ retained runtime, not hardware execution of the new helper or controlled
 freshness/latency. Packet-builder composition, enqueue/allocation/teardown,
 backpressure, concurrent ownership and runtime integration remain open.
 
+### Prepared TX packet assembly and retirement
+
+Stage 198 adds source-only `tx_packet.c` and the availability scan in `tx_stream.c`.
+Comparison executes the prepared-packet phase at `0x238848..0x238b38`, starting
+with synthetic entry registers after ring-slot and outband selection. It includes
+the actual original lookup/drop, traversal, acquisition, arithmetic, memory and
+header-checksum routines. Eighteen successful cases then execute original
+descriptor retirement, stream release and queue consumption. This joins the
+previously separate ownership comparisons; it does not execute the full
+pre-encode handler, prior reservation, or subsequent notification processing.
+
+Availability scans all five ports before selecting descriptors. Retained queues
+sum `length - produced` modulo 2^32 across their entries; byte queues expose their
+available count. Negative signed totals become zero. Lookup/drop and queue locks
+surround this scan, but the scan does not reserve those bytes. Selection proceeds
+in port order with four bytes of descriptor overhead for each selected port.
+The builder preserves descriptor bits 8..11, records the requested length, calls
+acquisition with timeout zero, and ignores its return code. Stream spans are
+stored by port, while descriptors occupy a compact list.
+
+Compared gates include role/mode bytes, registry presence and user flag bytes.
+An optional policy path reads a value from `0x2203ca` and a word from `0x229124`.
+When the word's high half multiplied by 120 is nonzero and below the value, it
+updates a control nibble and limits selection to port 0. Those two endpoints are
+intercepted: their producers, units and full semantics are not established by
+this test. They must not yet be described as a verified backpressure mechanism.
+
+The builder advances the sequence byte, sets the outband flag, computes the
+header checksum, then invokes cache maintenance and segment submission for the
+header, optional outband, and each nonempty span in descriptor order. It checks
+the submitted total against its budget accounting afterward. Successful cases
+record the request byte and issue the terminal submission. **A length mismatch
+reaches an original assertion path after segment submission**, without a terminal
+submission or reference rollback. Such mismatches occur in fixtures with scaled
+acquisition, disabled byte queues, or more retained entries than fit in five spans.
+The native helper returns `-95` at that boundary and preserves the partial effects.
+Blindly retrying or retiring that packet is unsafe: its advertised lengths can
+exceed what acquisition supplied. A runtime recovery policy remains necessary.
+
+Fresh comparison covers **492 scenarios**, including **448 nonfatal outcomes**
+and **44 assertion prefixes**. It checks 704 descriptors, 7,540 lock/unlock pairs,
+1,802 cache calls, 2,250 segment/terminal submissions, 437 clock calls, 24 policy
+value calls, 12 policy word calls, 23 wakes and 18 buffer callbacks. The **18
+composed retirement sequences** include empty and populated packets. State is
+compared at every recorded effect and at completion/failure. All **967 executed
+instruction locations** match the original payload, container and analysis ELF;
+the original checksum table remains private and its hash is recorded.
+
+RTOS/clock, policy, cache and submission endpoints are intercepted. Original
+assertion handling is not executed after the mismatch boundary. The comparison
+uses synthetic queue/registry/ring storage and an analysis ABI, with no concurrent
+mutation. Native `-22` guards and `-95` returns are deliberate errors rather than
+copies of original unsafe accesses or fatal handling. Ring reservation, policy
+producers, allocation/teardown, notifications, interrupt ordering and actual DMA
+ownership remain open, as does integration with the runtime's current copy queues.
+
+Four sanitizer suites cover the assembled packet through native retirement,
+segment ordering, gates, span shortfall, checksum and guarded cleanup. Eighteen
+Python tests pass. All **3,356 prior acquisition scenarios** pass replay against
+the updated stream module; that replay is not fresh original execution. The
+standard build is byte-identical to accepted stage 189. A fresh 30-second direct
+`/dev/video0` HDMI-to-USB capture has 33 linked samples, advancing AP time and zero
+sampled socket drops. Inspected frames show the textured camera scene, right-side
+features and camera OSD. The accepted firmware remains running; no hardware
+execution of this new helper or controlled freshness/latency is claimed.
+
 Next, compare the remaining ownership and retry-limit producers, connect the
 compared TX helpers to the runtime, and isolate low-power acquisition
 before retrying host power integration. Extend the core
