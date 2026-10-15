@@ -49,6 +49,7 @@ TESTS = {
     'data_writer': ('data_route data_event', [], []),
     'data_ingress': ('data_ingress', [], []),
     'data_socket': ('data_socket data_route', [], []),
+    'data_pipeline': ('data_framing data_route data_event', [], []),
     'json': ('json', [], []),
     'config': ('config json power_config power dev_mcs', [], []),
     'power': ('power', [], []),

@@ -646,6 +646,17 @@ video remains visible with 33 linked samples; 60 flow samples show no socket
 drops or SDIO errors. Stage 215 remains running. See
 [internal write gate](parity.md#internal-socket-write-gate).
 
+Stage 220 compares original interface/route construction, parsing, selection,
+queue messages and delivery together. All 108 cases / 3,540 feeds match the
+native helpers composed with a test-only selection adapter: 54 packets are
+delivered and 54 cases have no matching route. Destination bytes, event payloads,
+counters and final packet references match. One sanitizer suite (1,698 split
+cases) and 18 Python tests pass. Production route construction and internal
+service ownership remain open. The build reproduces stage 215; a fresh
+HDMI-to-USB capture shows the camera scene with 33 linked samples, and 60 flow
+samples show no socket drops or SDIO errors. Stage 215 remains running. See
+[composed route coverage](parity.md#constructed-parser-to-route-composition).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host

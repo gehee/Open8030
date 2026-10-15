@@ -1,0 +1,168 @@
+/* SPDX-License-Identifier: MIT */
+#include "ar_data_framing.h"
+#include "ar_data_route.h"
+#include "ar_data_event.h"
+#include <assert.h>
+#include <string.h>
+
+/* Test-only mode-3 selection/queue adapter. Production route construction,
+ * scheduling and internal service ownership remain unimplemented. */
+struct fixture {
+	unsigned source, role, writes, emissions, allocations, segments;
+	int destination, queued, references;
+	uint8_t packet_bytes[257], written[257], event_bytes[1024];
+	struct ar_data_packet packet;
+	struct ar_data_route route;
+	struct ar_data_route_stats stats;
+	struct ar_data_destination output;
+	struct ar_data_event event;
+};
+static uint8_t *allocate(size_t size, void *context)
+{
+	struct fixture *f = context;
+	assert(size == sizeof f->event_bytes);
+	f->allocations++;
+	return f->event_bytes;
+}
+static int emit(unsigned id, const uint8_t *data, void *context)
+{
+	struct fixture *f = context;
+	assert(id == 8 && data == f->event_bytes);
+	f->emissions++;
+	return 0;
+}
+static int write_packet(struct ar_data_destination *d, uint8_t metadata,
+	const uint8_t *data, uint32_t length, uint16_t source, void *context)
+{
+	struct fixture *f = context;
+	assert(d == &f->output && metadata == 0 && source == f->source);
+	assert(length <= sizeof f->written);
+	if (f->destination == 2) {
+		const struct ar_data_event_interface interface = {0};
+		const struct ar_data_event_ops ops = {allocate, emit};
+		return ar_data_event_forward(&f->event, &interface, data, length,
+			&ops, f);
+	}
+	f->writes++;
+	memcpy(f->written, data, length);
+	return (int)length;
+}
+static struct ar_data_destination *find(unsigned id, void *context)
+{
+	struct fixture *f = context;
+	assert(id == (unsigned)f->destination);
+	return &f->output;
+}
+static void release(struct ar_data_packet *packet, void *context)
+{
+	struct fixture *f = context;
+	assert(packet == &f->packet && f->references > 0);
+	f->references--;
+}
+static void unexpected_retain(struct ar_data_packet *packet, void *context)
+{
+	(void)packet; (void)context;
+	assert(0 && "unexpected destination retain");
+}
+static int unexpected_enqueue(struct ar_data_destination *d,
+	struct ar_data_packet *packet, struct ar_data_route *route, uint8_t metadata,
+	uint16_t source, void *context)
+{
+	(void)d; (void)packet; (void)route; (void)metadata; (void)source; (void)context;
+	assert(0 && "unexpected destination queue");
+	return -1;
+}
+static void unexpected_diagnostic(struct ar_data_destination *d, void *context)
+{
+	(void)d; (void)context;
+	assert(0 && "unexpected delivery failure");
+}
+static int segment(enum ar_data_segment_kind kind, const uint8_t *a, size_t n,
+	const uint8_t *b, size_t m, void *context)
+{
+	struct fixture *f = context;
+	f->segments++;
+	assert(kind == AR_DATA_FRAME && n + m <= sizeof f->packet_bytes);
+	assert(!f->queued && f->references == 0);
+	memcpy(f->packet_bytes, a, n);
+	if (m) { memcpy(f->packet_bytes + n, b, m); }
+	f->packet = (struct ar_data_packet){f->packet_bytes, (uint32_t)(n + m)};
+	f->references = 1;
+	f->destination = f->source == 2 ? (f->role == 1 ? 4 : -1) :
+		(f->role == 0 ? 0 : f->role == 1 ? 2 : -1);
+	if (f->destination >= 0) {
+		f->references++;
+		f->queued = 1;
+		f->route.destinations = UINT64_C(1) << f->destination;
+	}
+	release(&f->packet, f);
+	return 0;
+}
+static uint8_t crc(const uint8_t *data, size_t length)
+{
+	uint8_t v = 0;
+	for (size_t i = 0; i < length; ++i) {
+		v ^= data[i];
+		for (unsigned bit = 0; bit < 8; ++bit) {
+			v = (uint8_t)((v << 1) ^ ((v & 0x80) ? 0xd5 : 0));
+		}
+	}
+	return v;
+}
+int main(void)
+{
+	const size_t capacities[] = {AR_DATA_MODE3_EVENT_RING_SIZE,
+		AR_DATA_MODE3_SOCKET1_RING_SIZE};
+	const size_t sizes[] = {1, 22, 254};
+	for (unsigned type = 0; type < 2; ++type) {
+		for (unsigned role = 0; role < 3; ++role) {
+			for (unsigned s = 0; s < 3; ++s) {
+				const size_t length = sizes[s] + 3;
+				for (size_t split = 1; split < length; ++split) {
+					uint8_t ring[1043] = {0}, frame[257] = {0xc8};
+					struct fixture f = {.source = type ? 4 : 2, .role = role};
+					struct ar_data_framing parser;
+					frame[1] = (uint8_t)(sizes[s] + 1);
+					for (size_t i = 0; i < sizes[s]; ++i) { frame[i + 2] = (uint8_t)(5 + 37 * i); }
+					frame[length - 1] = crc(frame + 2, sizes[s]);
+					assert(ar_data_framing_init(&parser, ring, capacities[type]) == 0);
+					parser.read = parser.write = parser.scan = capacities[type] - 1;
+					assert(ar_data_framing_feed(&parser, frame, split, segment, &f) == 0);
+					assert(f.segments == 0 && f.references == 0);
+					assert(ar_data_framing_feed(&parser, frame + split,
+						length - split, segment, &f) == 0);
+					assert(f.segments == 1 && parser.used == 0);
+					assert(parser.stats.packets == 1 && parser.stats.packet_bytes == length);
+					assert(f.writes == 0 && f.emissions == 0);
+					/* Deferred delivery must own a copy, independent of the ring. */
+					memset(ring, 0xa5, sizeof ring);
+					if (f.queued) {
+						assert(f.references == 1);
+						f.output.enabled = 1;
+						f.output.write = write_packet;
+						const struct ar_data_route_ops ops = {find, unexpected_retain,
+							unexpected_enqueue, release, unexpected_diagnostic};
+						assert(ar_data_route_deliver(&f.route, &f.packet, 0,
+							(uint16_t)f.source, &f.stats, &ops, &f) == 0);
+						assert(f.route.packets == 1 && f.route.bytes == length);
+						assert(f.output.bytes == length && f.output.disabled == 0);
+						if (f.destination == 2) {
+							assert(f.emissions == 1 && f.allocations == 1 && f.writes == 0);
+							assert(f.event_bytes[0] == (uint8_t)length && f.event_bytes[1] == length >> 8);
+							assert(!memcmp(f.event_bytes + 2, frame, length));
+							for (size_t i = length + 2; i < sizeof f.event_bytes; ++i) { assert(f.event_bytes[i] == 0); }
+						} else {
+							assert(f.writes == 1 && f.emissions == 0 && f.allocations == 0);
+							assert(!memcmp(f.written, frame, length));
+						}
+					} else {
+						assert(f.route.packets == 0 && f.route.bytes == 0);
+						assert(f.writes == 0 && f.emissions == 0 && f.allocations == 0);
+					}
+					assert(f.references == 0 && f.stats.delivery_failures == 0 && f.stats.missing_destinations == 0);
+				}
+			}
+		}
+	}
+	return 0;
+}

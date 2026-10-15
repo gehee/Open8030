@@ -69,7 +69,7 @@ and scenario; they must be repeated after relevant changes.
 | Host lifecycle | Explicit stop/start and stop/deinit/init/start tested historically | Every wrong-state/repeated operation, cancellation, pending DMA, failure recovery and complete reset semantics. |
 | Events | All twelve original host subscriptions and declared payload sizes; copied FIFO transport; producers for IDs 0 and 1 | Integrate other producers and internal routes; compare their payload meaning, scheduling, overflow and lifecycle behavior. Subscription success alone does not establish a working producer. |
 | Host sockets | Slot-0 copy-mode data path, deferred close and active-write cancellation; normal backend video/control; stream/handle admission and queue factories compared offline | Stock host ports 0/1 reject opens because their streams already exist; native admission differs. Heap/RTOS internals, table initialization, worker startup, runtime ownership, other modes/slots, retained-descriptor TX, saturation, teardown races and complete capacity/error behavior remain open. |
-| Internal data interfaces | Stock stream occupancy observed; mode-3 graph, source-only event forwarding, socket-port-1 framing, selected route delivery, queued writer completion and host ingress callbacks compared offline | Integrate UART/SBUS, parsers, event producers, shared stream ownership and payload routing; compare other framing profiles, route actions, real packet ownership, scheduling, modes, timing, teardown and failure recovery. A reserved-port rejection alone does not implement these services. |
+| Internal data interfaces | Stock stream occupancy observed; mode-3 graph, event forwarding, framing, route delivery, queued writer, ingress and socket write gate compared offline; constructed parser-to-route composition compared in stage 220 | Integrate UART/SBUS, parsers, event producers, shared stream ownership and payload routing; implement native route construction/selection and compare other framing profiles, route actions, real packet ownership, scheduling, modes, timing, teardown and failure recovery. A reserved-port rejection alone does not implement these services. |
 | MAC framing | Header/descriptor parser and DEV encoder | Other formats/flags, receive ordering, duplicate handling and all original rejection rules. |
 | AP full/compact controls | Selected mode-0/slot-0 admission and connected control | All extensions, remote synchronization effects, changed channels, slots, stale/duplicate controls and unsupported modes. |
 | Internal port-0 commands | Stream parsing; login checksum ACK transmission | Receiving a command currently mainly records it. Inventory and implement each original command's effects, responses and retries. |
@@ -3145,3 +3145,87 @@ the camera scene with 33 linked samples, and a 60-sample flow check records no
 socket drops or SDIO errors. Stage 215 remains running. Route selection, service
 ownership and full firmware parity remain open; the earlier intermittent video
 loss is not resolved by this source-only change.
+
+### Constructed parser-to-route composition
+
+Stage 220 executes the original source-interface constructor, six-record mode-3
+route constructor, parser, route selector and delivery worker in sequence. Earlier
+comparisons supplied an empty route table or an already selected packet. This
+comparison preserves the parser's actual posted message through delivery.
+
+The constructor produces the following routes for the synthetic five-interface
+registry. IDs are UART2 = 0, UART1 = 1, event port 0 = 2, socket port 0 = 3 and
+socket port 1 = 4. All six configured actions preserve the complete frame.
+
+| Role | Selected source → destination | Logical worker |
+| --- | --- | --- |
+| All tested roles | UART1 → socket port 0 | 0 |
+| All tested roles | Socket port 0 → UART1 | 1 |
+| DEV (1) | Event port 0 → socket port 1 | 0 |
+| DEV (1) | Socket port 1 → event port 0 | 0 |
+| AP (0) | UART2 → socket port 1 | 1 |
+| AP (0) | Socket port 1 → UART2 | 1 |
+
+Role 2 constructs only the two common routes. This is a receiver-image software
+comparison with a synthetic role field, not transmitter hardware validation.
+The constructed source profiles tested through parsing are event port 0 and
+socket port 1; UART source parsing is outside this fixture.
+
+**108 cases / 3,540 feeds** match the native framing, route-delivery and event
+helpers connected by an explicit **test-only selection/queue adapter**. Cases
+cross both source profiles, roles 0/1/2, body lengths 1/22/254, normal/wrapped
+ring positions and whole/split/bytewise input. The comparisons include the full
+constructor-assigned profile, parser storage and counters, constructed routes,
+source/metadata/worker/destination fields, complete output bytes, delivery
+accounting and final reference balance.
+
+There are **54 queued messages**, producing **36 direct writer calls** and
+**18 event-8 messages**; the other **54 cases have no matching route**. Event
+messages contain the little-endian frame length, unchanged C8 envelope and zero
+padding to 1,024 bytes. A successful parser queue post is followed by a separate
+one-byte scheduler notification (`0xff`). The fixture records that notification
+separately. Queue capacity accounting returns to its initial value after the
+worker consumes the message. All final packet reference balances are zero.
+
+The [native composition test](../tests/data_pipeline_test.c) checks all 283
+two-part splits across the three frame lengths for each source/role combination
+(1,698 cases). It overwrites the parser ring before deferred delivery to check
+that the adapter owns a packet copy. This test does not add a production route
+constructor, selector, scheduler or internal service ownership.
+
+All **1,637 executed instruction locations** and configuration-table bytes are
+bound to the original payload/container/analysis-ELF hashes. The fixture retains
+the actual constructed source interface, but supplies the other registry entries
+and worker objects. Heap, packet allocation/reference helpers, mutexes, task
+creation, queue APIs, SDK open and diagnostics are intercepted. The exact posted
+32-byte message is supplied unchanged to the original delivery worker. The event
+bridge executes through an intercepted event-hub call; non-event writers stop
+at their callback boundary. The socket gate, UART hardware, RF transport,
+subscriber callbacks and real RTOS scheduling do not execute in this comparison.
+
+The route constructor encounters word `0xde1b0b77` at `0x211cd6`. Its narrowly
+scoped analysis model uses `WEXTI s6,s6,1`: extract the low 32 bits after shifting
+the `s7:s6` pair right by one, leaving `s7` unchanged. The encoding is corroborated
+by [OpenOCD's encoding definitions](https://openocd.org/doc-release/doxygen/encoding_8h_source.html),
+and the register-pair semantics by [Nuclei's WEXTI documentation](https://doc.nucleisys.com/nmsis/doxygen/core/html/group__NMSIS__Core__DSP__Intrinsic__NON__SIMD__MISC.html).
+Thirty-five synthetic vectors check boundary values, the high word and adjacent
+registers. This is model validation, not a physical AR8030 instruction test.
+Source snapshots, before/after model hashes and comparison receipts remain in
+ignored `.local/stage220-composed-routing/`. ELF, pointers, ABI and partial ISA
+remain analysis metadata.
+
+Malformed frames, allocation/queue failures, multiple pending packets, other
+route actions, lifecycle cleanup and full runtime integration remain open for
+this composed path. Separate component tests cover some of these conditions;
+they do not close those composition gaps.
+
+One ASan/UBSan suite and 18 Python tests pass, and the standard build reproduces
+the retained stage-215 image. A fresh 30-second capture of `/dev/video0` through
+the HDMI-to-USB adapter shows the dark textured camera scene and right-side
+objects. All 33 status samples remain linked with advancing AP time and zero
+socket drops; delivered video bytes increase by 13,263,730. A separate 60-sample
+flow check records zero socket drops or SDIO errors and 24,588,438 delivered
+bytes over 59.01 seconds. Image, configuration and boot identity match the
+retained baseline. Open8030 remains running. This is an unchanged-runtime
+regression check, not fresh stock parity or controlled freshness/latency evidence;
+the earlier intermittent loss remains unresolved.
