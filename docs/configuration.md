@@ -107,7 +107,8 @@ range on every board.
 MCS means modulation and coding scheme. Paths here are relative to
 `baseband.basic.dev.mcs.slot`. The receive policy is implemented in
 [dev_mcs.c](../src/dev_mcs.c); bandwidth changes and broader transmit policy are
-separate work.
+separate work. See [MCS negotiation](wireless-protocol.md#mcs-negotiation) for the
+wireless request and acknowledgement sequence.
 
 | Field | Accepted input | Meaning |
 | --- | --- | --- |

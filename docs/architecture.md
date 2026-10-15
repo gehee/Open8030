@@ -140,5 +140,6 @@ operations. The generic reset request synchronizes the protocol; it does not
 reboot the chip or flash firmware. A successful command or payload counter is
 not proof of decoded video, latency parity or support for every stock command.
 
+For over-air packet layouts and link behavior, see the [wireless protocol](wireless-protocol.md).
 Continue with [configuration](configuration.md), [operation and troubleshooting](operation.md)
 and [validation status](status.md).

@@ -96,6 +96,7 @@ the internal build and VRX control implementation. Generated outputs stay in `.l
 ## Documentation
 
 - [Architecture](docs/architecture.md): components, startup, memory layout and data flow.
+- [Wireless protocol](docs/wireless-protocol.md): packet layouts, acquisition/login, control messages and MCS negotiation.
 - [Configuration and parameters](docs/configuration.md): inputs, supported JSON fields and CLI options.
 - [Operation and troubleshooting](docs/operation.md): session behavior, logs, status and testing.
 - [Validation status](docs/status.md): hardware coverage, limitations and HDMI capture instructions.
