@@ -29,4 +29,19 @@ int ar_command_build(struct ar_command_program *program,
  * change for receive updates. Returns 1 if matched, 0 if absent, -22 if invalid. */
 int ar_command_update(struct ar_command_program *program, unsigned dev_role,
 	unsigned user, unsigned direction, unsigned property, uint32_t value, unsigned rx_flag);
+struct ar_command_state {
+	uint8_t calibration[3][5], valid_banks, cached_bank;
+	int8_t board_band;
+	uint8_t tx_flags, pending_tx;
+};
+/* Preparation and TX look-ahead effects. Initialize cached_bank=3 and
+ * board_band=-1 after calibration/default writes. A missing calibration bank
+ * is never substituted with another bank. Byte writes use baseband offsets.
+ * Returns the next entry index, -1 if no selection, or -22 for invalid input.
+ * The caller still owns non-preparation scan actions, TX buffer flag lifetime
+ * and the board's separate PA-sleep policy. This is not the whole IRQ handler. */
+int ar_command_step(struct ar_command_program *program, uint32_t command,
+	struct ar_command_state *state, unsigned dev_role, unsigned work_mode,
+	unsigned bypass, uint32_t compensation, ar_command_write write_field,
+	ar_command_write write_byte, void *context);
 #endif

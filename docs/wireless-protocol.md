@@ -434,23 +434,29 @@ Additional preparation effects include conditional buffer-control writes and
 look-ahead bandwidth programming. Calibration selection, board switching and
 TX-buffer ownership are distinct parts of this process.
 
-Open8030 now builds the normal DEV frame from three descriptors and retains the
-associated command metadata. Channel retuning and native profile writes update
-that metadata. Construction and first-match updates have original-instruction
-comparison coverage; this is distinct from consuming the metadata on each IRQ.
+Open8030 builds the normal DEV frame from three descriptors and retains the
+associated metadata. Channel retuning and native profile writes update it.
+The normal preparation IRQ now consumes that ring, with the original cursor
+advance and fallback matching rules. The fast path checks only the raw user;
+the fallback checks both raw user and hardware mode. An unmatched notification
+leaves the cursor at -1 and performs no preparation writes. Body notifications
+retain the cursor and program look-ahead bandwidth when the next entry is TX.
 
-Open8030 currently implements the fixed frame, the observed 5–6 GHz TX controls
-and a single calibrated context. Loaded compensation survives normal stop/start,
-deinit/init/start and native recovery. Probe, default loading, calibration and
-transitions to/from diagnostic modes invalidate that cache. Normal restart no
-longer clears compensation while waiting for another preparation notification.
-This has hardware stop/start, deinit/init/start and candidate-removal/readmission
-coverage. Physical peer-loss and pending-DMA recovery still need hardware checks.
-Open8030 does not yet implement the original metadata cursor and all preparation transitions. In particular, matching gain registers
-does not establish equivalent command ordering or calibration lifetime. The
-[parity checklist](parity.md#command-preparation-contract-investigation) records
-the original-instruction evidence and its limits. The low-power acquisition
-failure remains unresolved.
+Selected preparation uses the entry's frequency for board-band selection and
+its mode/bank for calibration. Both caches avoid repeated writes. Loaded
+compensation survives normal stop/start, deinit/init/start and native recovery.
+Probe, default loading, calibration and transitions to/from diagnostic modes
+invalidate the caches. Only bank 2 has native calibration data; an unavailable
+bank is not substituted with bank 2. Other bands still lack hardware validation.
+
+The preparation helper has original-instruction comparisons for all three
+synthetic calibration banks, board-band boundaries, bypass ordering, buffer
+flags and work-mode flags. Runtime integration remains the fixed mode-0 DEV
+frame. Its copy-mode TX path does not yet carry the original retained-buffer
+ownership flags. Non-preparation scan callbacks and the board's PA-sleep policy
+also remain unimplemented. Matching helper writes cannot establish these missing
+state transitions or interrupt timing. The [parity checklist](parity.md#command-preparation-integration)
+records the comparison scope. Low-power acquisition remains unresolved.
 
 ## Timing, retransmission and recovery
 

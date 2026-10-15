@@ -77,7 +77,7 @@ linked with valid advancing AP time and zero sampled socket drops. The image
 was retained in RAM after inspection. These checks do not establish physical
 peer-loss recovery, controlled freshness or full protocol parity.
 
-The current image installs the normal DEV frame through a source-built command
+The preceding image installed the normal DEV frame through a source-built command
 builder, with retained metadata updated during retuning and profile changes.
 It matches 568 original construction cases and 6,720 updates. All 22 native C
 suites and 18 Python tests pass. Live command registers match stock, and 50 seconds
@@ -85,6 +85,18 @@ of startup/restart/reinit HDMI captures retain the dark stock-matching camera
 scene, with 59 linked/AP-time samples and zero sampled socket drops. The image
 was retained in RAM after inspection. The remaining preparation IRQ actions and
 broader frame modes are still open; see [command construction](parity.md#command-construction-and-retained-metadata).
+
+The current image connects that metadata to preparation IRQ handling: cursor
+selection, cached board-band writes, calibration reuse and TX bandwidth
+look-ahead. The helper matches 14,864 original-instruction cases, including
+15,956 ordered write arguments. All 22 native C suites and 18 Python tests pass.
+Startup, stop/start, deinit/init/start and candidate removal/readmission retain
+compensation and video. The four direct HDMI-to-USB captures total 70 seconds,
+with 82 linked/AP-time samples and zero sampled socket drops; the dark camera
+scene matches fresh stock. The image was retained in RAM after inspection.
+Scan callbacks, PA-sleep policy and retained-buffer ownership integration remain
+open, along with other runtime bands/modes and low-power acquisition. See
+[preparation integration](parity.md#command-preparation-integration).
 
 A separate configuration-only test reproduced acquisition failure at initial
 power level 11 using the accepted AP-time image. No video was delivered;

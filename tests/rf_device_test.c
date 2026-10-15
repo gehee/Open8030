@@ -8,7 +8,7 @@
 
 static struct { uint32_t address, value; } registers[1024];
 static unsigned used, writes;
-static unsigned compensation_writes;
+static unsigned compensation_writes, board_prepare_writes;
 static uint64_t ticks;
 static unsigned emulate_otp;
 static uint32_t otp_words[64];
@@ -110,6 +110,7 @@ uint32_t ar_rf_test_read(uint32_t address)
 }
 void ar_rf_test_write(uint32_t address, uint32_t value)
 {
+	if (address == 0x0a110008 || address == 0x0a110058 || address == 0x0a11005c || address == 0x0a110080 || address == 0x0a110084) { board_prepare_writes++; }
 	if (address == 0x0a110480 || address == 0x0a11048c ||
 	    address == 0x0a1104a0 || address == 0x0a1104a4 || address == 0x0a1104a8) {
 		compensation_writes++;
@@ -132,6 +133,14 @@ void ar_rf_test_start_dma(uint8_t *buffer, unsigned length)
 	for (unsigned i = 0; i < length; i++) buffer[i] = 0x58 + i;
 	if (inject_valid) { assert(length <= sizeof valid_packet); memcpy(buffer, valid_packet, length); }
 	if (!delay_dma) { *reg(0xe0801164) |= 1; } /* RX DMA completion: source 13, CLIC vector 89. */
+}
+static void prepare_frame(void)
+{
+	const uint32_t commands[] = {(3u<<20)|(8u<<16),(3u<<20)|(13u<<16),0};
+	for (unsigned i=0;i<3;i++) {
+		*reg(0x0a110e6c)=commands[i]; inject_command=1; ar_rf_poll();
+		assert(ar_rf_command_information()->cursor==(int)i);
+	}
 }
 static void assert_channel_plls(uint32_t frequency)
 {
@@ -1524,13 +1533,23 @@ int main(void)
 	 * Restart and recovery must retain it even if pre-encode is polled before
 	 * the next preparation IRQ. A register equality check after reloading
 	 * would miss the unsafe interval, so also count compensation writes. */
-	*reg(0x0a110e6c) = 0; inject_command = 1; ar_rf_poll();
+	/* Out-of-order TX cannot select the RX entry or load compensation. */
+	unsigned prepare_before = compensation_writes, board_before = board_prepare_writes;
+	*reg(0x0a110e6c)=0; inject_command=1; ar_rf_poll();
+	assert(ar_rf_command_information()->cursor==-1);
+	assert(compensation_writes==prepare_before && board_prepare_writes==board_before);
+	prepare_frame();
+	assert(board_prepare_writes == board_before + 6);
 	assert(*reg(0x0a110480) & 2);
 	const uint32_t compensation_addresses[] = {0x0a110480,0x0a11048c,0x0a1104a0,0x0a1104a4,0x0a1104a8};
 	uint32_t compensation_saved[5];
 	for (unsigned i=0;i<5;i++) { compensation_saved[i]=*reg(compensation_addresses[i]); }
 	unsigned loaded_writes = compensation_writes;
-	inject_command = 1; ar_rf_poll(); assert(compensation_writes == loaded_writes);
+	board_before = board_prepare_writes;
+	inject_command = 1; ar_rf_poll();
+	assert(ar_rf_command_information()->cursor==-1 && compensation_writes == loaded_writes);
+	prepare_frame();
+	assert(compensation_writes==loaded_writes && board_prepare_writes==board_before);
 	const struct ar_rf_lifecycle_info *life = ar_rf_lifecycle_information();
 	assert(life->version == 1 && life->state == 2);
 	unsigned starts = life->starts, stops = life->stops, cancelled = life->cancelled_rx;
@@ -1579,7 +1598,7 @@ int main(void)
 		assert(search->acquisition_ready && search->transition_status==1);
 		*reg(0xe080117c) |= 1; ar_rf_poll(); /* Pre-encode precedes prepare. */
 		assert(compensation_writes == loaded_writes && (*reg(0x0a110480)&2));
-		*reg(0x0a110e6c) = 0; inject_command = 1; ar_rf_poll();
+		prepare_frame();
 		assert(compensation_writes == loaded_writes);
 	}
 	assert(life->cancelled_rx==cancelled+1);
@@ -1658,7 +1677,7 @@ int main(void)
 	*reg(0x0a110f90)=packet_size; injected=0; ar_rf_poll(); ar_rf_poll();
 	assert(search->acquisition_ready);
 	loaded_writes = compensation_writes;
-	*reg(0x0a110e6c) = 0; inject_command = 1; ar_rf_poll();
+	prepare_frame();
 	assert((*reg(0x0a110480)&2) && compensation_writes > loaded_writes);
 	/* A stuck DMA must fail stop within its bound, keep its storage owned and
 	 * refuse start/init. A late completion cannot revive the stopped session. */

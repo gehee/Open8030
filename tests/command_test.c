@@ -14,8 +14,60 @@ static void write_field(uint32_t encoded, uint32_t value, void *context)
 	registers[offset / 4] = (registers[offset / 4] & ~mask) | (value << shift & mask);
 	writes++;
 }
+static uint32_t effects[64][2];
+static unsigned effect_count;
+static void effect(uint32_t field, uint32_t value, void *context)
+{
+	(void)context; assert(effect_count<64);
+	effects[effect_count][0]=field; effects[effect_count++][1]=value;
+}
+static void preparation(void)
+{
+	struct ar_command_program p={.count=3,.cursor=-1,
+		.entries={{0x5181,5770000},{0x41d8,5770000},{0x5603,5770000}}};
+	struct ar_command_state state={.valid_banks=4,.cached_bank=3,.board_band=-1,
+		.calibration={{0},{0},{1,2,3,4,8}}};
+	/* A TX interrupt arriving first must not silently select TX metadata. */
+	assert(ar_command_step(&p,0,&state,1,0,0,0x33,effect,effect,NULL)==-1);
+	assert(p.cursor==-1 && !effect_count && state.cached_bank==3);
+	assert(ar_command_step(&p,0x380000,&state,1,0,0,0x33,effect,effect,NULL)==1);
+	assert(p.cursor==0 && !effect_count);
+	assert(ar_command_step(&p,0x3d0000,&state,1,0,0,0x33,effect,effect,NULL)==2);
+	/* Body mode leaves the cursor unchanged; next TX bandwidth5. */
+	assert(ar_command_step(&p,0x100000,&state,1,0,1,0x33,effect,effect,NULL)==2);
+	assert(p.cursor==1 && effect_count==1 && effects[0][0]==0xa480020 && effects[0][1]==0x80808080);
+	effect_count=0;
+	assert(ar_command_step(&p,0,&state,1,0,0,0x33,effect,effect,NULL)==0);
+	assert(p.cursor==2 && state.cached_bank==2 && state.board_band==1 && effect_count==14);
+	assert(effects[13][0]==0x48c0008 && effects[13][1]==0x3b);
+	/* Cache reuse across a complete frame produces no repeated writes. */
+	effect_count=0;
+	ar_command_step(&p,0x380000,&state,1,0,0,0x33,effect,effect,NULL);
+	ar_command_step(&p,0x3d0000,&state,1,0,0,0x33,effect,effect,NULL);
+	ar_command_step(&p,0,&state,1,0,0,0x33,effect,effect,NULL);
+	assert(!effect_count);
+	/* Bypass follows board preparation; unavailable calibration stays unloaded. */
+	p.cursor=1; state.cached_bank=3; state.board_band=-1;
+	ar_command_step(&p,0,&state,1,0,1,0x33,effect,effect,NULL);
+	assert(effect_count==6 && state.cached_bank==3 && state.board_band==1);
+	effect_count=0; p.cursor=1; state.valid_banks=0;
+	ar_command_step(&p,0,&state,1,0,0,0x33,effect,effect,NULL);
+	assert(!effect_count && state.cached_bank==3);
+	/* Ownership flags are consumed once and preserve unrelated bits. */
+	p.cursor=1; state.tx_flags=0xa5; state.pending_tx=0x80;
+	ar_command_step(&p,0,&state,1,0,0,0x33,effect,effect,NULL);
+	assert(effect_count==1 && effects[0][0]==0x8000201 && !effects[0][1]);
+	assert(state.tx_flags==0xa1 && state.pending_tx==0x81);
+	struct ar_command_program saved=p;
+	unsigned before=effect_count;
+	assert(ar_command_step(&p,0,&state,2,0,0,0,effect,effect,NULL)==-22);
+	assert(!memcmp(&p,&saved,sizeof p) && effect_count==before);
+	p.count=21;
+	assert(ar_command_step(&p,0,&state,1,0,0,0,effect,effect,NULL)==-22);
+}
 int main(void)
 {
+	preparation();
 	struct ar_command_program p = {0};
 	struct ar_command_profile profiles[AR_COMMAND_USERS];
 	for (unsigned i = 0; i < AR_COMMAND_USERS; i++) {

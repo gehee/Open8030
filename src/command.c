@@ -96,3 +96,79 @@ int ar_command_update(struct ar_command_program *program, unsigned dev_role,
 	}
 	return 0;
 }
+
+static void prepare_board(struct ar_command_state *state, unsigned direction,
+	uint32_t frequency, ar_command_write write, void *context)
+{
+	if (direction || frequency < 1000000 || frequency >= 8000000) { return; }
+	unsigned band = frequency < 2000000 ? 5 : frequency < 3000000 ? 3 :
+		frequency < 4000000 ? 4 : frequency < 5000000 ? 0 : frequency < 6000000 ? 1 : 2;
+	if (state->board_band == (int)band) { return; }
+	static const uint8_t offsets[2][6] = {{9,0x5b,0x83,0x85,0x58,0x5e},{0x54,0x55,0x50,0x4d,0x51,0}};
+	static const uint8_t values[6][6] = {
+		{0x1e,1,8,0x11,0,0}, {0x0e,3,8,0x11,0,0}, {0,2,6,0x19,0xdb,8},
+		{0,0,3,0,0,0}, {0x0a,0xc0,0,0xdb,3,0}, {8,0xc0,0x18,0xdb,3,0}};
+	for (unsigned i = 0; i < (band < 3 ? 6u : 5u); i++) {
+		write(offsets[band >= 3][i],values[band][i],context);
+	}
+	state->board_band = band;
+}
+
+int ar_command_step(struct ar_command_program *program, uint32_t command,
+	struct ar_command_state *state, unsigned dev_role, unsigned work_mode,
+	unsigned bypass, uint32_t compensation, ar_command_write write_field,
+	ar_command_write write_byte, void *context)
+{
+	unsigned raw = command >> 16 & 15, mode = command >> 20 & 3;
+	unsigned preparing = mode == 0 || mode == 3;
+	if (!program || !state || !write_field || !write_byte || dev_role > 1 || work_mode > 3 ||
+	    program->count > AR_COMMAND_LIMIT || program->cursor < -1 || state->cached_bank > 3 ||
+	    (!preparing && program->count && program->cursor >= program->count)) { return -22; }
+	if (!program->count) { return -1; }
+	if (preparing) {
+		program->cursor = program->cursor < program->count - 1 ? program->cursor + 1 : 0;
+		if ((program->entries[program->cursor].bits >> 4 & 15) != raw) {
+			program->cursor = -1;
+			for (unsigned i = 0; i < program->count; i++) {
+				uint32_t bits = program->entries[i].bits;
+				/* The original fallback compares the hardware mode (0/3),
+				 * unlike the fast path which compares only the raw user. */
+				if ((bits >> 4 & 15) == raw && (bits >> 8 & 3) == mode) {
+					program->cursor = i; break;
+				}
+			}
+		}
+	}
+	if (program->cursor < 0) { return -1; }
+	unsigned next = (program->cursor + 1) % program->count;
+	uint32_t bits = program->entries[program->cursor].bits;
+	if (preparing) {
+		prepare_board(state,mode != 0,program->entries[program->cursor].frequency,write_byte,context);
+	} else if ((program->entries[next].bits >> 8 & 3) == 2) {
+		unsigned bw = program->entries[next].bits >> 10 & 7;
+		write_field(0xa480020,bw == 4 ? 0x40404040 : bw == 5 ? 0x80808080 : 0,context);
+	}
+	if (bypass || !preparing) { return next; }
+	unsigned bank = bits >> 13 & 3;
+	if ((bits >> 8 & 3) == 2 && bank != state->cached_bank && bank < 3 && (state->valid_banks & (1u << bank))) {
+		if (state->cached_bank == 3) {
+			write_field(0x4800101,1,context);
+			write_field(0x4a01008,255,context); write_field(0x4a80008,255,context);
+		}
+		static const uint32_t fields[5] = {0x4a00008,0x4a00808,0x4a41008,0x4a41808,0x48c0008};
+		for (unsigned i = 0; i < 5; i++) {
+			write_field(fields[i],state->calibration[bank][i] | (i == 4 ? compensation & 0x33 : 0),context);
+		}
+		state->cached_bank = bank;
+	}
+	if (!dev_role && raw == 9) {
+		write_field(0xbb00002,0,context); write_field(0xbb01701,1,context);
+	} else if (!raw && (state->tx_flags & 4)) {
+		if (dev_role) { write_field(0x8000201,0,context); state->pending_tx |= 1; }
+		state->tx_flags &= ~4u;
+	}
+	if (work_mode == 1) {
+		write_field(0xc000301,bits >> 15 & 1,context); write_field(0xc001001,bits >> 15 & 1,context);
+	}
+	return next;
+}

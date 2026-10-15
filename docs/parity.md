@@ -73,7 +73,7 @@ and scenario; they must be repeated after relevant changes.
 | AP full/compact controls | Selected mode-0/slot-0 admission and connected control | All extensions, remote synchronization effects, changed channels, slots, stale/duplicate controls and unsupported modes. |
 | Internal port-0 commands | Stream parsing; login checksum ACK transmission | Receiving a command currently mainly records it. Inventory and implement each original command's effects, responses and retries. |
 | PHY commands | See command table below | Exact callbacks, TTL/replacement ordering and side effects for every command. |
-| Hardware command preparation | Command builder and metadata updates; fixed DEV frame, selected TX preparation effects and normal-session calibration retention | Original command-ring selection, per-direction board callbacks, calibration-bank/cache transitions, look-ahead programming and buffer-ownership effects. The original routine has an offline contract trace; the native handler does not yet implement that complete contract. |
+| Hardware command preparation | Command builder, metadata updates and preparation selection; fixed DEV frame, cached board/TX calibration and TX look-ahead | Non-preparation scan callbacks, PA-sleep policy, retained-buffer ownership integration, other runtime modes/bands and actual interrupt ordering. Helper comparisons do not establish the complete original handler. |
 | MCS adaptation | RX adaptation and limited TX increase | TX decrease/interleaver drain, all PHY keys, retry/expiry, loss interactions and sustained adaptation. |
 | Power and calibration | Initial user-0 setup at level 25 | Level 11 also fails acquisition in the accepted image with only its loader setting changed. Resolve the low-power transmit path, then normal backend power writes, all users, peer policy and calibration effects. |
 | Channel/band selection | Configured search and matched channel | Independent uplink changes, subchannels, hopping, scan scoring, automatic policies, rollback and cross-band operation. |
@@ -376,8 +376,8 @@ writes prepare/body slots, user nibbles, the terminator and displaced pre-comman
 fields while execution is held. It retains up to 20 metadata entries, preserving
 fields the original leaves untouched. Search retuning updates their frequency
 and bank, and native profile writes update the first matching entry's bandwidth
-or RX flag. The preparation IRQ consumer remains incomplete; storing metadata
-does not by itself implement cursor selection, board callbacks or scan actions.
+or RX flag. This construction step did not implement cursor selection, board callbacks or
+scan actions. The subsequent preparation integration is recorded below.
 
 A fresh execution of original builder `0x21dfea` and updater `0x2212f6` supplies
 568 construction cases and 6,720 updates. Native comparison matches all retained
@@ -398,6 +398,41 @@ drops; all show the same dark camera scene as stock. Only the existing fixed
 DEV frame and shared frequency have hardware coverage. Broader frame composition,
 preparation IRQ effects, controlled freshness and low-power acquisition remain
 open.
+
+### Command-preparation integration
+
+The normal DEV IRQ now selects retained command metadata before applying
+preparation effects. It preserves the original fast-path raw-user check and
+fallback raw-user/hardware-mode check. Unmatched notifications produce no
+preparation writes. TX metadata selects calibration; the board frequency-region
+cache and calibration cache suppress repeated programming. Body notifications
+leave the cursor unchanged and apply the next TX entry's bandwidth look-ahead.
+
+The native helper matches 14,864 original-instruction cases and 15,956 ordered
+write arguments. All 460 executed instruction locations are bound to the
+matched original bytes. Comparisons cover empty rings, stale cursors normalized
+on preparation, fallback matches/misses, all three synthetic calibration banks,
+cache reuse, six board regions and their boundaries, bypass ordering, both roles,
+TX-buffer flag consumption, work-mode flags and all eight look-ahead bandwidths.
+Register writes, time/logging, memory copy, buffer lookup and work-mode lookup
+are intercepted. Non-preparation scan helpers are intercepted without effects;
+this explicitly excludes their behavior from parity. Board PA-sleep flags are
+clear throughout. No actual peripheral timing or emitted RF is emulated.
+
+Runtime integration uses only the existing fixed mode-0 DEV frame and calibrated
+bank 2. Other bank data is unavailable and is never replaced by bank 2. The
+copy-mode TX path does not yet supply the original retained-buffer ownership
+flags to this helper. Scan actions and PA-sleep policy remain open. Sanitizer
+regressions cover out-of-order preparation, first-load versus cache reuse,
+unavailable-bank handling and cache retention across normal lifecycle changes.
+
+Fresh stock and native command windows match byte-for-byte. Native startup,
+stop/start, deinit/init/start and candidate removal/readmission preserve the five
+observed compensation words and restore the dark textured camera scene seen on
+stock. The four HDMI-to-USB captures total 70 seconds, with 82 linked/AP-time
+samples and zero sampled socket drops. The recovery counter advances without a
+failure. These observations do not establish controlled freshness, clear-scene
+quality, emitted power, physical peer-loss recovery or all IRQ timing.
 
 Next, extend the core inventory through the transport dispatchers and indirect
 callbacks, and bind each command's behavior to its comparison tests. Then cover

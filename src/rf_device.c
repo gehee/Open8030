@@ -62,6 +62,7 @@ static uint32_t search_candidate_started;
 static uint64_t search_pll;
 static uint64_t channel_plls[AR_RF_MAX_CHANNELS];
 static struct ar_command_program command_program;
+static struct ar_command_state command_state = {.cached_bank = 3, .board_band = -1};
 static unsigned commands_ready;
 #ifdef AR_RF_SIMULATED
 const struct ar_command_program *ar_rf_command_information(void) { return &command_program; }
@@ -144,7 +145,7 @@ void ar_rf_set_payload_callback(ar_rf_payload_callback callback, void *context)
 {
 	payload_callback = callback; payload_context = context;
 }
-static unsigned dev_active, dev_compensation_loaded;
+static unsigned dev_active;
 
 #ifdef AR_RF_SIMULATED
 extern uint32_t ar_rf_test_read(uint32_t address);
@@ -387,7 +388,7 @@ int ar_rf_probe(void)
 	memset(&information, 0, sizeof information);
 	commands_ready = 0;
 	receive_operation = 0; host_prepared = 0;
-	dev_compensation_loaded = 0;
+	command_state.cached_bank = 3; command_state.board_band = -1;
 	pins_configured = 0;
 	/* Stock Ascent VRX application entry sets these two system-control bits
 	 * before baseband initialization (0x20abba); preserve all other bits. */
@@ -463,7 +464,7 @@ int ar_rf_load_defaults(const uint8_t *records, size_t length)
 		if (offset % 4 || offset > 0xdfc || records[i + 2] || records[i + 3]) { return failure(-22); }
 	}
 	if (!information.default_writes) { configure_clocks(); }
-	dev_compensation_loaded = 0;
+	command_state.cached_bank = 3; command_state.board_band = -1;
 	for (size_t i = 0; i < length; i += 8) {
 		unsigned offset = records[i] | (unsigned)records[i + 1] << 8;
 		write32(BB + offset, le32(records + i + 4));
@@ -496,7 +497,7 @@ static int idle(void)
 int ar_rf_calibrate(void)
 {
 	if (information.phase != AR_RF_DEFAULTS || information.default_writes != 704) { return failure(-22); }
-	dev_compensation_loaded = 0;
+	command_state.cached_bank = 3; command_state.board_band = -1;
 	for (unsigned user = 0; user < 11; user++) {
 		uint32_t offset = ((user >> 1) + 0x2ca) * 0x40000;
 		field(user == 10 ? 0xb600d01 : offset | ((user & 1) * 0x1000 + 0x700) | 1, 1);
@@ -1399,11 +1400,17 @@ static void command_write(uint32_t encoded, uint32_t value, void *context)
 	(void)context;
 	field(encoded, value);
 }
+static void command_byte(uint32_t offset, uint32_t value, void *context)
+{
+	(void)context;
+	unsigned shift = (offset & 3) * 8;
+	update(BB + (offset & ~3u),255u << shift,value << shift);
+}
 static int build_commands(void)
 {
 	/* Mode-0 DEV frame from 0x22c774: RX8, independent measurement RX11,
 	 * TX0 with pre-command mode6. All three currently share one frequency.
-	 * Metadata construction does not implement its preparation IRQ consumer. */
+	 * Scan actions and retained TX-buffer ownership remain separate gaps. */
 	static const struct ar_command_descriptor frame[] = {{0x3621,0},{0x358,0},{0x3413,0}};
 	struct ar_command_profile profiles[AR_COMMAND_USERS];
 	for (unsigned user = 0; user < AR_COMMAND_USERS; user++) {
@@ -1415,6 +1422,8 @@ static int build_commands(void)
 			.bandwidth = {tx >> (user == 10 ? 24 : 0) & 7,rx >> 8 & 7},
 			.rx_flag = (type == 1 && mode < 2) || (type == 2 && mode >= 2)};
 	}
+	memcpy(command_state.calibration[2],calibration,sizeof calibration);
+	command_state.valid_banks = 4; /* Only bank 2 is calibrated by this runtime. */
 	int result = ar_command_build(&command_program,frame,3,1,profiles,command_write,NULL);
 	commands_ready = !result;
 	return result;
@@ -1514,7 +1523,7 @@ static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t 
 	 * session. Mode-0 engine resets preserve it. Only normal host contexts
 	 * may reuse this single supported band; diagnostics can replace fields
 	 * independently and must not share their cached state with normal use. */
-	if (operation != 76 || receive_operation != 76) { dev_compensation_loaded = 0; }
+	if (operation != 76 || receive_operation != 76) { command_state.cached_bank = 3; command_state.board_band = -1; }
 	memset(&fch_monitor, 0, sizeof fch_monitor); recovery_reset_pending = 0;
 	receiver.before_monitor_header = read_header_status();
 	read_control_header(receiver.before_monitor_control);
@@ -1585,8 +1594,8 @@ static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t 
 		 * loaded, preserve compensation through normal restart/recovery, as
 		 * 0x223128's cached-bank check and mode-0 reset helpers do. Clearing it
 		 * here could expose a pre-encode before the next prepare notification.
-		 * Full command metadata and multi-band preparation remain unported. */
-		if (!dev_compensation_loaded) {
+		 * Other calibration banks and retained TX-buffer ownership remain unported. */
+		if (command_state.cached_bank == 3) {
 			field(0x4800101, 0);
 			field(0x4a00010, 0); field(0x4a41010, 0);
 			field(0x48c0008, read32(BB + 0x48c) & 0x33);
@@ -2069,8 +2078,14 @@ void ar_rf_poll(void)
 			else if (index == 7) {
 				receiver.command_last = read32(BB + 0xe6c);
 				receiver.command_modes[(receiver.command_last >> 20) & 3]++;
-				/* Observed 5..6 GHz pre-command board adjustment. */
-				if (((receiver.command_last >> 20) & 3) == 0) {
+				if (receive_operation == 76 && commands_ready) {
+					/* Fixed mode-0 DEV frame. The copy-mode TX path does not
+					 * yet use the original retained-buffer ownership flags.
+					 * Non-preparation scan callbacks remain unimplemented. */
+					(void)ar_command_step(&command_program,receiver.command_last,
+						&command_state,1,0,0,read32(BB + 0x48c),command_write,command_byte,NULL);
+				} else if (((receiver.command_last >> 20) & 3) == 0) {
+					/* Historical diagnostic modes keep their bounded setup. */
 					static const uint16_t offsets[] = {9, 0x5b, 0x83, 0x85, 0x58, 0x5e};
 					static const uint8_t values[] = {0x0e, 3, 8, 0x11, 0, 0};
 					for (unsigned byte = 0; byte < 6; byte++) {
@@ -2080,7 +2095,7 @@ void ar_rf_poll(void)
 					/* Compensation is loaded for transmit-direction commands,
 					 * not globally while setting up receive-only operation. */
 					if (receive_operation == 1 || receive_operation == 3 || receive_operation == 4 ||
-					    (dev_active && !dev_compensation_loaded && ((receiver.command_last >> 16) & 15) == 0)) {
+					    (dev_active && command_state.cached_bank == 3 && ((receiver.command_last >> 16) & 15) == 0)) {
 						if (dev_active) {
 							field(0x4800101, 1);
 							field(0x4a01008, 0xff); field(0x4a80008, 0xff);
@@ -2088,7 +2103,7 @@ void ar_rf_poll(void)
 						field(0x4a00008, calibration[0]); field(0x4a00808, calibration[1]);
 						field(0x4a41008, calibration[2]); field(0x4a41808, calibration[3]);
 						field(0x48c0008, calibration[4] | (read32(BB + 0x48c) & 0x33));
-						if (dev_active) { dev_compensation_loaded = 1; }
+						if (dev_active) { command_state.cached_bank = 2; }
 					}
 				}
 			}
