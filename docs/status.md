@@ -626,6 +626,17 @@ stage 215. A fresh 30-second HDMI-to-USB capture shows the camera scene with all
 33 samples linked and no sampled socket drops. Stage 215 remains running in RAM.
 See [host ingress coverage](parity.md#host-to-internal-data-ingress).
 
+Stage 218 compares framing on parser objects created by the original constructor.
+Event port 0 and socket port 1 share the C8 profile, but their parser rings hold
+1,043 and 524 bytes respectively. The socket's separate RX queue holds 1,024 bytes;
+this corrects the earlier parser-capacity description. There are 334 matching
+scenarios / 2,718 feeds and two explicit exact-fill guard differences. One
+sanitizer suite and 18 Python tests pass. The helper remains source-only and the
+build reproduces stage 215. A fresh 30-second HDMI-to-USB capture shows the camera
+scene with all 33 samples linked; 60 flow samples have no socket drops or SDIO
+errors. Stage 215 remains running in RAM. See
+[constructed parser coverage](parity.md#constructed-internal-parser-profiles-and-capacities).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host

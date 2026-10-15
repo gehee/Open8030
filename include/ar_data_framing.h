@@ -4,9 +4,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Source-only parser for the mode-3 socket-port-1 profile: C8, length, body,
- * CRC8-D5. This does not implement the other configurable original profiles,
+/* Source-only parser for the mode-3 event-port-0 and socket-port-1 profile:
+ * C8, length, body, CRC8-D5. This does not implement other original profiles,
  * route ownership, packet allocation, or RTOS workers. */
+#define AR_DATA_MODE3_EVENT_RING_SIZE 1043u
+#define AR_DATA_MODE3_SOCKET1_RING_SIZE 524u
 enum ar_data_segment_kind {
 	AR_DATA_FRAME,
 	AR_DATA_NO_SYNC,
@@ -32,8 +34,9 @@ typedef int (*ar_data_segment_fn)(enum ar_data_segment_kind kind,
 	const uint8_t *first, size_t first_length,
 	const uint8_t *second, size_t second_length, void *context);
 
-/* Caller owns and serializes ring/state. Prefer the original 1,024-byte ring;
- * at least 258 bytes can hold every supported frame plus the reserved byte.
+/* Caller owns and serializes ring/state. The matched mode-3 parser rings use
+ * the sizes above; the socket's separate RX queue holds 1,024 bytes.
+ * At least 258 bytes can hold every supported frame plus the reserved byte.
  * Smaller rings reproduce the original incomplete oversized-frame behavior.
  * Input must not overlap the ring. Invalid arguments return -10000. */
 int ar_data_framing_init(struct ar_data_framing *state, uint8_t *ring,

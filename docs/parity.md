@@ -2634,8 +2634,11 @@ or a controlled freshness/latency measurement.
 
 Stage 212 compares `src/data_framing.c` with original parser entry `0x2132b2`
 using the custom profile configured for internal socket port 1. This is distinct
-from MAC packet framing and from the separate internal command stream. The
-normal interface uses a 1,024-byte ring. Its byte-stream envelope is:
+from MAC packet framing and from the separate internal command stream. Those
+fixtures use synthetic ring sizes, including 1,024 bytes. Stage 218 corrects the
+earlier identification of that size as the normal parser ring: the matched
+constructor allocates **524 parser bytes**, independently of the socket's
+**1,024-byte RX queue**. Its byte-stream envelope is:
 
 | Offset | Length | Meaning |
 | --- | --- | --- |
@@ -3027,3 +3030,55 @@ tests pass, and the normal build reproduces stage 215. A fresh 30-second direct
 HDMI-to-USB capture shows the camera scene with 33 linked samples and no sampled
 socket drops. The retained stage-215 image remains running. This closes a bounded
 callback comparison, not host-command or full firmware parity.
+
+
+### Constructed internal parser profiles and capacities
+
+Stage 218 executes the original interface constructor using the matched mode-3
+configuration records, then runs the original parser on the objects it creates.
+This closes a gap in stage 212, which supplied a synthetic interface/profile and
+ring directly. It also corrects a capacity interpretation before integration:
+
+| Interface | Parser ring | Separate stream TX / RX queues | Framing |
+| --- | ---: | --- | --- |
+| Event port 0 (type 3) | 1,043 bytes | No stream opened by this constructor | C8, one-byte length, body, CRC8-D5 |
+| Socket port 1 (type 2) | 524 bytes | 524 / 1,024 bytes | Same profile as event port 0 |
+
+The socket's RX queue and parser ring are distinct allocations. The constructor
+allocates a 160-byte interface, a 152-byte parser object, a 20-byte ring control
+object and the parser storage. Socket port 1 additionally allocates a four-byte
+handle wrapper, opens the stream with selector 0 and flags 3, and requests its
+reader task with priority 18 and a 2,048-byte stack. Event port 0 has no reader
+task in this configuration; the host ingress callback feeds its parser directly.
+These sizes and arguments are original-constructor observations, not required
+native object layouts or a measurement of the live stock heap.
+
+**334 scenarios / 2,718 feeds** match the native parser after original
+construction. They cover both interfaces, maximum frames, fragmentation and
+byte-at-a-time input, ring wrap, noise, invalid lengths/checksums, packet-allocation
+failure and capacity boundaries. Complete parser state, ring bytes, counters,
+segments and return values are compared. Two additional exact-fill cases record
+the existing native reservation guard: the original direct parser accepts a full
+ring and then cannot parse equal cursors, while native returns `-9999` without
+accepting it. These two cases are not counted as matches.
+
+All **1,096 executed instruction locations**, both configuration records and the
+interface-type dispatch table are bound to original payload/container/ELF bytes.
+The original constructor sets the profiles, registers interface/parser objects
+and initializes ring cursors. Heap allocation, stream open, task creation/naming,
+mutexes and diagnostics are intercepted. The parser's packet-pool boundaries are
+also intercepted, and its route table is empty. Starting cursors are moved after
+construction to test wrap. This does not establish actual task execution,
+allocation-failure cleanup, route selection, physical UART/SBUS or RF delivery.
+Synthetic ELF, pointers, ABI and partial ISA remain analysis metadata.
+
+The public header now records both matched parser capacities. One ASan/UBSan
+suite adds 512 maximum-frame split tests across those capacities, each checking
+preservation after a rejected fill, wrap, noise recovery and synchronous event
+bridge composition. Eighteen Python tests pass. The helper remains source-only;
+no new host command or internal stream is enabled. The standard build reproduces
+the accepted stage-215 image, and a fresh direct HDMI-to-USB capture verifies
+visible camera output. Full internal-service and original-firmware parity remain
+open. Original instructions and comparison receipts stay in ignored
+`.local/stage218-constructed-framing/`; historical stage-212 receipts are retained
+with their original wording and superseded by this correction.

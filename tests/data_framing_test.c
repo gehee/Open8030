@@ -71,9 +71,43 @@ static void split_and_wrap(void)
 		}
 	}
 }
+static void matched_ring_sizes(void)
+{
+	const size_t capacities[] = {AR_DATA_MODE3_EVENT_RING_SIZE,
+		AR_DATA_MODE3_SOCKET1_RING_SIZE};
+	const uint8_t frame[257] = {0xc8, 0xff};
+	for (unsigned c = 0; c < 2; ++c) {
+		size_t capacity = capacities[c];
+		uint8_t *ring = calloc(capacity, 1), *noise = malloc(capacity);
+		assert(ring && noise); memset(noise, 0x44, capacity);
+		for (size_t cut = 1; cut < sizeof frame; ++cut) {
+			struct ar_data_framing s; struct fixture f = {0};
+			assert(ar_data_framing_init(&s, ring, capacity) == 0);
+			s.read = s.write = s.scan = capacity - 2;
+			assert(ar_data_framing_feed(&s, frame, cut, segment, &f) == 0);
+			assert(f.frames == 0 && s.used == cut);
+			/* A rejected fill must preserve the pending frame across wrap. */
+			assert(ar_data_framing_feed(&s, noise, capacity - cut,
+				segment, &f) == -9999);
+			assert(s.used == cut && f.frames == 0);
+			assert(ar_data_framing_feed(&s, frame + cut, sizeof frame - cut,
+				segment, &f) == 0);
+			assert(f.frames == 1 && f.events == 1 && s.used == 0);
+			assert(f.length == sizeof frame && !memcmp(f.frame, frame, sizeof frame));
+			assert(ar_data_framing_feed(&s, noise, capacity - 1,
+				segment, &f) == 0);
+			assert(s.used == 0 && s.stats.no_sync_bytes == capacity - 1);
+			assert(ar_data_framing_feed(&s, frame, sizeof frame, segment, &f) == 0);
+			assert(f.frames == 2 && f.events == 2 && s.used == 0);
+			free(f.event.buffer);
+		}
+		free(noise); free(ring);
+	}
+}
 int main(void)
 {
 	split_and_wrap();
+	matched_ring_sizes();
 	uint8_t ring[1024] = {0}; struct ar_data_framing s;
 	struct fixture f = {.fail_at = 1};
 	const uint8_t frame[] = {0xc8, 2, 5, 0x2b};
