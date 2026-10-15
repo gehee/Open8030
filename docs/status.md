@@ -617,6 +617,15 @@ check has 600 flow samples with zero socket drops and SDIO errors. Stage 215
 remains running in RAM. The earlier intermittent loss and runtime internal
 service integration remain open. See [queued writer coverage](parity.md#queued-internal-destination-writer).
 
+Stage 217 compares the host ingress callbacks for internal event-interface ports
+0/1/2. It matches 460 data cases and 765 control-delegation cases; 24 wrapped-length
+cases record an intentional native guard difference. Parser and common-control
+semantics remain outside this comparison, and these setters remain unsupported
+at runtime. One sanitizer suite and 18 Python tests pass; the build reproduces
+stage 215. A fresh 30-second HDMI-to-USB capture shows the camera scene with all
+33 samples linked and no sampled socket drops. Stage 215 remains running in RAM.
+See [host ingress coverage](parity.md#host-to-internal-data-ingress).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host

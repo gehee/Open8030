@@ -69,7 +69,7 @@ and scenario; they must be repeated after relevant changes.
 | Host lifecycle | Explicit stop/start and stop/deinit/init/start tested historically | Every wrong-state/repeated operation, cancellation, pending DMA, failure recovery and complete reset semantics. |
 | Events | All twelve original host subscriptions and declared payload sizes; copied FIFO transport; producers for IDs 0 and 1 | Integrate other producers and internal routes; compare their payload meaning, scheduling, overflow and lifecycle behavior. Subscription success alone does not establish a working producer. |
 | Host sockets | Slot-0 copy-mode data path, deferred close and active-write cancellation; normal backend video/control; stream/handle admission and queue factories compared offline | Stock host ports 0/1 reject opens because their streams already exist; native admission differs. Heap/RTOS internals, table initialization, worker startup, runtime ownership, other modes/slots, retained-descriptor TX, saturation, teardown races and complete capacity/error behavior remain open. |
-| Internal data interfaces | Stock stream occupancy observed; mode-3 graph, source-only event forwarding, socket-port-1 framing, selected route delivery and queued writer completion compared offline | Integrate UART/SBUS, parsers, event producers, shared stream ownership and payload routing; compare other framing profiles, route actions, real packet ownership, scheduling, modes, timing, teardown and failure recovery. A reserved-port rejection alone does not implement these services. |
+| Internal data interfaces | Stock stream occupancy observed; mode-3 graph, source-only event forwarding, socket-port-1 framing, selected route delivery, queued writer completion and host ingress callbacks compared offline | Integrate UART/SBUS, parsers, event producers, shared stream ownership and payload routing; compare other framing profiles, route actions, real packet ownership, scheduling, modes, timing, teardown and failure recovery. A reserved-port rejection alone does not implement these services. |
 | MAC framing | Header/descriptor parser and DEV encoder | Other formats/flags, receive ordering, duplicate handling and all original rejection rules. |
 | AP full/compact controls | Selected mode-0/slot-0 admission and connected control | All extensions, remote synchronization effects, changed channels, slots, stale/duplicate controls and unsupported modes. |
 | Internal port-0 commands | Stream parsing; login checksum ACK transmission | Receiving a command currently mainly records it. Inventory and implement each original command's effects, responses and retries. |
@@ -2974,3 +2974,56 @@ RAM. This extends the bounded no-drop observation without resolving the earlier
 intermittent stage-213 loss or isolating restart/instrumentation effects. It is
 not hardware execution of the source-only writer, a new stock comparison or a
 controlled scene-freshness/latency test.
+
+
+### Host-to-internal data ingress
+
+Stage 217 identifies setters `0x020000c9`, `0x020000ca` and `0x020000cb` as
+callbacks for event-interface ports 0, 1 and 2. They remain **unsupported at
+runtime**. The source-only [ingress helper](../src/data_ingress.c) compares the
+subtype-6 data path and delegation to a supplied common control handler; it does
+not construct interfaces, own streams or implement that control handler.
+
+The request starts with an operation byte at offset 0, a little-endian 16-bit
+length at offset 2 and data at offset 4. For operation 6:
+
+| Callback | Original data behavior |
+| --- | --- |
+| Port 0 (`…c9`) | Look up interface type 3, port 0; feed the outer length bytes starting at offset 4 to its parser. |
+| Ports 1/2 (`…ca` / `…cb`) | Look up type 3 and the corresponding port. Ignore the outer length. Require data prefix `ff a5 aa 5a ff`; read an embedded little-endian length at data offset 5 and add 15, truncated to 16 bits. Feed the resulting count only when it is at most 4,129. |
+
+All three callbacks return zero after these data operations, including missing
+interfaces, rejected headers, oversized frames and parser failure. Zero therefore
+cannot establish delivered telemetry. Other operation bytes delegate to the
+common control handler. Its operations 7–10 and their effects remain unresolved
+in this comparison. A missing installed core callback returns `-4`.
+
+The original callbacks have no request-extent parameter. The native helper adds
+bounds checks and rejects embedded-length wrap with `-22`; it does not reproduce
+out-of-bounds reads or feed a wrapped count of 0–14. These are explicit behavior
+differences, not matching error coverage. Invalid native adapter inputs are also
+guarded. No malformed request was sent to hardware.
+
+The private original-instruction fixture executes callback installation, core
+routing, all three callbacks, framed ingress and interface-list lookup. It matches
+**460 data cases**, including **192 parser calls**, and **765 control-delegation
+cases** covering every non-data operation byte on all three ports. Another
+**24 cases** record the intentional wrapped-length difference; **three
+original-only cases** check absent callback rejection. All **387 executed
+instruction locations** and the used family jump table are bound to the matched
+original payload, container and synthetic ELF.
+
+The parser and common control handler are intercepted at their call boundaries;
+return values are injected. Thus the 765 delegation cases do not establish 765
+implemented control behaviors. Diagnostics and their clock are intercepted too.
+Interface lists are synthetic, with absent entries, null objects, wrong ports
+and wrong types. Original transport validation, parser execution in this composed
+path, real service construction, concurrency and radio effects remain open.
+
+One ASan/UBSan suite additionally checks all 65,536 length values on each port,
+short allocations, rejected prefixes and invalid adapters. This exhaustive native
+length sweep is separate from the sampled original executions. Eighteen Python
+tests pass, and the normal build reproduces stage 215. A fresh 30-second direct
+HDMI-to-USB capture shows the camera scene with 33 linked samples and no sampled
+socket drops. The retained stage-215 image remains running. This closes a bounded
+callback comparison, not host-command or full firmware parity.
