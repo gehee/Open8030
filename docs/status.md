@@ -168,6 +168,16 @@ channel-change consumer and protocol completion/rollback behavior before these
 helpers can support the backend workflow. See
 [channel policy](parity.md#selector-1-channel-policy).
 
+The next source-only helpers cover queued channel requests and their
+completion/rollback handler. They match 4,330 original request cases and 9,312
+completion cases, including DEV/AP encoding, enqueue failures, full-channel
+matching and counter resets. Transaction, channel-work and policy sanitizer
+suites pass. A fresh 20-second HDMI-to-USB capture rechecks the unchanged
+baseline: the same dark camera scene, 23 linked/AP-time samples and zero sampled
+socket drops. PHY command callbacks, tuning/monitor behavior and normal runtime
+integration remain open; the catalog commands are still unsupported. See
+[channel transactions](parity.md#channel-request-and-completion-contracts).
+
 A separate configuration-only test reproduced acquisition failure at initial
 power level 11 using the accepted AP-time image. No video was delivered;
 restoring the original level-25 configuration restored the stream. This failure

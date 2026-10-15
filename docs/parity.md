@@ -729,6 +729,60 @@ rechecks baseline video, not hardware integration of the new policy. The three
 catalog host commands remain unsupported pending queued channel transitions,
 runtime integration and normal backend/hardware comparison.
 
+### Channel request and completion contracts
+
+[Transaction helpers](../src/channel_transaction.c) implement the original
+link-worker request message `0x108` and PHY-worker completion message `0x109`.
+These are internal worker messages, not host API IDs or internal port-0 command
+numbers. The helpers remain outside the firmware build and dispatcher.
+
+The request handler locks the role's link state and enqueues PHY command 4 with
+TTL 16 and a three-byte payload. DEV encodes the slot's low nibble and requested
+channel. AP encoding additionally depends on selector, mode, channel flags and
+relay configuration. Already-selected DEV requests and selector-0 AP broadcast
+requests unlock without sending. Any enqueue error produces a failed completion
+message after unlocking, preserving the original selector and requested channel.
+Failure to post that completion does not synthesize a successful channel change.
+
+The completion handler locks policy state. Selector 1 clears the inflight flag,
+both bytes of its history marker and two lists of counter bytes when that flag
+was set. Successful completion commits only if the **full 16-bit channel**
+matches the pending value; band/group lookup then uses its low byte. A successful
+mismatch still performs the inflight/history reset but preserves current and
+pending channel state. Failure with error zero stages a rollback request to the
+current channel. A failed rollback post leaves that request pending; success
+sets its inflight flag again. Nonzero-error failures do not post rollback.
+
+Other selectors use the broadcast inflight/pending flags. They reset the two
+counter lists without clearing the separate history marker, and only a matching
+successful channel clears the broadcast pending flag. The full returned word is
+compared with the stored broadcast byte; matching low bytes alone is insufficient.
+
+Fresh comparison covers 4,330 request cases and 9,312 completion cases. It checks
+both roles, AP mode/relay combinations, slot/channel/selector boundaries, all 256
+policy flag values, successful and failed sends/posts, matching and stale
+completions, null/partial/full counter lists and neighboring object bytes.
+The original request/completion dispatchers, counter-list reset, catalog lookup
+and rollback staging execute. All 397 executed instruction locations are checked
+against the matched payload, container and analysis ELF bytes. Ordered effects
+include 3,790 PHY enqueues, 3,305 queue posts and 13,642 paired lock/unlock calls.
+
+Locks, PHY enqueue, queue posting and time/logging are intercepted. Their state,
+ordering and arguments are compared; transmission, scheduling and physical
+acknowledgement are not. Native code clears original unwritten completion/request
+padding and rejects invalid matched-channel storage before mutation. The policy
+callback's argument names were also corrected to **command/TTL**: its existing
+`8, 8` arguments mean PHY command 8 with TTL 8, not a user and port. Behavior and
+previous comparison values are unchanged.
+
+Transaction, work-helper and policy sanitizer suites pass. A fresh 20-second
+HDMI-to-USB capture of the unchanged retained image shows the same stock-reference
+dark scene, with 23 linked/AP-time samples and zero sampled socket drops. No
+fresh stock capture or controlled freshness/latency measurement was performed.
+The PHY command-4 callback, actual tuning and monitor-driven completion remain
+open. Runtime integration and the normal backend work-list workflow still need
+hardware comparison; the three host catalog commands remain unsupported.
+
 Next, extend the core inventory through the transport dispatchers and indirect
 callbacks, and bind each command's behavior to its comparison tests. Then cover
 radio messages, timers and state transitions in the same way. Dynamic power still

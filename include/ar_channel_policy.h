@@ -16,9 +16,9 @@ enum ar_channel_policy_lock { AR_CHANNEL_POLICY_LOCK, AR_CHANNEL_AUX_LOCK };
 struct ar_channel_policy_ops {
 	void (*lock)(enum ar_channel_policy_lock which, void *context);
 	void (*unlock)(enum ar_channel_policy_lock which, void *context);
-	/* PHY user8/port8, four bytes. Native clears the original unspecified
+	/* PHY command8/TTL8, four bytes. Native clears the original unspecified
 	 * high nibble of byte3. Return value controls leaving hopping mode. */
-	int (*phy)(unsigned user, unsigned port, const uint8_t *payload,
+	int (*phy)(unsigned command, unsigned ttl, const uint8_t *payload,
 		size_t length, void *context);
 	/* Internal port0 command10, eight bytes. DEV sends to slot0; AP sends
 	 * to each enabled slot. Sending failure does not suppress the timer. */

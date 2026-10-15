@@ -23,10 +23,10 @@ static void unlock(enum ar_channel_policy_lock which, void *context)
 	assert(context == &state && locks == (unsigned)which + 1);
 	locks--; note(which ? 'A' : 'P');
 }
-static int phy(unsigned user, unsigned port, const uint8_t *payload,
+static int phy(unsigned command, unsigned ttl, const uint8_t *payload,
 	size_t length, void *context)
 {
-	assert(context == &state && locks == 2 && user == 8 && port == 8 && length == 4);
+	assert(context == &state && locks == 2 && command == 8 && ttl == 8 && length == 4);
 	memcpy(phy_payload, payload, 4); note('f');
 	return phy_result;
 }
