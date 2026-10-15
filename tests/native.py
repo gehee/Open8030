@@ -10,6 +10,7 @@ TESTS = {
     'frame': ('frame dispatch', [], []),
     'command': ('command', [], []),
     'scan': ('scan', [], []),
+    'scan_scores': ('scan_scores', [], []),
     'catalog': ('catalog scan', [], []),
     'socket_rx': ('socket_rx', [], []),
     'sdio_device': ('sdio_device', ['AR_SDIO_SIMULATED', 'AR_SDIO_STOCK_MEMORY_ATTRIBUTES=1'], []),
@@ -29,7 +30,7 @@ TESTS = {
     'sfdp': ('sfdp', [], []),
     'factory_storage': ('flash flash_spi sfdp factory power_config power json', [], ['-lz']),
     'boot': ('boot config json power_config power dev_mcs factory flash_spi sfdp flash', [], []),
-    'rf_device': ('rf_device mac dev dev_tx dev_mcs fch_monitor power ap_time command scan', ['AR_RF_SIMULATED'], []),
+    'rf_device': ('rf_device mac dev dev_tx dev_mcs fch_monitor power ap_time command scan scan_scores', ['AR_RF_SIMULATED'], []),
     'bootstrap': ('', ['AR_BOOTSTRAP_SIMULATED'], []),
 }
 

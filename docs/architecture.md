@@ -61,15 +61,15 @@ These are the current generated image's contracts, not a general AR8030 memory m
 | Header | `0x0000` | Loader metadata | 64 bytes, padded to 512 |
 | Bootstrap | `0x0200` | `0x0a098a00` | 792 bytes, padded to 1,024 |
 | Configuration placeholder | `0x0600` | `0x00200000` | 16 KiB, initially zero |
-| Runtime | `0x4600` | `0x00204000` | 65,168 bytes, padded to 65,536 |
+| Runtime | `0x4600` | `0x00204000` | 66,304 bytes, padded to 66,560 |
 
-The complete image is 83,456 bytes. The receiver loader writes its external JSON
+The complete image is 84,480 bytes. The receiver loader writes its external JSON
 into the configuration region; an empty region alone cannot initialize the radio.
 The bootstrap uses temporary RAM in that region during its own execution, so the
 regions should not be interpreted as independent, permanently resident objects.
 
 The Zephyr board definition reserves 704,512 bytes starting at `0x00204000`.
-The recorded build uses 665,376 bytes of that region; the small binary size does
+The recorded build uses 670,304 bytes of that region; the small binary size does
 not describe total RAM consumption. These figures do not establish worst-case
 stack or DMA margins. Exact hashes and sizes are in [baseline.json](../baseline.json);
 the layout generator is [build.py](../tools/build.py).
@@ -105,6 +105,7 @@ are implementation limits, not CLI tuning parameters.
 | `bootstrap/`, `boards/`, `soc/` | Bootstrap, memory layout and CPU/platform setup |
 | `src/command.c` | Command expansion, register-field writes, retained metadata and first-match profile updates |
 | `src/catalog.c` | Offline-tested channel-catalog serialization and work-list decisions; pending runtime integration |
+| `src/scan.c`, `scan_scores.c` | Independent measurement tuning and base-channel averaging; full automatic selection remains unintegrated |
 | `src/main.c`, `frame.c`, `dispatch.c` | Polling loop, framing, request dispatch and diagnostics |
 | `src/sdio_device.c` | Host transport and bounded SDIO queues |
 | `src/boot.c`, `json.c`, `config.c` | Startup and loader configuration |

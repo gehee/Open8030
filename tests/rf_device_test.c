@@ -1556,10 +1556,11 @@ int main(void)
 	/* The measurement PLL follows its own two-channel sweep after link lock.
 	 * Delayed power before a fresh prepare is counted as unattributed. */
 	const struct ar_rf_scan_info *scan=ar_rf_scan_information();
-	assert(scan->count==2 && scan->frequency_khz==5770000);
+	assert(scan->version==2 && scan->count==2 && scan->frequency_khz==5770000);
+	assert(!scan->score_rounds && !scan->score_ready && !scan->channel_scores[0] && !scan->channel_scores[1]);
 	unsigned scan_samples=scan->samples, scan_dropped=scan->dropped;
 	*reg(0xe0801144)|=1; ar_rf_poll(); assert(scan->dropped==scan_dropped+1);
-	for (unsigned cycle=0;cycle<4;cycle++) {
+	for (unsigned cycle=0;cycle<20;cycle++) {
 		*reg(0x0a110e6c)=0x380000; inject_command=1; ar_rf_poll();
 		*reg(0x0a110e6c)=0x180000; inject_command=1; ar_rf_poll();
 		assert(scan->channel==(cycle+1)%2 && scan->phase==1);
@@ -1570,11 +1571,16 @@ int main(void)
 		assert(scan->phase==2);
 		*reg(0x0a110e70)=0x78563412; *reg(0xe0801144)|=1; ar_rf_poll();
 		assert(scan->samples==scan_samples+cycle+1 && !scan->phase);
+		if (cycle<4) { assert(scan->channel_scores[scan->channel]==(cycle<2?-90:-85)); }
+		uint32_t score_rounds=scan->score_rounds, score_ring=scan->score_ring;
+		int32_t score=scan->channel_scores[scan->channel];
 		*reg(0xe0801144)|=1; ar_rf_poll(); /* Duplicate cannot be assigned. */
 		assert(scan->samples==scan_samples+cycle+1);
+		assert(scan->score_rounds==score_rounds && scan->score_ring==score_ring && scan->channel_scores[scan->channel]==score);
 		*reg(0x0a110e6c)=0; inject_command=1; ar_rf_poll();
 	}
-	assert(scan->channel_samples[0]==2 && scan->channel_samples[1]==2);
+	assert(scan->channel_samples[0]==10 && scan->channel_samples[1]==10);
+	assert(scan->score_rounds==10 && !scan->score_ring && scan->score_ready==1);
 	assert(compensation_writes==loaded_writes);
 	const struct ar_rf_lifecycle_info *life = ar_rf_lifecycle_information();
 	assert(life->version == 1 && life->state == 2);
@@ -1609,6 +1615,7 @@ int main(void)
 			assert(ar_rf_information()->phase==AR_RF_PSRAM); /* Init is not start. */
 		}
 		assert(!ar_rf_host_control(0,0) && life->starts==starts+cycle+1);
+		assert(!scan->score_rounds && !scan->score_ready && !scan->channel_scores[0] && !scan->channel_scores[1]);
 		assert(ar_rf_lifecycle_information()->state==2 && !search->acquisition_ready);
 		assert(compensation_writes == loaded_writes);
 		for (unsigned i=0;i<5;i++) { assert(*reg(compensation_addresses[i])==compensation_saved[i]); }

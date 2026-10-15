@@ -98,7 +98,7 @@ Scan callbacks, PA-sleep policy and retained-buffer ownership integration remain
 open, along with other runtime bands/modes and low-power acquisition. See
 [preparation integration](parity.md#command-preparation-integration).
 
-The current image adds an independent configured-channel measurement sweep,
+The preceding image adds an independent configured-channel measurement sweep,
 keeping link RX/TX PLLs fixed. It matches 7,808 scheduler cases and 66 measurement
 tuning cases against original instructions. All 23 native C suites and 18 Python
 tests pass. Startup, restart, reinit and candidate recovery preserve compensation
@@ -108,7 +108,7 @@ zero sampled socket drops. The candidate was retained in RAM.
 This is incomplete scan behavior. Stock sampling observes four measurement
 frequencies while native sampling observes 33 from its configured 42-channel
 list. Native polling also excludes many ambiguous power events. Active-catalog
-policy, original scan scoring and IRQ timing remain explicit gaps; see
+policy and IRQ timing remain explicit gaps. Scoring was added subsequently; see
 [independent measurement scan](parity.md#independent-measurement-scan).
 
 A subsequent comparison confirms why the scan catalogs differ: the original
@@ -131,6 +131,22 @@ existing scan iterator against the selected list. A fresh 20-second direct HDMI
 capture of the unchanged accepted image passes with 23 linked/AP-time samples
 and zero sampled socket drops. See [catalog contracts](parity.md#channel-catalog-command-contracts)
 for the exact scope and remaining integration work.
+
+The current image feeds confirmed measurement events into original base-channel
+averaging and integer score conversion. The helper matches 1,426 conversion
+inputs and 3,726 processing cases, including ranking and startup decisions.
+Runtime automatic selection and group policy remain unintegrated. The version-2
+scan diagnostic exposes processed scores separately from sample counts. Startup
+hardware observations cover all 42 configured channels and reach readiness;
+stop/start and deinit/init/start reset the native histories before collection
+resumes. Original lifecycle retention still needs comparison.
+
+All 25 native C suites and 18 Python tests pass. Startup, restart, reinit and
+candidate recovery retain compensation and video: 90 seconds of inspected direct
+HDMI capture, 102 linked/AP-time samples and zero sampled socket drops. The dark
+camera scene matches fresh stock, and the candidate remains running in RAM.
+The work-list commands, differing active catalog and excluded/ambiguous polling
+events still prevent full scan parity. See [score processing](parity.md#base-channel-score-processing).
 
 A separate configuration-only test reproduced acquisition failure at initial
 power level 11 using the accepted AP-time image. No video was delivered;

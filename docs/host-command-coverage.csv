@@ -21,7 +21,7 @@ request_id,family,core_route,original_reply_bytes,behavior,native_status,compari
 0x01000007,getter,recognized,1,Power mode,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
 0x01000008,getter,recognized,2,User power level,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
 0x01000009,getter,recognized,3,Peer power policy,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
-0x0100000a,getter,recognized,1028,Channel information,unsupported,160 original-instruction serialization cases; source-only module; see parity.md,Integrate original score generation and runtime mode/catalog state; backend startup and wire/error validation
+0x0100000a,getter,recognized,1028,Channel information,unsupported,160 original-instruction serialization cases; source-only module; see parity.md,"Connect processed scores and mode/catalog state to host dispatcher; validate sampling, backend startup and wire errors"
 0x0100000b,getter,recognized,128,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
 0x0100000c,getter,recognized,4,AP time,partial,DEV AP-time comparison; see parity.md,"Physical peer loss/stale time, long-run hardware wrap, other roles/modes"
 0x0100000d,getter,recognized,32,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"

@@ -73,10 +73,10 @@ and scenario; they must be repeated after relevant changes.
 | AP full/compact controls | Selected mode-0/slot-0 admission and connected control | All extensions, remote synchronization effects, changed channels, slots, stale/duplicate controls and unsupported modes. |
 | Internal port-0 commands | Stream parsing; login checksum ACK transmission | Receiving a command currently mainly records it. Inventory and implement each original command's effects, responses and retries. |
 | PHY commands | See command table below | Exact callbacks, TTL/replacement ordering and side effects for every command. |
-| Hardware command preparation | Command builder, metadata updates and preparation selection; fixed DEV frame, cached board/TX calibration and TX look-ahead | Independent configured-channel sweep is integrated; active-catalog policy, original scan scoring, auxiliary scans, PA-sleep policy, retained-buffer ownership and actual interrupt ordering remain open. Helper comparisons do not establish the complete original handler. |
+| Hardware command preparation | Command builder, metadata updates and preparation selection; fixed DEV frame, cached board/TX calibration and TX look-ahead | Independent sweep and base-channel score arithmetic are integrated; active-catalog policy, auxiliary scans, PA-sleep policy, retained-buffer ownership and actual interrupt ordering remain open. Helper comparisons do not establish the complete original handler. |
 | MCS adaptation | RX adaptation and limited TX increase | TX decrease/interleaver drain, all PHY keys, retry/expiry, loss interactions and sustained adaptation. |
 | Power and calibration | Initial user-0 setup at level 25 | Level 11 also fails acquisition in the accepted image with only its loader setting changed. Resolve the low-power transmit path, then normal backend power writes, all users, peer policy and calibration effects. |
-| Channel/band selection | Configured link search and independent measurement sweep | Match the original active catalog; independent uplink changes, subchannels, hopping, scan scoring, automatic policies, rollback and cross-band operation. |
+| Channel/band selection | Configured link search, independent measurement sweep and base-channel averaging | Match the original active catalog and sampling cadence; integrate automatic selection, independent uplink changes, subchannels, hopping, rollback and cross-band operation. |
 | Time synchronization | DEV AP-time decoding/getter; original-instruction comparison and hardware startup/restart checks | Physical peer-loss/stale time, long-run hardware wrap and other roles/modes. |
 | Link recovery | Candidate removal/readmission and bounded recovery machinery | Physical peer silence/restart, pending work, sustained reacquisition and repeated failures. |
 | Video/control/telemetry | Visible camera video and byte transport | Freshness challenge, measured end-to-end latency, telemetry values, control effects, loss/throughput and prolonged operation against stock. |
@@ -456,9 +456,10 @@ are outside these comparisons.
 The polling runtime adds consistency checks before tuning and a tune/prepare/sample
 sequence before assigning a power event to a channel. Pending, duplicate or
 unconfirmed events are excluded from per-channel counts. These counts are project
-observations, **not the original averaged scan scores**. Original scoring, automatic
-selection, subchannel measurement processing and auxiliary user-12 scans remain
-unimplemented. The small project diagnostic `0x015a0027` exposes scan progress and
+observations, **not the original averaged scan scores**. This initial sweep did
+not implement scoring; the subsequent [score-processing work](#base-channel-score-processing)
+adds it for confirmed events. Automatic selection, subchannel processing and
+auxiliary user-12 scans remain unimplemented in the runtime. The small project diagnostic `0x015a0027` exposes scan progress and
 excluded events; it is not a vendor command.
 
 Hardware sampling shows the measurement PLL changing while both stock and native
@@ -571,6 +572,62 @@ HDMI capture of the unchanged accepted image retains the stock-matching dark
 scene, with 23 linked/AP-time samples and zero sampled socket drops. This closes
 the compared serialization and decision logic only; the connected backend
 workflow, callback behavior, score processing and hardware parity remain open.
+
+### Base-channel score processing
+
+[Scan-score processing](../src/scan_scores.c) now follows the original DEV
+base-channel handler. Each channel has ten raw samples and ten rolling means.
+An admitted sample replaces the raw value at the shared ring index; the mean of
+those ten raw values replaces the corresponding mean entry. The mean of the ten
+means feeds the original integer score conversion. Both sums use 64-bit unsigned
+arithmetic. The ring advances when the sampled channel has no later enabled
+channel, and becomes ready after ten such rounds.
+
+The helper also implements signed score ranking, stable ties, original 32-bit
+wrap in band-score sums, group selector 3's wildcard and initial-band selection
+with signed bias. A completed startup decision requests the original RX hold and
+selection-message actions through its result; it does not execute those actions.
+Native validation additionally prevents an unchecked invalid winner dereference.
+
+Fresh original-instruction comparison covers 1,426 conversion inputs and 3,726
+processing cases, including 1,512 completed rounds and 288 startup decisions.
+It compares every channel's histories, latest sample and score, ring/flags,
+band/group winners, band averages and selection effects. All 422 executed
+instruction locations are checked against the matched payload/container/analysis
+ELF bytes. Unsigned 64-bit division, logging/time, RX hold and selection-message
+posting are intercepted. AP/subchannel processing, optional DEV reports and
+physical sampling are outside this comparison.
+
+The normal runtime feeds only events admitted by its existing tune/prepare/sample
+guards into this processing. Pending, duplicate and unconfirmed events do not
+change histories. It collects measurements without enabling automatic startup
+selection or group policy. Rebuilding the native receiver context clears its
+histories and readiness; complete original lifecycle retention still needs
+comparison. The missing host-catalog commands remain unsupported.
+
+Project diagnostic `0x015a0027` is now version 2, 392 bytes. It retains the original
+53-word diagnostic prefix and appends ring index, readiness, completed-round count
+and 42 signed scores. Zero denotes an unmeasured channel while its sample count is
+zero; sample counts remain distinct from scores. These values use the original
+arithmetic on a filtered subset of events. They are not proof of unbiased noise
+measurements, equivalent sampling cadence or calibrated physical units.
+
+Hardware records show all 42 configured channels receiving processed scores;
+the startup snapshot has 973 attributed samples and 23 completed rounds. A
+separate 50-read window records 41 attributed samples, 421 excluded power events
+and 138 command-consistency failures. Stock still measures its four enabled
+frequencies; native samples 29 distinct frequencies in that window. The active
+catalog and large exclusion count remain unresolved, so score equality with
+stock is not established.
+
+All 25 native C suites and 18 Python tests pass. Startup, stop/start,
+deinit/init/start and candidate removal/readmission preserve compensation and
+the dark camera scene seen on freshly rebooted stock. Four direct HDMI-to-USB
+captures total 90 seconds, with 102 linked/AP-time samples and zero sampled socket
+drops. Both lifecycle rebuilds clear native score histories/readiness, which
+subsequently advance again. The candidate was retained in RAM after inspection.
+This does not establish controlled scene freshness, measured latency or full
+scan/selection parity.
 
 Next, extend the core inventory through the transport dispatchers and indirect
 callbacks, and bind each command's behavior to its comparison tests. Then cover

@@ -465,14 +465,19 @@ notification advances its channel and writes a separate five-byte PLL shadow.
 This sweep can continue while the link's receive and transmit frequencies stay
 fixed. Preparation metadata tracks the measurement frequency independently.
 
-Open8030 currently sweeps the loader's configured channels. It has not yet
-matched the original active-catalog policy: the latest stock sampling observes
-four measurement frequencies, while native sampling observes 33 of its 42
-configured channels. The original averaged scoring and automatic selection are
-also missing. Native power counts require a consistent tune and subsequent
-measurement preparation; ambiguous polling events are excluded. Many events are
-still excluded, so those counts cannot establish complete or unbiased RF sampling.
-See [measurement scan comparison](parity.md#independent-measurement-scan).
+Open8030 currently sweeps all 42 configured channels in the tested setup; stock
+reports four enabled channels from the same catalog. The original Linux backend
+selects that work list after reading the firmware's channel-information getter.
+That getter and the work-list setter are not yet integrated in Open8030.
+
+Native power events require a consistent tune and subsequent measurement
+preparation; ambiguous polling events are excluded. Admitted events now update
+ten raw samples and ten rolling means per channel, followed by the original
+integer score conversion. The shared history index advances at the last enabled
+channel. Many events are still excluded, so these scores do not establish
+equivalent sampling cadence or unbiased RF measurements. Automatic selection,
+subchannel processing and auxiliary scans remain unintegrated. See
+[score processing and its limits](parity.md#base-channel-score-processing).
 
 ## Timing, retransmission and recovery
 

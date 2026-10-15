@@ -11,6 +11,7 @@
 #include "ar_ap_time.h"
 #include "ar_command.h"
 #include "ar_scan.h"
+#include "ar_scan_scores.h"
 #include <string.h>
 #ifndef AR_RF_SIMULATED
 #include "ar_sdio_device.h"
@@ -67,6 +68,8 @@ static struct ar_command_state command_state = {.cached_bank = 3, .board_band = 
 static unsigned commands_ready;
 static struct ar_rf_scan_info scan_info;
 static uint32_t scan_rows[AR_RF_MAX_CHANNELS];
+static struct ar_scan_scores scan_scores;
+static struct ar_scan_history scan_history[AR_RF_MAX_CHANNELS];
 static uint64_t scan_plls[AR_RF_MAX_CHANNELS];
 static void tune_measurement(void);
 const struct ar_rf_scan_info *ar_rf_scan_information(void) { return &scan_info; }
@@ -1562,7 +1565,11 @@ static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t 
 		}
 	} else if (length) { return failure(-22); }
 	commands_ready = 0;
-	memset(&scan_info,0,sizeof scan_info); scan_info.version = 1; scan_info.count = scan_count;
+	memset(&scan_info,0,sizeof scan_info); scan_info.version = 2; scan_info.count = scan_count;
+	memset(scan_history,0,sizeof scan_history);
+	/* Collect base-channel measurements. Group policy and the original initial
+	 * scan's RX hold/selection message are not connected to acquisition yet. */
+	scan_scores = (struct ar_scan_scores){.band_mask=4,.initial_band=2,.selected=255};
 	for (unsigned i = 0; i < scan_count; i++) {
 		scan_rows[i] = le32(scan_channels + 4*i) | 0x11000000;
 		(void)ar_rf_pll_word(scan_rows[i] & 0xffffff,&scan_plls[i]);
@@ -2013,6 +2020,14 @@ void ar_rf_poll(void)
 					sample_channel = receiver.channel_count;
 					if (scan_info.phase == 2 && scan_info.channel < scan_info.count) {
 						scan_info.samples++; scan_info.channel_samples[scan_info.channel]++;
+						int score_action = ar_scan_score_feed(&scan_scores,scan_history,scan_rows,NULL,
+							scan_info.count,scan_info.channel,power);
+						if (score_action < 0) { scan_info.errors++; }
+						else {
+							scan_info.score_ring = scan_scores.ring; scan_info.score_ready = scan_scores.ready;
+							scan_info.score_rounds += !!(score_action & AR_SCAN_SCORE_ROUND);
+							scan_info.channel_scores[scan_info.channel] = scan_history[scan_info.channel].score;
+						}
 						for (unsigned i = 0; i < receiver.channel_count; i++) {
 							if (receiver.channels[i].frequency_khz == scan_info.frequency_khz) { sample_channel = i; break; }
 						}
