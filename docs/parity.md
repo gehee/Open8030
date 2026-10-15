@@ -68,7 +68,7 @@ and scenario; they must be repeated after relevant changes.
 | Host setters and configuration | Candidate list and restricted loader configuration | Full dispatcher inventory, dynamic power, channel/band policies, reset/default behavior and runtime configuration changes. |
 | Host lifecycle | Explicit stop/start and stop/deinit/init/start tested historically | Every wrong-state/repeated operation, cancellation, pending DMA, failure recovery and complete reset semantics. |
 | Events | Subscription and delivery for IDs 0 and 1 | Other original IDs, payload layouts, ordering, cancellation and overflow behavior. |
-| Host sockets | Slot-0 copy-mode data path, deferred close and active-write cancellation; normal backend video/control; stream and handle admission compared offline | Allocation internals, table initialization, worker startup, runtime integration, unresolved stock spare-port rejection, other modes/slots, retained-descriptor TX, saturation, teardown races and complete capacity/error behavior. |
+| Host sockets | Slot-0 copy-mode data path, deferred close and active-write cancellation; normal backend video/control; stream/handle admission and queue factories compared offline | Heap/RTOS internals, table initialization, worker startup, runtime integration, unresolved stock spare-port rejection, other modes/slots, retained-descriptor TX, saturation, teardown races and complete capacity/error behavior. |
 | MAC framing | Header/descriptor parser and DEV encoder | Other formats/flags, receive ordering, duplicate handling and all original rejection rules. |
 | AP full/compact controls | Selected mode-0/slot-0 admission and connected control | All extensions, remote synchronization effects, changed channels, slots, stale/duplicate controls and unsupported modes. |
 | Internal port-0 commands | Stream parsing; login checksum ACK transmission | Receiving a command currently mainly records it. Inventory and implement each original command's effects, responses and retries. |
@@ -2413,5 +2413,58 @@ Stage 206 remains running in RAM. This is a regression observation, not a fresh
 stock/native open comparison or controlled freshness/latency measurement.
 
 The stock spare-port rejection still needs its actual underlying error and
-live allocation state identified. Factory and worker-start contracts, integration
-of retained-buffer ownership, and full socket admission parity remain open.
+live allocation state identified. Factory contracts are compared below;
+worker startup, retained-buffer ownership integration and full socket admission
+parity remain open.
+
+### Stream and queue factories
+
+Stage 209 compares the stream factory at `0x24225a`, the queue factory at
+`0x241d1c` and its allocation-size gate at `0x241cfc`. A stream requests a
+12-byte original object, initializes references to zero and percentage to 100,
+then creates its queue. Byte mode uses the requested capacity. Any nonzero
+retained argument selects a **100-byte queue**, enough for five 20-byte entries,
+and sets stream flag bit 2. Queue allocation failure frees the stream.
+
+The original queue requests capacity plus an 80-byte header. The size gate
+requires a nonzero total strictly below `0x8f980` (588,160 bytes), the difference
+between two fixed original addresses. This is a wrapper limit, not a reading
+of remaining heap space. The queue initializes empty/enabled metadata, then
+creates its mutex, ready signal and space signal in order; signal arguments
+are maximum 1 and initial count 0. Data bytes are not cleared. The factory
+does not reject injected zero synchronization tokens. These injected returns
+do not prove what the actual RTOS wrappers do on failure, or that the resulting
+queue can be used safely.
+
+Original execution matches **468 scenarios**, including **16 composed factory
+→ close sequences**. All **269 executed instruction locations** match the
+reference payload, container and analysis ELF. Comparisons cover modeled object
+and queue metadata, unchanged data bytes, allocation/free requests, synchronization
+ordering, capacity limits, allocation failure, injected synchronization returns
+and callback mutations. Original close/destructor instructions execute in the
+composed scenarios. Heap, synchronization and diagnostic endpoints remain intercepted;
+reserved fields and padding are excluded from the native-view comparison.
+
+Another **60 overflow probes are recorded separately**, not counted as matching
+parity cases. The original addition wraps for capacities near `UINT32_MAX` and
+can request fewer bytes than the 80-byte header it initializes. These probes
+use synthetic memory with extra backing; they were not sent to hardware. The
+native helper rejects overflow. Retained mode still selects its fixed 100-byte
+queue even if the unused requested byte capacity is large.
+
+Native allocation adapters receive original request sizes for accounting, but
+must allocate the native metadata views and their storage. Those views are not
+original structure declarations. Queue creation preserves the adapter's storage
+mapping. Real-allocation ASan/UBSan tests compose factory creation with byte
+write, acquire, release and close, and check cleanup, retained capacity, untouched
+data and the extra overflow guard. Synthetic ELF, ABI and pointer conventions
+remain analysis metadata; this does not establish original heap management,
+RTOS scheduling or DMA ownership.
+
+Six sanitizer suites and 18 Python tests pass. The helpers are source-only;
+the standard build reproduces stage 206. A fresh 30-second `/dev/video0`
+HDMI-to-USB capture shows the camera scene, with 33 linked samples, advancing
+AP time and zero sampled socket drops. Stage 206 remains running in RAM. This
+regression check does not establish controlled freshness/latency or matched
+stock/native socket admission. Worker startup, table initialization, live
+spare-port failure identification and runtime ownership integration remain open.

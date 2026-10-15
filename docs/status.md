@@ -524,6 +524,16 @@ remain open. The build reproduces stage 206, which remains running in RAM. A
 fresh 30-second HDMI-to-USB capture shows the camera scene with 33 linked samples
 and zero sampled socket drops. See [handle admission coverage](parity.md#handle-admission-and-open-cleanup).
 
+Stage 209 compares stream and queue factories in 468 original scenarios,
+including 16 creation/close sequences. A separate 60 overflow probes establish
+an intentional native guard against undersized wrapped allocations. Retained
+queues use a fixed 100-byte capacity. Six sanitizer suites and 18 Python tests
+pass, including real-storage write/acquire/release/close composition. The helpers
+remain source-only; heap/RTOS internals and worker startup are still outside
+coverage. The build reproduces stage 206. A fresh 30-second HDMI-to-USB capture
+shows the camera scene with 33 linked samples and zero sampled socket drops;
+stage 206 remains running in RAM. See [factory coverage](parity.md#stream-and-queue-factories).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host
