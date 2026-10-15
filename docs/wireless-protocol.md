@@ -16,6 +16,7 @@ physical-layer encoding specification. Preambles, waveform generation, complete
 coding/interleaving maps and all RF timing modes are outside this document's
 verified scope.
 
+- [Link-management findings and implementation status](#link-management-findings-and-implementation-status)
 - [Layers and terminology](#layers-and-terminology)
 - [MAC packet layout](#mac-packet-layout)
 - [AP broadcast control](#ap-broadcast-control)
@@ -25,7 +26,33 @@ verified scope.
 - [PHY control messages](#phy-control-messages)
 - [MCS negotiation](#mcs-negotiation)
 - [Timing, retransmission and recovery](#timing-retransmission-and-recovery)
+- [Optimization mechanisms and limits](#optimization-mechanisms-and-limits)
+- [Error handling and resource ownership](#error-handling-and-resource-ownership)
 - [Validation and open questions](#validation-and-open-questions)
+
+## Link-management findings and implementation status
+
+The findings below describe the matched original 18.21.10 firmware and the
+Open8030 development state through stage 229. The running image remains stage 215;
+stages 216–229 add source-only comparisons and tests. Passing those tests does
+not mean their services are present in the running firmware.
+
+| Mechanism | What we have established | Open8030 status |
+| --- | --- | --- |
+| Acquisition and login | Channel/peer admission, slot assignment, assignment tokens, synchronization acknowledgement and connection invalidation | Integrated for the tested mode-0 DEV, slot-0 path |
+| Link-loss recovery | FCH observation monitoring, stopping new submissions, rebuilding saved configuration and resuming reception | Integrated; candidate removal/readmission tested, physical peer silence/restart and pending-DMA recovery need broader hardware coverage |
+| AP clock synchronization | Decode transmitter time and maintain a wrapping local offset | Integrated and compared; not an end-to-end latency measurement |
+| MCS adaptation | Receive quality window, requested-mode observation, transmit decrease drain and attempt history | Selected paths integrated; sustained adaptation under loss remains unverified |
+| Channel measurement and selection | Independent measurement interval, sample/score processing, ranked backup channels and selected hopping-policy decisions | Measurement and scoring integrated with sampling limitations; full selection/hopping policy remains incomplete |
+| Internal traffic and resource handling | Framing, route selection, queue admission, worker delivery, ownership and construction failures | Recent helpers compared offline; internal services and their physical backends remain unintegrated |
+
+The receiver progresses through several independent checkpoints: a valid PHY
+header, a valid MAC packet, an admitted peer, a connected slot, delivered socket
+bytes and visible decoded video. A later checkpoint cannot be inferred solely
+from an earlier one. In particular, a connected radio and increasing byte
+counters can coexist with a black camera area in the Linux video output.
+See [hardware observations](status.md) and the
+[comparison scope](parity.md) for the evidence behind these distinctions.
 
 ## Layers and terminology
 
@@ -594,6 +621,136 @@ stop immediately. Recovery runs outside packet parsing, stops the radio, rebuild
 the saved configuration while preserving current host candidates, then restarts
 reception. RX resets are deferred while receive DMA is pending. Physical
 peer-silence/restart and pending-DMA recovery still need broader hardware coverage.
+
+## Optimization mechanisms and limits
+
+The recovered mechanisms manage coding, channel choice, hardware programming
+and buffering. Their presence does not establish optimal throughput, latency
+or interference tolerance on the tested hardware.
+
+### Coding and channel adaptation
+
+The [MCS policy](#mcs-negotiation) uses an eight-sample SNR/error window and
+configured rows to request a receive coding change. Observing the requested PHY
+mode confirms the change. A transmit-MCS decrease waits for six user-0
+interleaver events and applies on the seventh; this separates a mode request
+from the hardware drain needed to apply it. The running copy-mode path covers
+these selected transitions, but full retained-buffer retry behavior and
+sustained adaptation under interference remain open.
+
+The [independent measurement interval](#independent-measurement-interval) sweeps
+frequencies without moving the active link. Admitted samples feed per-channel
+history and integer scores. The compared selector-1 policy can rank four backup
+channels, advertise them with internal command 10 and arm a 3,000 ms timer.
+Those policy effects are compared at queue/send/timer boundaries; they do not
+prove peer receipt or a completed physical hop. Open8030 also currently sweeps
+42 configured channels where the matched stock backend selects four. Automatic
+selection, the normal work-list commands and equivalent measurement cadence
+still need integration and validation. See
+[channel policy coverage](parity.md#selector-1-channel-policy).
+
+### Hardware preparation and queue pressure
+
+Preparation caches the selected calibration bank and frequency subrange, avoiding
+repeated calibration and RF-control writes when they have not changed. Loaded
+compensation survives normal stop/start, reinitialization and native recovery;
+operations that invalidate the calibration assumptions clear the caches.
+This behavior is integrated for the tested board/bank, as described under
+[hardware command preparation](#hardware-command-preparation).
+
+The original internal socket-port-1 writer also checks TX occupancy. For nonzero
+roles, including the matched DEV role, it suppresses a write above 32 queued
+bytes, or above 262 when its mode field equals 1. Equality permits the write.
+Suppression returns zero; the route-delivery helper treats that as failure for a
+nonempty packet and releases its reference without retry. This is a source-only
+comparison, distinct from the running external host socket path. Limiting queued
+traffic is a plausible purpose, but a latency benefit has not been measured.
+See [internal write-gate coverage](parity.md#internal-socket-write-gate).
+
+## Error handling and resource ownership
+
+Error handling is layered. Wire corruption, failed admission, local congestion
+and resource-construction failures have different outcomes; none is a universal
+instruction to retry a radio packet.
+
+### Corruption and stream recovery
+
+MAC parsing checks header/descriptor CRC16 and all described extents before
+exposing payloads. That CRC does not cover the outband or payload bytes. AP
+control and PHY messages have their own checks, and internal command envelopes
+use XOR. A valid checksum does not admit a peer or authorize payload forwarding.
+
+The source-only C8 stream parser retains fragmented frames, handles ring wrap
+and resumes searching after invalid length or CRC8-D5. It preserves the complete
+valid envelope for routing and uses a separate error-segment path for malformed
+bytes. This parser is not yet a running internal service. See
+[framing comparison](parity.md#internal-socket-port-1-framing).
+
+### Congestion, discard and packet lifetime
+
+The compared original TX queue distinguishes occupied bytes from bytes available
+for acquisition. Its discard option removes available queued bytes while leaving
+already acquired bytes occupied. Discard precedes the space check, so a rejected
+write can still have changed queue contents. Nonblocking writes can return a
+partial count; disabling a queue during a wait can return an error after earlier
+passes have published bytes. Callers cannot assume an error means no side effects.
+See [TX queue behavior](parity.md#tx-queue-producer-and-backpressure).
+
+The internal worker restores queue capacity after receiving a message and tracks
+its age using unsigned tick subtraction. An age greater than **50 ticks** increments
+a diagnostic counter; it does not expire the packet. The clock adapter defines
+the tick unit, so this comparison does not establish a 50 ms deadline. Explicit
+discard releases the packet before transformation or delivery. Missing-packet
+and missing-action errors have distinct accounting and ownership effects.
+See [worker error handling](parity.md#worker-discard-control-queue-age-and-errors).
+
+Original submission/worker/pool comparisons establish recycling for the tested
+non-copying paths. Copying actions retain a reference after the tested workers
+drain and can exhaust a synthetic pool. This is not proof of a general stock
+memory leak: the 49 recovered built-in route records do not request those copy
+actions, and other cleanup/custom-route paths remain open. These helpers still
+need production ownership and scheduling integration. See
+[pool lifetime](parity.md#submission-worker-delivery-and-original-pool-recycling)
+and [built-in route inventory](parity.md#interface-preflight-and-built-in-mode-inventory).
+
+### Partial construction and success reporting
+
+The original service constructor publishes an interface before completing its
+reader/writer resources. Later failures can leave published objects and partial
+allocations in place. Reader-task and selected mutex errors are ignored at the
+compared boundaries, while writer-queue/task failures return errors. A successful
+return therefore does not prove that every requested task exists or runs.
+The native helper preserves this partial state; callers must manage surviving
+resources and serialize construction. Full teardown remains unfinished. See
+[service construction](parity.md#interface-publication-and-readerwriter-resources).
+
+The non-UART constructor has another unusual failure path: after a successful
+socket open, failure to allocate handle storage frees the interface and returns
+zero without publishing it or closing the opened stream at that boundary.
+This is recorded behavior, not a guarantee of successful initialization or
+cleanup elsewhere. See
+[interface construction](parity.md#non-uart-interface-construction-and-profile-selection).
+
+Native bounds, headroom and argument guards deliberately reject some unsafe
+inputs that the original does not check. These differences are documented
+separately from matching results. Original-instruction comparisons use adapters
+at specified hardware/RTOS boundaries; they do not establish real scheduler,
+interrupt, allocation or RF failure behavior beyond those boundaries.
+
+### Remaining reliability questions
+
+The retransmission-request watchdog and local TX retirement described above do
+not establish complete over-air ARQ, retry limits or peer delivery. Dynamic power
+control, physical peer-loss/restart, sustained interference and long-running
+resource pressure still need implementation or validation.
+
+Earlier hardware sessions dropped video receive bytes even while video remained
+visible. Later clean captures and flow checks have not isolated or fixed that
+intermittent loss. A separate black-camera symptom after warm restoration also
+remains unresolved. Queue instrumentation helps locate pressure, but neither
+passing offline comparisons nor a short successful video check closes these
+issues. See [video receive measurements](parity.md#video-receive-flow-measurements)
+and [remaining hardware work](status.md#remaining-work).
 
 ## Validation and open questions
 
