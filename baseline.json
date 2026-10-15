@@ -2,12 +2,12 @@
   "baseline": "working-video",
   "target": "VRX/GND Ascent VRX; matched 18.21.10 inputs",
   "runtime": {
-    "bytes": 75384,
-    "sha256": "acb8079e25d9988de9621aa0203ea6945f0b778c0e7e3ae5ca28e95d5c7fbc78",
+    "bytes": 76632,
+    "sha256": "4bfa4cc33d7dbe90bf18dc9043048c41c80b096909349603184b0361d4462a42",
     "load_address": "0x204000"
   },
   "ram": {
-    "used_bytes": 686720,
+    "used_bytes": 692832,
     "capacity_bytes": 704512
   },
   "private_board_profile": {
@@ -19,20 +19,20 @@
     "sha256": "c69e46c57bbb3e5fc7fe0c5581e59fb5735dcf8a97bf0e05ae7aaa0273657768"
   },
   "container": {
-    "bytes": 93696,
-    "sha256": "0141d9c129db3312c44fa0ab84d625b7968ae9cd37d558743329bbc680e4b785",
+    "bytes": 94720,
+    "sha256": "92ee50d587ebdcdf814edc68bd92aacbbcc2fee89fedab5eb8d845e6d90b7596",
     "payload_alignment": 512
   },
   "original_stock_sha256": "dc58247910af564376350404383c5c411cbec21663873fba24e70c61a3584e3c",
   "external_config_sha256": "5cf0cd31645d4786c6b04399c6c609386d427ffc4c6d7f6e42d81e3e770c2a74",
   "scope": "Experimental Ascent VRX 18.21.10 native video baseline; private inputs not distributed",
   "generated_container": {
-    "bytes": 93696,
-    "sha256": "0141d9c129db3312c44fa0ab84d625b7968ae9cd37d558743329bbc680e4b785",
+    "bytes": 94720,
+    "sha256": "92ee50d587ebdcdf814edc68bd92aacbbcc2fee89fedab5eb8d845e6d90b7596",
     "payload_alignment": 512,
     "configuration": "zero-filled 16 KiB; external loader JSON required",
     "hardware_verified": true,
-    "verification_scope": "Ascent VRX 18.21.10 stage230: C8 receive-to-event8 adapter and bounded host-data diagnostics. All65 native sanitizer suites and18 Python tests pass. Warm-load black camera rejected; stock reboot then same candidate restores visible dark scene in direct HDMI-to-USB capture. Thirty-second capture and60 flow samples show no socket drops/SDIO errors. Live host-data samples contain CRC-valid transmitter records and MSP messages. C8 input remains absent: synthetic bridge tests do not establish live UART telemetry. Full typed telemetry, shared-stream ownership, warm-reload cause and intermittent receive loss remain open.",
+    "verification_scope": "Ascent VRX 18.21.10 stage231: passive host-data telemetry decoder and read-only CLI. All66 native sanitizer suites and24 Python tests pass. Fresh stock boot then candidate shows visible dark camera scene through HDMI-to-USB capture. Thirty-second native capture and60 flow samples show zero socket drops/SDIO errors, with25,036,777 video bytes delivered over59 seconds. Sixty telemetry samples show fresh transmitter status and FC variant/version/status/analog records;3132 new CRC-valid application envelopes and3225 valid MSP replies, no new parser errors. Candidate retained in RAM. No independent sensor calibration, RC uplink, live C8 UART validation, warm-reload fix or long-run reliability claim.",
     "verified_utc_date": "2026-10-15"
   }
 }

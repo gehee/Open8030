@@ -257,3 +257,14 @@ not proof of decoded video, latency parity or support for every stock command.
 For over-air packet layouts and link behavior, see the [wireless protocol](wireless-protocol.md).
 Continue with [configuration](configuration.md), [operation and troubleshooting](operation.md)
 and [validation status](status.md).
+
+## Host application telemetry observer
+
+The runtime also passes received slot-0 MAC port-3 bytes to a bounded passive
+observer in [host_telemetry.c](../src/host_telemetry.c). It validates and reassembles
+application envelopes and nested MSP replies while the existing socket path
+continues forwarding the original bytes. Five selected records are retained with
+local reception times and cleared on link changes. No telemetry requests or
+queue ownership changes are introduced. The read-only 444-byte diagnostic
+`0x0c5a002c` (daemon alias `0x015a002c`) powers `./open8030 telemetry HOST`.
+See [telemetry](telemetry.md) for its layout and freshness semantics.

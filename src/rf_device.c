@@ -221,6 +221,7 @@ static uint64_t timer_ticks(void)
 	} while (high != again);
 	return (uint64_t)high << 32 | low;
 }
+uint32_t ar_rf_local_ms(void) { return (uint32_t)(timer_ticks() / 40000); }
 static uint64_t elapsed_ticks(void) { return timer_ticks() - receive_started; }
 static uint32_t elapsed_us(void) { return (uint32_t)(elapsed_ticks() / 40); }
 static uint32_t elapsed_ms(void) { return (uint32_t)(elapsed_ticks() / 40000); }

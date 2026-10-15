@@ -34,7 +34,8 @@ verified scope.
 
 The findings below describe the matched original 18.21.10 firmware. Stages
 216–229 added source-only comparisons; stage 230 integrates a selected C8 receive
-bridge and telemetry diagnostics. Passing helper tests does not mean every
+bridge and telemetry diagnostics; stage 231 adds passive decoding of transmitter
+status and flight-controller MSP replies on the host-data stream. Passing helper tests does not mean every
 compared service is present in the running firmware.
 
 | Mechanism | What we have established | Open8030 status |
@@ -325,7 +326,7 @@ twelve original event subscriptions, including ID 8. Stage 230 adds a fixed C8
 receive-to-event-8 bridge alongside producers 0 and 1; it does not provision
 bidirectional internal services. The tested VTX has sent no packets on this C8
 stream. Subscription success does not establish live delivery on that path.
-A source-only forwarding helper and original
+The forwarding helper and original
 mode-3 graph comparisons are described in
 [internal data coverage](parity.md#mode-3-internal-data-graph-and-event-forwarding).
 
@@ -337,7 +338,7 @@ complete envelope when producing a packet; it does not strip these bytes.
 It retains fragmented frames, handles ring wraparound and searches again after
 invalid length or CRC. Malformed bytes use a separate error-segment path.
 This is a recovered internal stream profile, not a new MAC envelope or a claim
-of full compatibility with an external protocol. Its source-only implementation
+of full compatibility with an external protocol. Its implementation
 and comparison limits are documented in
 [framing coverage](parity.md#internal-socket-port-1-framing).
 
@@ -787,3 +788,12 @@ Keep separate counts for PHY-valid headers, MAC-valid packets, admitted peers,
 state-2 connections, socket-delivered bytes and visible camera frames. Success at
 one boundary does not establish success at the next. Unknown fields are left
 opaque here rather than assigned meanings unsupported by the implementation.
+
+### Application telemetry decoding
+
+The host-data observer now validates the outer application framing and nested
+MSP replies independently of the external socket consumer. It exposes selected
+transmitter and FC records with individual reception times through
+`./open8030 telemetry HOST`. This is a passive diagnostic path, not a new radio
+service or traffic scheduler. See [telemetry](telemetry.md) for framing, decoded
+fields, limits and the distinction from C8 UART/event traffic.

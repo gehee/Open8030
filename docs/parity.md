@@ -3999,3 +3999,44 @@ The image remains running in RAM; runtime/container/config/boot provenance is
 recorded in ignored `.local/stage230-telemetry-20261015T202932Z/`. This does not
 resolve the warm-restoration cause, intermittent receive loss, controlled camera
 freshness, typed telemetry semantics or full internal-service ownership.
+
+## Passive host-data telemetry decoding
+
+Stage 231 adds a native observer for MAC port 3 / host socket 2. This path already
+carried application telemetry through the original Linux backend. It is distinct
+from the recovered C8 UART/event-8 path introduced in stage 230.
+
+The matched backend's `msg_head_is_valid`, `msg_payload_is_valid_by_crc32`,
+`Fxn_bb_rsv_sky_com_msg` and `fpv_crc32` establish the application envelope. All
+256 CRC table entries match reflected CRC32C with polynomial `0x82f63b78`; the
+initial value and final complement are zero. The backend's type-5 dispatcher
+and SRT consumers bind signed byte 1 to transmitter temperature and LE32 bytes
+11–14 to supply millivolts. Public MSP definitions establish FC field layouts.
+No proprietary executable or captured payloads are included in the public tests.
+This is an independently written observer, not a claim of full backend parity.
+
+The implementation uses fixed buffers, accepts complete valid channel-0 non-ACK
+envelopes, reassembles nested MSP replies and saves five selected record prefixes.
+It does not allocate queues, change socket ownership, send queries or alter the
+forwarded bytes. The read-only diagnostic preserves the caller's request ID and
+rejects nonempty requests. Link changes discard partials and old values. The host
+command computes per-record freshness from the hardware clock, independently of
+AP-time synchronization.
+
+Synthetic ASan/UBSan cases cover every split of the selected outer record and
+MSPv1/v2 replies split across separate outer records, maximum application/MSPv2
+lengths, concatenation, double-checksummed MSPv2-in-v1, corrupt checksums, ACKs,
+other channels, short known records, unknown messages, oversize nested lengths,
+noise recovery, link resets and partial expiry across clock wrap. Python tests
+cover field units, signed values, legacy analog length, missing/stale semantics,
+wrap arithmetic, invalid snapshot extents and printable identifier output.
+These tests are not original-instruction comparisons of the new observer.
+
+The hardware trial uses the matched Ascent VRX and original transmitter/backend.
+All five selected records update throughout 60 samples, with no new application
+CRC or MSP checksum failures. The concurrent 60 flow samples have zero socket
+drops and SDIO errors, while the 30-second direct HDMI-to-USB capture retains the
+stock-matching dark scene. The candidate remains running in RAM. Exact image
+hashes are in [baseline.json](../baseline.json); raw traffic, disassembly and
+capture receipts stay in ignored lab storage. See [status](status.md#transmitter-and-flight-controller-telemetry)
+and [telemetry](telemetry.md) for scope and remaining limits.

@@ -175,3 +175,11 @@ For development, validate parser/state-machine changes offline, preserve matched
 board/release provenance, then perform a separately authorized hardware test with
 stock comparison and direct video capture before accepting new hashes. Keep
 private profiles, generated images and captures in ignored `.local/`.
+
+## Telemetry readout
+
+`./open8030 telemetry HOST` reads the current development firmware snapshot.
+`--watch` refreshes once per second and `--json` selects machine-readable output.
+The five-second freshness threshold applies separately to each record. The command
+does not configure the transmitter or FC, and requires no additional board-profile
+settings. See [telemetry](telemetry.md) for supported fields and missing/stale behavior.

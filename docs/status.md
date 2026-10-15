@@ -764,15 +764,49 @@ telemetry was entirely absent were too broad: the unintegrated UART/event path
 is separate from this functioning host-data path. Sampled complete records pass
 the original backend's CRC32C check; MSP status, firmware identity/version and
 analog messages also pass their inner checksums. Typed telemetry reporting and
-freshness validation remain work in progress. The C8 stream itself was silent,
+freshness validation were still pending at this checkpoint (added in stage 231
+below). The C8 stream itself was silent,
 so synthetic coverage does not establish live C8 delivery from the VTX.
 
 All 65 native sanitizer suites and 18 Python tests pass. The first warm load
 produced black camera output and was rejected. A receiver reboot restored stock
 video; reloading the same candidate restored the visible dark textured scene.
-The candidate is retained after direct HDMI-to-USB inspection. This recovery does
+The stage-230 candidate was retained after direct HDMI-to-USB inspection. This recovery does
 not isolate or fix the warm-reload issue. See
 [telemetry integration evidence](parity.md#telemetry-receive-integration-and-live-host-data).
+
+## Transmitter and flight-controller telemetry
+
+The stage-231 development image adds a passive host-data decoder and
+`./open8030 telemetry HOST [--watch] [--json]`. It reports transmitter voltage
+and temperature, plus MSP FC identity, version, status and analog/battery data.
+Each record has checksum validation, a reception time and missing/stale handling.
+It continues forwarding the original application bytes to the Linux backend.
+See [telemetry](telemetry.md) for fields, formats and limitations.
+
+Hardware verification on 2026-10-15 used a fresh stock boot, then the candidate.
+The 30-second native HDMI-to-USB capture shows the same dark textured scene as
+stock; all 33 status samples remain linked. Sixty flow samples over 59 seconds
+show 25,036,777 additional video bytes delivered with zero socket drops or SDIO
+errors. The video queue high-water is 9,409/56,320 bytes and the lifetime maximum
+finished SDIO descriptor duration is 540,394 ticks (13.51 ms); these are observations,
+not throughput or latency guarantees.
+
+All five telemetry records remain current in 60 one-second samples. Counts advance
+by 212 transmitter messages, 47 FC variant messages, 47 version messages, 2,375
+status messages and 47 analog messages. The maximum observed ages are 278 ms for
+transmitter status, 110 ms for FC status, and 1,258 ms across identity/version/analog.
+There are 3,132 new CRC-valid application envelopes and 3,225 checksum-valid MSP
+replies, with no new framing, checksum, short-record or oversize errors. The observer
+had discarded 66 startup bytes before this sampling window. No C8 UART traffic
+was needed for this host-data telemetry path.
+
+All 66 native sanitizer suites and 24 Python tests pass. The checked image is
+retained in RAM. These checks establish reception and decoding in this setup,
+not independent sensor accuracy or sensor-sampling freshness. RC uplink, MAVLink,
+physical UART/SBUS routing, controlled peer loss, long-run reliability and the
+warm-reload black-camera cause remain open. The broader telemetry/core-command
+compatibility work also remains incomplete.
 
 ## Remaining work
 
