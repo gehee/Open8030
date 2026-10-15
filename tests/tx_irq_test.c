@@ -115,11 +115,13 @@ int main(void)
 	assert(!ar_tx_irq_preencode(&f.irq, &f.state, &ops, &f));
 	assert(f.state.users[5].history == 1);
 
-	f = setup();
-	f.second = 15;
-	struct ar_interleaver saved = f.state;
-	assert(ar_tx_irq_preencode(&f.irq, &f.state, &ops, &f) == -22);
-	assert(f.posts == 1 && f.notices == 1 && !memcmp(&saved, &f.state, sizeof saved));
+	for (unsigned user = 10; user <= 15; ++user) {
+		f = setup();
+		f.second = user;
+		struct ar_interleaver saved = f.state;
+		assert(ar_tx_irq_preencode(&f.irq, &f.state, &ops, &f) == -22);
+		assert(f.posts == 1 && f.notices == 1 && !memcmp(&saved, &f.state, sizeof saved));
+	}
 	f = setup();
 	struct fixture original = f;
 	struct ar_tx_irq_ops invalid = ops;

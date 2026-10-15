@@ -383,6 +383,17 @@ accepted stage 189; a fresh 30-second HDMI-to-USB capture shows the camera scene
 with 33 linked samples and zero sampled socket drops. See
 [stream-release coverage](parity.md#stream-release-consumer-and-queue-consumption).
 
+Stage 196 corrects the source-only TX bookkeeping range to users 0..9. Fresh
+execution shows the original initializer visits ten records; forcing users 10/11
+overwrites adjacent callback-list memory. The native helpers now reject these
+indices. Replay passes 30,454 earlier scenarios within the corrected scope,
+including 534 deliberately different assertion outcomes; 9,408 unsafe probes
+are excluded from supported-user coverage. Three sanitizer suites and 18 Python
+tests pass. The device is unaffected: the standard build reproduces accepted
+stage 189, and a fresh 30-second HDMI-to-USB capture shows the camera scene with
+33 linked samples and zero sampled socket drops. See
+[the bounds correction](parity.md#corrected-tx-bookkeeping-bounds).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host

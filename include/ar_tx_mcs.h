@@ -14,7 +14,9 @@ enum ar_tx_mcs_action {
 	AR_TX_MCS_PROGRAM, AR_TX_MCS_REQUEST, AR_TX_MCS_DRAIN_APPLY,
 	AR_TX_MCS_INITIALIZE, AR_TX_MCS_RETRY_RESET
 };
-/* Caller serializes state and register access. User/index bounds are native
+/* Caller serializes state and register access. Bookkeeping users are 0..9;
+ * hardware register helpers for other users do not extend this table.
+ * User/index bounds are native
  * additions. Invalid key encoding returns -95. Unsupported code-length states
  * return -95 instead of the original assertion; a preceding mode write may
  * already have occurred. Callback effects are synchronous. */

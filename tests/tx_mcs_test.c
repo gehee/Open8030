@@ -83,7 +83,12 @@ int main(void)
 	assert(!ar_tx_mcs_control(&f.state,AR_TX_MCS_PROGRAM,0,3,f.keys,1,1,&ops,&f));
 	assert(f.code_count==2 && f.codes[0]==6 && f.codes[1]==3);
 	struct fixture saved=f;
-	assert(ar_tx_mcs_control(&f.state,AR_TX_MCS_PROGRAM,12,0,f.keys,0,1,&ops,&f)==-22);
+	for (unsigned user=10;user<=12;user++) {
+		for (unsigned action=AR_TX_MCS_PROGRAM;action<=AR_TX_MCS_RETRY_RESET;action++) {
+			assert(ar_tx_mcs_control(&f.state,action,user,0,f.keys,0,1,&ops,&f)==-22);
+			assert(!memcmp(&saved,&f,sizeof f));
+		}
+	}
 	assert(ar_tx_mcs_control(&f.state,AR_TX_MCS_PROGRAM,0,25,f.keys,0,1,&ops,&f)==-22);
 	assert(ar_tx_mcs_control(&f.state,AR_TX_MCS_PROGRAM,0,24,f.keys,0,1,&ops,&f)==-95);
 	assert(!memcmp(&saved,&f,sizeof f));

@@ -26,7 +26,7 @@ int ar_tx_irq_preencode(struct ar_tx_irq *irq, struct ar_interleaver *state,
 	(void)ops->post(0x301, payload, sizeof(payload), context);
 	user = (ops->word(0xf70, context) >> 12) & 15;
 	int result = 0;
-	if (user >= 12) {
+	if (user >= AR_INTERLEAVER_USERS) {
 		result = -22;
 	} else {
 		struct ar_interleaver_user *u = &state->users[user];

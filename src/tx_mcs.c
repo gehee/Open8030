@@ -43,7 +43,7 @@ int ar_tx_mcs_control(struct ar_interleaver *state,enum ar_tx_mcs_action action,
 	unsigned dev_role,const struct ar_tx_mcs_ops *ops,void *context)
 {
 	if (!state || !keys || !ops || !ops->read || !ops->word || !ops->field || !ops->event ||
-	    user>=12 || mcs>=25 || action>AR_TX_MCS_RETRY_RESET || (int)action<0 || dev_role>1) { return -22; }
+	    user>=AR_INTERLEAVER_USERS || mcs>=25 || action>AR_TX_MCS_RETRY_RESET || (int)action<0 || dev_role>1) { return -22; }
 	struct ar_interleaver_user *u=&state->users[user];
 	if (action==AR_TX_MCS_RETRY_RESET) {
 		uint8_t retries=u->retries;u->active=0;

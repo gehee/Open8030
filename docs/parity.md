@@ -1416,8 +1416,10 @@ while a decrease saves the previous index and starts the six-event drain.
 Initialization clears the user's bookkeeping and derives its MCS from register
 fields using the first matching entry in the supplied 25-key loader table.
 Programming preserves the original mode transition, code-length calculation and
-chip-specific 24-block coding adjustment, including the dedicated user-10 mode
-register and user-11 mode-write exclusion.
+chip-specific 24-block coding adjustment. Historical probes also exercised the
+dedicated user-10 mode register and user-11 mode-write exclusion. Stage 196
+establishes that these hardware branches do not extend the software bookkeeping
+table; the stateful native API now rejects users above 9.
 
 Retry failure clears the selected user's active flag before event 9, which
 contains the role-dependent user byte, requested/previous MCS, history and retry
@@ -1430,8 +1432,8 @@ The omission was confined to the source-only helper; the runtime never used it.
 Fresh execution compares **23,670 nonfatal scenarios** and separately checks
 the effects/state prefix of **846 original assertion cases**, where native
 returns `-95`. These are intentional failure-behavior differences, not original
-error parity. Coverage includes all valid MCS indices, both roles, all twelve
-users across the callback/request cases, four representative users across the
+error parity. Historical probes include all valid MCS indices, both roles, twelve
+user indices across the callback/request cases, four representative indices across the
 programming sweep, normal/special keys, bandwidth/interleave combinations, chip
 selection, pending requests and event-callback mutation. Native rejects unsafe
 users, indices and malformed key encodings. An error can follow a mode write or
@@ -1486,9 +1488,11 @@ Queue failure does not suppress subsequent bookkeeping or observer notification.
 These are endpoint contracts, not proof that a queued release actually executes.
 
 Fresh original execution compares **4,050 pre-encode and 1,536 TX-end scenarios**:
-all twelve valid table users, separately sampled users, active states, retry and
+twelve synthetic table indices, separately sampled users, active states, retry and
 shift boundaries, interleave values, both banks, busy states, queue failures and
-selected callback mutations. TX-end covers every remembered-user byte. Ordered
+selected callback mutations. TX-end covers every remembered-user byte. Stage 196
+corrects the supported bookkeeping range to 0..9; indices 10/11 were unsafe
+original probes. Ordered
 comparisons include 17,022 word reads, 2,466 field reads, 4,050 timestamp samples
 and 5,586 queue/observer pairs, with user and IRQ state checked at each effect.
 All 156 executed instruction locations match the reference payload, container
@@ -1530,7 +1534,7 @@ storage alive throughout the call.
 Fresh original execution compares **2,588 scenarios** and **9,857 ordered release
 calls**, checking context and packet memory as well as arguments. Coverage includes
 all ten tail positions and ownership depths zero through ten, retention limits
-0/1/5/10/11/`UINT32_MAX`, all sixteen selectors, all twelve user lookup slots,
+0/1/5/10/11/`UINT32_MAX`, all sixteen selectors, twelve synthetic lookup indices,
 absent contexts, zero/multiple/255 descriptors, ring wrap and 384 callback-mutation
 cases. All 49 executed instruction locations match the reference payload,
 container and analysis ELF. The callback at `0x248998` is intercepted; this does
@@ -1621,6 +1625,50 @@ A fresh 30-second direct `/dev/video0` HDMI-to-USB capture has 33 linked samples
 advancing AP time and zero sampled socket drops. Inspected frames show the dark
 textured scene and camera OSD. This verifies the retained firmware, not hardware
 execution of this consumer or controlled scene freshness/latency.
+
+### Corrected TX bookkeeping bounds
+
+Stage 196 corrects an error in the source-only TX helpers and earlier coverage
+descriptions: the original bookkeeping table has **ten 12-byte records**, not
+twelve. The original initializer loop at `0x22520e..0x225238` programs and
+initializes users 0..9. The next region, starting at `0x26a9ac`, is used by the
+callback-list registration/unregistration dispatch paths. Hardware helpers with
+special handling for user 10 do not establish another software bookkeeping slot.
+
+Fresh execution runs 75 scenarios with three memory patterns. Sixty direct
+program/initialization cases and three complete initializer-loop excerpts match
+native behavior and preserve the following 56 bytes. Twelve deliberately unsafe
+original probes of users 10/11 modify that adjacent region: initialization
+overwrites twelve bytes and programming updates a byte there. Native now rejects
+these calls before effects. All 219 executed instruction locations and 53 static
+instructions in the adjacent callback-list dispatch ranges are byte-checked
+against the matched payload/container/analysis ELF. The full loader and callback
+registration paths are not executed in this new experiment.
+
+`ar_interleaver` now holds ten records. MCS control and interleaver service reject
+out-of-range bookkeeping users before callbacks. Pre-encode still posts its
+first hardware sample, then rejects an unsafe second table index and notifies
+without accessing that record. TX-end still carries the full remembered-user
+byte, since it does not index the bookkeeping table. These guards are deliberate
+native behavior, not replication of original out-of-bounds accesses.
+
+Replay of the prior byte-bound traces, using the corrected native structure,
+passes **7,540 interleaver cases**, **17,496 nonfatal MCS cases plus 534 original
+assertion-prefix cases**, and **4,884 interrupt cases**. The MCS replay includes
+270 composed request/interleaver sequences. State comparisons also require the
+adjacent original bytes to remain unchanged. The 9,408 earlier probes with unsafe
+bookkeeping indices are excluded from supported-user coverage; their historical
+trace receipts remain preserved. Replay is not a new original emulator run.
+The reserved-byte differences and assertion behavior remain explicit exceptions.
+
+The corrected bounds have sanitizer regressions covering users 10..15 and all
+MCS actions, checking rejection ordering and state preservation. Three sanitizer
+suites and 18 Python tests pass. These helpers have never been linked into the
+running firmware, so the device was unaffected. The standard build reproduces
+accepted stage 189. A fresh 30-second direct HDMI-to-USB capture has 33 linked
+samples, advancing AP time and zero sampled socket drops; inspected frames show
+the dark textured camera scene and OSD. No controlled freshness/latency claim is
+made. Retry-limit and ownership producers remain under comparison.
 
 Next, compare the remaining ownership and retry-limit producers, connect the
 compared TX helpers to the runtime, and isolate low-power acquisition

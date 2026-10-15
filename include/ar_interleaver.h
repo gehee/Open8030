@@ -4,13 +4,17 @@
 #include <stdint.h>
 /* Source-only interleaver service. These are native analysis interfaces;
  * runtime ownership, callbacks and IRQ timing still require integration. */
+#define AR_INTERLEAVER_USERS 10
+/* The original initializes ten 12-byte bookkeeping records. Hardware user
+ * numbers beyond 9 do not establish additional software records; the next
+ * original memory region is used for callback-list pointers. */
 struct ar_interleaver_user {
 	uint8_t mcs, previous_mcs, active, reserved3;
 	uint32_t history;
 	uint8_t retries, limit, drain, reserved11;
 };
 struct ar_interleaver {
-	struct ar_interleaver_user users[12];
+	struct ar_interleaver_user users[AR_INTERLEAVER_USERS];
 	uint8_t initialized, correction_pending;
 	int16_t initial_delta, previous_delta;
 	uint16_t reserved;

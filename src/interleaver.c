@@ -5,7 +5,7 @@ int ar_interleaver_service(struct ar_interleaver *state,
 	const struct ar_interleaver_input *input, unsigned source,
 	const struct ar_interleaver_ops *ops, void *context)
 {
-	if (!state || !input || !ops || input->user > 15 || input->second_user >= 12 ||
+	if (!state || !input || !ops || input->user > 15 || input->second_user >= AR_INTERLEAVER_USERS ||
 	    source >= 32 || input->high_clock > 1 || !ops->field || !ops->exchange || !ops->read || !ops->reset ||
 	    !ops->control || !ops->apply || !ops->retry_reset || !ops->post || !ops->notify) { return -22; }
 	unsigned user = input->user;

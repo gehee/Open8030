@@ -89,8 +89,12 @@ int main(void)
 	input.timestamps[1]=0x0080; /* signed low halfword -32768 */
 	assert(!ar_interleaver_service(&c.state,&input,18,&ops,&c));
 	assert(c.resets==1 && !c.state.initialized && !c.state.initial_delta && !c.state.previous_delta && c.state.reserved==0xcafe);
-	struct capture saved=c;input.second_user=12;
-	assert(ar_interleaver_service(&c.state,&input,18,&ops,&c)==-22);
+	struct capture saved=c;
+	for (unsigned user=10;user<=15;user++) {
+		input.second_user=user;
+		assert(ar_interleaver_service(&c.state,&input,18,&ops,&c)==-22);
+		assert(!memcmp(&saved,&c,sizeof c));
+	}
 	input.second_user=8;
 	assert(ar_interleaver_service(&c.state,&input,32,&ops,&c)==-22);
 	input.high_clock=2;
