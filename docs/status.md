@@ -178,6 +178,15 @@ socket drops. PHY command callbacks, tuning/monitor behavior and normal runtime
 integration remain open; the catalog commands are still unsupported. See
 [channel transactions](parity.md#channel-request-and-completion-contracts).
 
+The source-only PHY command-4 callback now matches 5,728 original cases across
+AP/DEV modes 0–3, including malformed requests, channel/state updates, ordered
+tuning and notifications, auxiliary search, completion suppression and cross-band
+monitor preparation. Its sanitizer suite passes. Actual tuning, PHY command
+transport and monitor-driven completion are still unintegrated. A fresh
+20-second capture of the unchanged baseline through the HDMI-to-USB adapter
+again shows the reference dark scene, with 23 linked/AP-time samples and zero
+sampled socket drops. See [channel-change callbacks](parity.md#phy-channel-change-callback).
+
 A separate configuration-only test reproduced acquisition failure at initial
 power level 11 using the accepted AP-time image. No video was delivered;
 restoring the original level-25 configuration restored the stream. This failure

@@ -783,6 +783,64 @@ The PHY command-4 callback, actual tuning and monitor-driven completion remain
 open. Runtime integration and the normal backend work-list workflow still need
 hardware comparison; the three host catalog commands remain unsupported.
 
+### PHY channel-change callback
+
+[The channel-link helper](../src/channel_link.c) implements the original PHY
+command-4 callback for AP and DEV modes 0–3, including the cross-band monitor
+preparation helper. It remains source-only. Its tuning, notification, queue and
+register callbacks are comparison boundaries, not implemented hardware effects.
+
+Channel changes follow role, mode, callback direction and payload flags. State
+updates precede their corresponding tune requests. Notifications retain the
+original user/direction and old/new low channel bytes, including overlapping
+flags that can report the same old and new value. Tune and notification failures
+do not undo the original state updates.
+
+In mode 0, an outgoing DEV request for its own slot arms the user-8 monitor; an
+outgoing AP receive-channel request arms user 0's monitor. A band change first
+sets the monitor's preparation flag and hold-mask bit and writes that user's RF
+field. The callback then marks completion pending, stores the channel's low byte
+and sets the monitor deadline to its threshold plus 16, with byte wrap.
+
+The auxiliary-search path runs after the role's link lock is released, even when
+the role-specific request was ignored. An enabled auxiliary context and payload
+bit `0x20` select subchannel 1 of the requested base channel and issue its tune
+under the auxiliary lock. AP suppresses incoming changes for any nonzero
+ignore-once value; DEV suppresses only positive values. This difference and the
+common auxiliary path are preserved.
+
+Outgoing callbacks post an immediate successful worker completion only when the
+monitor's pending bit is clear. Its selector follows the original role/mode/flag
+rules. This can occur after ignored role-specific work and does not by itself
+prove a physical retune. The native payload clears the original unwritten
+padding/error bytes. Pending monitor completion must be produced by the monitor
+path, which remains unintegrated.
+
+Fresh comparison covers 5,728 cases: 3,668 handled requests and 2,060 invalid
+length/header cases that the original silently ignores and native code rejects
+with `-22`. Cases cover all payload flag bytes, both roles, modes 0–3, assigned
+and unassigned slots, pending monitors, ignore-once signs, auxiliary search,
+channel boundaries, matching/different bands and monitor-deadline wrap. The
+original callback, cross-band preparation, band lookup and hold-mask writer
+execute. All 593 executed instruction locations are checked against the matched
+original payload/container/analysis ELF bytes. Comparison includes untouched
+link-object bytes and state visible at every intercepted operation.
+
+Ordered effects include 7,570 tune calls, 188 RF field writes, 1,028 notifications,
+806 completion posts and 7,336 paired lock/unlock calls. Actual tuning, register
+access, notification delivery, worker scheduling and time/logging are intercepted;
+errors returned by tune/notify/post callbacks are intentionally exercised.
+Unsafe cross-band catalog accesses are excluded and rejected before effects by
+native validation. This does not establish RF channel-change timing or parity on
+other physical boards/roles.
+
+The dedicated sanitizer suite passes. A fresh 20-second direct HDMI-to-USB capture
+rechecks the unchanged accepted image: the same stock-reference dark camera
+scene, 23 linked/AP-time samples and zero sampled socket drops. No fresh stock or
+controlled freshness/latency test was performed. Channel resolution/MMIO tuning,
+PHY command transport, monitor completion and runtime integration remain open;
+the normal backend catalog/work-list workflow is still unsupported.
+
 Next, extend the core inventory through the transport dispatchers and indirect
 callbacks, and bind each command's behavior to its comparison tests. Then cover
 radio messages, timers and state transitions in the same way. Dynamic power still
