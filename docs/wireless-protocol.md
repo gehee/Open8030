@@ -357,7 +357,8 @@ the current TTL before decrementing it; a later tick at zero invokes its local
 callback and clears the command. TTL 31 persists until cancellation. A compared
 helper covers that sender, cancellation and receive-timer dispatch, including
 retained payload tails and mode-3 checksum handling. Receive-timer dispatch is
-now integrated; the sender and runtime channel-policy path remain separate work. See
+integrated, and normal mode-0 MCS requests use shared enqueue/TX/cancellation.
+The runtime channel-policy path and broader outgoing callbacks remain open. See
 [transport coverage and boundaries](parity.md#pending-phy-command-transport).
 
 The receive helper now handles normal mode-0 validation, caching and timer

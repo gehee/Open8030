@@ -2,12 +2,12 @@
   "baseline": "working-video",
   "target": "VRX/GND Ascent VRX; matched 18.21.10 inputs",
   "runtime": {
-    "bytes": 68448,
-    "sha256": "60367a08f54f8bc3cf94aeaa75e5885c8adba78e8e967b46b213c8a5ee5904fb",
+    "bytes": 69464,
+    "sha256": "b69a2b28f39f2d3319a4ffcf38a446de659e15020933059c5a249ea3b98e195e",
     "load_address": "0x204000"
   },
   "ram": {
-    "used_bytes": 672384,
+    "used_bytes": 673408,
     "capacity_bytes": 704512
   },
   "private_board_profile": {
@@ -19,20 +19,20 @@
     "sha256": "c69e46c57bbb3e5fc7fe0c5581e59fb5735dcf8a97bf0e05ae7aaa0273657768"
   },
   "container": {
-    "bytes": 86528,
-    "sha256": "d1a17312775bdb85c0ce7fb9a603c4abbb7c3da06fedbe24497595493926961b",
+    "bytes": 87552,
+    "sha256": "0daa4d2fcfcba4713b4ecbe0ff8552f95c36469d1a04d7bf11218ec712d890a7",
     "payload_alignment": 512
   },
   "original_stock_sha256": "dc58247910af564376350404383c5c411cbec21663873fba24e70c61a3584e3c",
   "external_config_sha256": "5cf0cd31645d4786c6b04399c6c609386d427ffc4c6d7f6e42d81e3e770c2a74",
   "scope": "Experimental Ascent VRX 18.21.10 native video baseline; private inputs not distributed",
   "generated_container": {
-    "bytes": 86528,
-    "sha256": "d1a17312775bdb85c0ce7fb9a603c4abbb7c3da06fedbe24497595493926961b",
+    "bytes": 87552,
+    "sha256": "0daa4d2fcfcba4713b4ecbe0ff8552f95c36469d1a04d7bf11218ec712d890a7",
     "payload_alignment": 512,
     "configuration": "zero-filled 16 KiB; external loader JSON required",
     "hardware_verified": true,
-    "verification_scope": "Ascent VRX 18.21.10: compared normal mode0 PHY receive/cache and timer expiry integrated; startup, stop/start and deinit/init/start; 60 seconds inspected direct HDMI-to-USB capture matching fresh stock dark scene, 69 linked/AP-time samples and zero sampled socket drops. Mode3, synthesized admission, PHY sender/channel-policy integration, broader callbacks and full protocol parity remain open",
+    "verification_scope": "Ascent VRX 18.21.10: compared shared PHY enqueue/tick/cancel integrated with normal mode0 MCS requests; startup, stop/start and deinit/init/start; 60 seconds inspected direct HDMI-to-USB capture matching fresh stock dark scene, 69 linked/AP-time samples and zero sampled socket drops. Each session exercised MCS advertisements, cancellation and control-register writes. Channel-policy producers, broader outgoing callbacks, other modes and full protocol parity remain open",
     "verified_utc_date": "2026-10-15"
   }
 }

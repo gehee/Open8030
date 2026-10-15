@@ -870,6 +870,39 @@ static void dev_tx_finish_segments(void)
 	field(0xd401808, 255); field(0xd401808, 0);
 }
 
+static void phy_write(const uint8_t packet[7], void *context)
+{
+	(void)context;
+	uint8_t padded[8] = {0}; memcpy(padded,packet,7);
+	mcs_info.fch_words[0] = le32(padded); mcs_info.fch_words[1] = le32(padded+4);
+	write32(BB+0xb8c,mcs_info.fch_words[0]); write32(BB+0xb90,mcs_info.fch_words[1]);
+	barrier(); mcs_info.fch_writes++;
+}
+static void phy_dispatch(unsigned outgoing, unsigned command, uint8_t *payload,
+	size_t length, void *context)
+{
+	if (!outgoing) { sync_dispatch(command,payload,length,context); return; }
+	/* MCS requests use TTL31 and are cancelled on observation; no local
+	 * completion is dispatched. Channel-policy callback integration is pending. */
+	sync_info.unsupported++;
+}
+static const struct ar_phy_control_ops phy_ops = {
+	sync_control_lock,sync_control_lock,sync_field,phy_write,phy_dispatch,sync_unused_idle
+};
+static void phy_configure(void)
+{
+	phy_control.role = 1; phy_control.mode = dev_config.mode;
+	phy_control.wake = mcs_sync_mmio; phy_control.callbacks = 0x17e;
+	phy_control.frame_us = receiver.search_frame_us;
+}
+static struct ar_dev_mcs *dev_mcs_context(void)
+{
+	/* The pure MCS policy consumes a snapshot and produces an intent. The
+	 * shared transport owns the pending command, including non-MCS requests.
+	 * Polling serializes snapshot, policy evaluation and intent application. */
+	memcpy(dev_mcs.fch,phy_control.tx,7);
+	return &dev_mcs;
+}
 static void dev_mcs_apply(unsigned action)
 {
 	if (action & AR_DEV_MCS_RESET_RX) {
@@ -879,16 +912,16 @@ static void dev_mcs_apply(unsigned action)
 		if (wait_bits(BB + 0xfa8, 0x100, 0x100, 2000)) { mcs_info.reset_errors++; }
 		field(0x80c0201, 0); field(0x8000101, 0); mcs_info.rx_resets++;
 	}
-	if (mcs_sync_mmio && (action & AR_DEV_MCS_SYNC_ON)) { field(0xd301008, 255); }
-	if (mcs_sync_mmio && (action & AR_DEV_MCS_SYNC_OFF)) { field(0xd301008, 0); }
-	if (action & AR_DEV_MCS_WRITE_FCH) {
-		uint8_t sync[8] = {0};
-		memcpy(sync, dev_mcs.fch, 7); sync[0] = ar_rf_control_checksum(sync);
-		dev_mcs.fch[0] = sync[0];
-		mcs_info.fch_words[0] = le32(sync); mcs_info.fch_words[1] = le32(sync + 4);
-		write32(BB + 0xb8c, mcs_info.fch_words[0]); write32(BB + 0xb90, mcs_info.fch_words[1]);
-		barrier(); mcs_info.fch_writes++;
+	phy_configure();
+	if (action & AR_DEV_MCS_SYNC_ON) {
+		/* Preencode checked the authoritative slot through dev_mcs_context.
+		 * Enqueue wakes synchronization but does not write the FCH registers. */
+		(void)ar_phy_control_enqueue(&phy_control,3,31,dev_mcs.fch+3,2,&phy_ops,NULL);
 	}
+	if (action & AR_DEV_MCS_SYNC_OFF) {
+		(void)ar_phy_control_cancel(&phy_control,&phy_ops,NULL);
+	}
+	memcpy(dev_mcs.fch,phy_control.tx,7);
 	if (action & AR_DEV_MCS_APPLY_BUFFER) {
 		/* PHY106 -> 222c0a; mode0 logical RX8 maps to physical buffer0. */
 		field(0xbf00002, 1); field(0xd081001, 0); mcs_info.buffer_applies++;
@@ -947,7 +980,7 @@ static void dev_measure_eop(uint32_t status)
 	if (!phy.samples) { memcpy(phy.first_sample, phy.sample, sizeof phy.sample); }
 	phy.samples++;
 	if (receive_operation >= 67) {
-		dev_mcs_apply(ar_dev_mcs_sample(&dev_mcs, (uint32_t)(sample_ticks / 40000), phy.raw_snr, errors));
+		dev_mcs_apply(ar_dev_mcs_sample(dev_mcs_context(), (uint32_t)(sample_ticks / 40000), phy.raw_snr, errors));
 		if (!mcs_info.first_request_ms && dev_mcs.requests) { mcs_info.first_request_ms = dev_mcs.request_ms; }
 	}
 }
@@ -966,7 +999,7 @@ static void dev_invalidate(void)
 	if (automatic_recovery()) {
 		recovery.invalidations++; request_recovery(2); return;
 	}
-	if (receive_operation >= 67) { dev_mcs_apply(ar_dev_mcs_connect(&dev_mcs, 0)); }
+	if (receive_operation >= 67) { dev_mcs_apply(ar_dev_mcs_connect(dev_mcs_context(), 0)); }
 	field(0x8000201, 1); field(0xcf41501, 0);
 	link_event(0, receiver.dev_state);
 	dev_active = 0; receiver.dev_state = 0; receiver.assigned_slot = 8;
@@ -1128,7 +1161,7 @@ static void dev_observe_lock(const struct ar_dev_control *control)
 	field(0xb4c0305, 1); field(0xcf41501, 1);
 	link_event(2, receiver.dev_state);
 	receiver.dev_state = 2; receiver.connected_elapsed_us = elapsed;
-	if (receive_operation >= 67) { dev_mcs_apply(ar_dev_mcs_connect(&dev_mcs, 1)); }
+	if (receive_operation >= 67) { dev_mcs_apply(ar_dev_mcs_connect(dev_mcs_context(), 1)); }
 }
 
 static void dev_preencode(void)
@@ -1143,7 +1176,7 @@ static void dev_preencode(void)
 	}
 	(void)ar_dev_tx_retire(&dev_tx, 1);
 	if (receive_operation >= 67) {
-		dev_mcs_apply(ar_dev_mcs_preencode(&dev_mcs,
+		dev_mcs_apply(ar_dev_mcs_preencode(dev_mcs_context(),
 			elapsed_ms(), receiver.assigned_slot));
 	}
 	struct ar_dev_report report = {.state = receiver.dev_state, .assigned_slot = receiver.assigned_slot,
@@ -1616,6 +1649,8 @@ static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t 
 	memset(&phy_trace, 0, sizeof phy_trace); phy_poll_tick = 0;
 	memset(&sync_info, 0, sizeof sync_info);
 	memset(phy_control.rx,0,sizeof phy_control.rx);
+	memset(phy_control.tx,0,sizeof phy_control.tx);
+	phy_control.tx[0] = ar_phy_control_checksum(phy_control.tx); phy_control.ticks = 0;
 	memset(&traffic_info, 0, sizeof traffic_info); traffic_info.version = 1;
 	memset(&tx_mcs_info, 0, sizeof tx_mcs_info); tx_mcs_info.current = 1;
 	memset(&mcs_info, 0, sizeof mcs_info); mcs_info.first_observed_mcs = 25;
@@ -1997,7 +2032,8 @@ void ar_rf_poll(void)
 				}
 				receiver.interleaver_b4c_after = read32(BB + 0xb4c);
 				if (receive_operation >= 67 && dev_active && user != 8) {
-					dev_mcs_apply(ar_dev_mcs_interleaver(&dev_mcs));
+					phy_configure();
+					(void)ar_phy_control_tick(&phy_control,timer_ticks()/40000,&phy_ops,NULL);
 				}
 				if (receive_operation >= 61 && dev_active && user == 0) {
 					uint8_t first = (request >> 20) & 15;
@@ -2175,7 +2211,7 @@ void ar_rf_poll(void)
 						if (mcs < 25) {
 							mcs_info.observed_counts[mcs]++;
 							if (mcs_info.first_observed_mcs == 25) { mcs_info.first_observed_mcs = mcs; }
-							dev_mcs_apply(ar_dev_mcs_observe(&dev_mcs, mcs));
+							dev_mcs_apply(ar_dev_mcs_observe(dev_mcs_context(), mcs));
 						} else { mcs_info.unknown_headers++; }
 					}
 					/* Operation65 tests the same effects after native login,
@@ -2390,7 +2426,7 @@ int ar_rf_stop_host(void)
 		if (result) { lifecycle.last_error = (uint32_t)result; return failure(result); }
 		lifecycle.cancelled_tx += dev_tx.owned;
 		ar_dev_tx_init(&dev_tx); receiver.tx_owned = 0;
-		if (receive_operation >= 67) { dev_mcs_apply(ar_dev_mcs_connect(&dev_mcs, 0)); }
+		if (receive_operation >= 67) { dev_mcs_apply(ar_dev_mcs_connect(dev_mcs_context(), 0)); }
 		receiver.dev_state = 0; receiver.assigned_slot = 8; receiver.acquisition_ready = 0;
 		field(0xcf41501, 0); receiver.sync_ack_pending = 0;
 		lifecycle.stops++;

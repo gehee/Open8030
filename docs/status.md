@@ -248,6 +248,21 @@ AP-time validity before fresh reception restores it. The new image is retained
 in RAM. This does not establish controlled freshness, latency, mode-3 operation
 or hardware execution of every command/cache boundary.
 
+Normal mode-0 MCS sender requests now use the shared PHY transport for enqueue,
+interleaver transmission and cancellation. The MCS policy reads a snapshot of
+the authoritative pending slot before each decision. All 17,912 original transport
+trace comparisons still pass, as do RF integration, MCS policy and transport
+sanitizer suites. Channel-policy producers and broader outgoing callbacks remain
+open. See [shared PHY sender](parity.md#shared-phy-sender-integration).
+
+Hardware startup, stop/start and stop/deinit/init/start captures total 60 seconds,
+with 69 linked/AP-time samples and zero sampled socket drops. All inspected
+frames show the dark textured scene from a fresh stock HDMI-to-USB reference.
+Each candidate session records six MCS requests/acknowledgements, five
+advertisements/cancellations and 25 control-register writes, with no reset
+errors. Calibration survives both lifecycle sequences. The image is retained in
+RAM; controlled freshness, latency and multi-producer behavior remain unverified.
+
 A separate configuration-only test reproduced acquisition failure at initial
 power level 11 using the accepted AP-time image. No video was delivered;
 restoring the original level-25 configuration restored the stream. This failure

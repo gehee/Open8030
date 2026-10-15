@@ -975,8 +975,8 @@ open; the three host catalog commands remain unsupported.
 ### Pending PHY command transport
 
 [The PHY control helper](../src/phy_control.c) implements the original single-slot
-enqueue, periodic transmitter, cancellation and receive-timer callback. Its receive-timer entry is now integrated as described below; enqueue, periodic
-transmit and cancellation remain outside runtime use. Command callback effects
+enqueue, periodic transmitter, cancellation and receive-timer callback. Its receive-timer entry and normal mode-0 MCS sender use are now integrated
+as described below. Broader command callback effects
 in `rf_device.c` remain restricted.
 
 Enqueue locks the control state and returns `-1` when its command nibble is busy.
@@ -1029,8 +1029,8 @@ The dedicated sanitizer suite passes. A fresh 20-second HDMI-to-USB capture
 rechecks the unchanged accepted image: the reference dark camera scene, 23
 linked/AP-time samples and zero sampled socket drops. The accepted image remains
 in RAM. No fresh stock capture or controlled freshness/latency measurement was
-performed. The new transport helpers still need receive-path, callback, worker
-and runtime integration before they can support normal channel-policy traffic.
+performed. Broader channel-policy traffic still needs callback and worker integration,
+plus runtime validation beyond the MCS producer described below.
 
 ### PHY control receive and cache replacement
 
@@ -1114,6 +1114,43 @@ registers remain stable across both lifecycle sequences, and deinit/init clears
 AP-time validity before fresh reception restores it. The new image is retained
 in RAM. This does not establish controlled freshness, latency, mode-3 operation
 or hardware execution of every command/cache boundary.
+
+### Shared PHY sender integration
+
+Normal mode-0 MCS requests now use the compared pending-command transport.
+Before a policy decision, the MCS helper receives a snapshot of the shared TX
+slot. Its enqueue/cancel intent is then applied through the transport helper,
+which owns the command bytes, checksum, wake field and packet writes. The MCS
+snapshot is refreshed after intent application. There is no independent pending
+MCS packet competing with the shared slot.
+
+Enqueue requests command 3 with TTL 31 and a two-byte slot/MCS payload. It wakes
+synchronization without writing the FCH registers. Source-18 interleaver handling
+calls the transport tick; its packet callback writes the zero-padded seven-byte
+control packet to B8C/B90. A matching MCS observation or retry-phase cancellation
+clears the shared command through the compared cancel routine, preserving TTL,
+length and payload tail while recomputing the checksum. Configuration rebuild
+resets TX/RX caches while preserving the separately scoped AP-time lifetime.
+
+Replay of the earlier original traces passes 6,400 enqueue, 6,200 tick, 192
+cancellation and 5,120 receive-timer cases. It reuses recorded original execution.
+RF integration, MCS policy and PHY transport sanitizer suites pass. The RF suite
+checks that preencode enqueue precedes the first register write, validates both
+written words, and verifies acknowledgement-driven cancellation and wake clearing.
+
+Hardware startup, stop/start and stop/deinit/init/start captures total 60 seconds,
+with 69 linked/AP-time samples and zero sampled socket drops. All inspected
+frames show the dark textured scene from a fresh stock HDMI-to-USB reference.
+Each candidate session records six MCS requests/acknowledgements, five
+advertisements/cancellations and 25 control-register writes, with no reset
+errors. Calibration survives both lifecycle sequences. The image is retained in
+RAM; controlled freshness, latency and multi-producer behavior remain unverified.
+
+The runtime's active sender producer remains the MCS policy. Channel workers,
+finite-TTL outgoing command callbacks, AP time broadcasts and mode-3 idle packet
+construction still need integration and hardware validation. Timer/IRQ cadence,
+RF acknowledgement timing and competition between actual policy producers are
+not established by the isolated helper comparisons.
 
 Next, extend the core inventory through the transport dispatchers and indirect
 callbacks, and bind each command's behavior to its comparison tests. Then cover
