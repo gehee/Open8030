@@ -410,6 +410,38 @@ an increase. Equal values require no change. Decreases are recorded but not
 applied: the required interleaver-drain and buffer-ownership transition is not
 implemented. This is a material limit on adaptive-link parity.
 
+## Hardware command preparation
+
+Radio commands execute through a hardware command sequence, separately from
+host requests and seven-byte PHY messages. The supported DEV frame contains
+broadcast receive, a special-user interval and local transmit, each preceded
+by preparation. The original firmware keeps software metadata for that sequence:
+raw user, command mode, bandwidth, frequency, calibration bank and a buffer flag.
+
+The original preparation routine uses a cursor into this metadata. On a prepare
+notification it advances the cursor, checks the raw user and, when necessary,
+searches using the original user/mode matching rules. A selected entry supplies
+the logical user, direction and frequency to the board callback. Missing or
+misaligned metadata can therefore prevent later preparation effects; a local
+TX-completion counter alone cannot establish correct preparation or peer reception.
+
+For selected TX metadata, the routine compares its calibration bank with the
+cached bank. A change loads five calibration bytes. An initial cache value of 3
+also enables compensation and initializes two associated fields. Reusing the
+same bank skips those writes. The board callback separately caches its frequency
+subrange; at 5,770 MHz it programs six RF controls when that subrange changes.
+Additional preparation effects include conditional buffer-control writes and
+look-ahead bandwidth programming. Calibration selection, board switching and
+TX-buffer ownership are distinct parts of this process.
+
+Open8030 currently implements the fixed frame, the observed 5–6 GHz TX controls
+and a single calibrated context. It does not yet implement the original metadata
+cursor and all preparation transitions. In particular, matching gain registers
+does not establish equivalent command ordering or calibration lifetime. The
+[parity checklist](parity.md#command-preparation-contract-investigation) records
+the original-instruction evidence and its limits. The low-power acquisition
+failure remains unresolved.
+
 ## Timing, retransmission and recovery
 
 Channel search follows the configured frequency list. For frame duration `F` in

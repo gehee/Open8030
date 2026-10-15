@@ -73,6 +73,7 @@ and scenario; they must be repeated after relevant changes.
 | AP full/compact controls | Selected mode-0/slot-0 admission and connected control | All extensions, remote synchronization effects, changed channels, slots, stale/duplicate controls and unsupported modes. |
 | Internal port-0 commands | Stream parsing; login checksum ACK transmission | Receiving a command currently mainly records it. Inventory and implement each original command's effects, responses and retries. |
 | PHY commands | See command table below | Exact callbacks, TTL/replacement ordering and side effects for every command. |
+| Hardware command preparation | Fixed frame and selected TX preparation effects | Original command-ring selection, per-direction board callbacks, calibration-bank/cache transitions, look-ahead programming and buffer-ownership effects. The original routine has an offline contract trace; the native handler does not yet implement that complete contract. |
 | MCS adaptation | RX adaptation and limited TX increase | TX decrease/interleaver drain, all PHY keys, retry/expiry, loss interactions and sustained adaptation. |
 | Power and calibration | Initial user-0 setup at level 25 | Level 11 also fails acquisition in the accepted image with only its loader setting changed. Resolve the low-power transmit path, then normal backend power writes, all users, peer policy and calibration effects. |
 | Channel/band selection | Configured search and matched channel | Independent uplink changes, subchannels, hopping, scan scoring, automatic policies, rollback and cross-band operation. |
@@ -275,6 +276,37 @@ This reproduces failure without the shelved dynamic-power implementation. It
 narrows the problem to existing low-power acquisition behavior; it does not identify
 the defective RF setting, prove emitted power or validate the dynamic setter.
 The temporary configuration was discarded. The retained baseline still uses 25.
+
+### Command-preparation contract investigation
+
+The original preparation handler and its board callback were executed in 3,840
+synthetic cases, covering prepare modes 0/3, five raw-user inputs, empty and
+nonempty command rings, cursor positions, four cached calibration states,
+board-cache reuse and the post-callback bypass flag. All 301 executed instruction
+locations are bound to the matched original payload, container and analysis ELF.
+A separate contract
+model matches the selected cursor, callback arguments, ordered write arguments
+and resulting caches. **This is original-behavior evidence, not a comparison
+with the current native handler.**
+
+The cases establish that preparation depends on the selected command metadata,
+not just a raw-user number or configured power level. For the tested rings,
+only TX metadata causes calibration-bank changes. Reusing the cached bank skips
+those writes; starting with cache value 3 also enables compensation. The board
+callback runs before the bypass flag suppresses later preparation work. The
+mode-dependent buffer-control writes are another effect missing from the current
+native preparation path. See [command preparation](wireless-protocol.md#hardware-command-preparation).
+
+Register writes are recorded at intercepted helpers; actual peripherals, IRQ
+timing and emitted RF are not emulated. Calibration bytes and ring contents are
+synthetic. Other IRQ modes, scan callbacks and the board's PA-sleep branch remain
+outside this trace. These results neither locate the low-power fault nor justify
+changing individual registers from a stock snapshot.
+
+No firmware candidate was loaded for this investigation. A direct 10-second
+HDMI-to-USB capture of the retained register-read image still shows the dark
+camera scene, with 13 linked samples, valid AP time and zero sampled socket
+drops. Lighting, controlled freshness and clear-scene quality remain unverified.
 
 Next, extend the core inventory through the transport dispatchers and indirect
 callbacks, and bind each command's behavior to its comparison tests. Then cover
