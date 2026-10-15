@@ -105,6 +105,7 @@ are implementation limits, not CLI tuning parameters.
 | `bootstrap/`, `boards/`, `soc/` | Bootstrap, memory layout and CPU/platform setup |
 | `src/command.c` | Command expansion, register-field writes, retained metadata and first-match profile updates |
 | `src/catalog.c` | Offline-tested channel-catalog serialization and work-list decisions; pending runtime integration |
+| `src/channel_work.c` | Offline-tested backup ranking, channel-request staging and auxiliary-scan reset; pending runtime integration |
 | `src/scan.c`, `scan_scores.c` | Independent measurement tuning and base-channel averaging; full automatic selection remains unintegrated |
 | `src/main.c`, `frame.c`, `dispatch.c` | Polling loop, framing, request dispatch and diagnostics |
 | `src/sdio_device.c` | Host transport and bounded SDIO queues |

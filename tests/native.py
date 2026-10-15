@@ -12,6 +12,7 @@ TESTS = {
     'scan': ('scan', [], []),
     'scan_scores': ('scan_scores', [], []),
     'catalog': ('catalog scan', [], []),
+    'channel_work': ('channel_work', [], []),
     'socket_rx': ('socket_rx', [], []),
     'sdio_device': ('sdio_device', ['AR_SDIO_SIMULATED', 'AR_SDIO_STOCK_MEMORY_ATTRIBUTES=1'], []),
     'mac': ('mac', [], []),

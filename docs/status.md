@@ -148,6 +148,17 @@ camera scene matches fresh stock, and the candidate remains running in RAM.
 The work-list commands, differing active catalog and excluded/ambiguous polling
 events still prevent full scan parity. See [score processing](parity.md#base-channel-score-processing).
 
+The work-list dependencies now have source-only helpers for backup-channel
+ranking, queued channel requests and auxiliary-scan reset. They match 2,532
+original-instruction cases, including queue failures and reset write ordering.
+The dedicated native suite passes with address/undefined-behavior sanitizers.
+These helpers are not included in the runtime build: channel-policy dispatch,
+queue consumption, hopping messages and the complete backend workflow remain
+open. A fresh 20-second HDMI-to-USB capture of the unchanged retained image shows
+the same dark textured scene, with 23 linked/AP-time samples and zero sampled
+socket drops. This is a baseline video recheck, not hardware validation of the
+new helpers. See [work-list helper contracts](parity.md#work-list-helper-contracts).
+
 A separate configuration-only test reproduced acquisition failure at initial
 power level 11 using the accepted AP-time image. No video was delivered;
 restoring the original level-25 configuration restored the stream. This failure

@@ -629,6 +629,53 @@ subsequently advance again. The candidate was retained in RAM after inspection.
 This does not establish controlled scene freshness, measured latency or full
 scan/selection parity.
 
+### Work-list helper contracts
+
+[Channel-work helpers](../src/channel_work.c) implement three dependencies of
+the catalog work-list setter. They are source-only and are not yet included in
+the firmware build or host dispatcher.
+
+- Backup selection ranks up to four enabled channels in a requested group,
+  using the **signed low 16 bits** of each processed score. Equal scores retain
+  catalog order. Group 3 is a wildcard. When nothing qualifies, the original
+  returns the current channel, even if it is disabled or in another group.
+- A channel request updates pending state before posting destination 1/message
+  `0x108`. Selector 1 records a 16-bit pending channel; other selectors record
+  its low byte as the broadcast channel. Posting success sets an additional
+  flag; failure preserves the pending state. This stages a request, not an
+  immediate retune or proof of a completed channel change. The native payload
+  zeroes two padding bytes that the original leaves unwritten.
+- Auxiliary-scan reset clears six group counters and 128 channel counters,
+  writes RF field `0x08080f01 = 1` **twice**, then resets six winners, the selected
+  group marker, a state flag, 128 opaque 14-byte records and 128 marks. This is
+  separate from the ten-sample noise-score histories. The record producers and
+  consumers have not been fully compared; their byte layout is not a decoded
+  protocol declaration.
+
+Fresh original-instruction comparison covers 1,440 ranking cases, 1,084 request
+cases and eight reset cases, including repeated reset. It checks both catalog
+banks, empty eligible sets, count boundaries through 128, signed truncation,
+stable ties, all 256 request-flag values, selector/channel boundaries, successful
+and failed queue posts, and state visible during both reset writes. All 267
+executed instruction locations are bound to the matched original payload,
+container and analysis ELF bytes. Reset comparison also checks the surrounding
+original bytes remain unchanged.
+
+Memory fill/move, time/division/logging, queue posting and RF field writes are
+intercepted. The comparison validates the queue arguments and ordered field
+operations, not the queue consumer, register writer or physical channel change.
+Native validation additionally rejects unsafe pointers, counts and current
+indices before mutation. The dedicated sanitizer suite passes. A fresh
+20-second direct HDMI-to-USB capture of the unchanged accepted image shows the
+stock-matching dark scene, with 23 linked/AP-time samples and zero sampled socket
+drops. No fresh stock capture or controlled scene-freshness test was performed
+for this source-only iteration.
+
+The policy wrapper, hopping/backup-message exchange, queued channel-change
+consumer and runtime ownership of auxiliary state remain open. In particular,
+these helpers do not make the catalog getter/work-list setter workflow supported;
+all three host commands remain marked unsupported in the command inventory.
+
 Next, extend the core inventory through the transport dispatchers and indirect
 callbacks, and bind each command's behavior to its comparison tests. Then cover
 radio messages, timers and state transitions in the same way. Dynamic power still
