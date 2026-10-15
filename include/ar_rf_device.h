@@ -86,6 +86,11 @@ struct ar_rf_tx_mcs_info {
 	uint32_t mode_changed, pending, drained, busy_requests;
 };
 const struct ar_rf_tx_mcs_info *ar_rf_tx_mcs_information(void);
+struct ar_rf_tx_history_info {
+	uint32_t samples, last_user, other_users, eligible;
+	uint32_t history, bookkeeping, mcs, previous_mcs;
+};
+const struct ar_rf_tx_history_info *ar_rf_tx_history_information(void);
 struct ar_rf_phy_info {
 	uint32_t samples, duplicates, other_users, forced_errors, sample_elapsed_us;
 	uint32_t last_fbc, last_fch, raw_errors, raw_snr, raw_gain[2], raw_offset[2], raw_aux;

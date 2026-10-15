@@ -221,6 +221,12 @@ static void receive(const struct ar_frame *frame, void *context)
 		size_t size = ar_encode(reply, sizeof reply, &response);
 		(void)ar_sdio_send(reply, size); return;
 	}
+	if (diagnostic_reqid == AR_REQ_RF_TX_HISTORY_INFO && !frame->status && !frame->length) {
+		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid,
+			.payload = (const uint8_t *)ar_rf_tx_history_information(), .length = sizeof(struct ar_rf_tx_history_info)};
+		size_t size = ar_encode(reply, sizeof reply, &response);
+		(void)ar_sdio_send(reply, size); return;
+	}
 	if (diagnostic_reqid == AR_REQ_RF_PHY_TRACE && !frame->status && !frame->length) {
 		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid,
 			.payload = (const uint8_t *)ar_rf_phy_trace_information(), .length = sizeof(struct ar_rf_phy_trace)};

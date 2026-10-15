@@ -440,6 +440,21 @@ decrease was observed**. The image remains running in RAM. Hardware decrease
 testing, full retained-buffer ownership, retries/history and broader keys remain
 open. See [runtime TX MCS coverage](parity.md#runtime-tx-mcs-drain-integration).
 
+Stage 201 integrates user-0 pre-encode attempt history. Five sanitizer suites,
+18 Python tests, 4,884 IRQ trace replays and 270 fresh composed original
+request/interleaver/pre-encode/TX-end sequences pass. Hardware now exercises the
+decrease path: startup, restart and candidate readmission record one, one and
+three completed decreases respectively, with corresponding history updates.
+Restart/readmission samples observe MCS 2 → 1 → 2 and matching register changes.
+History and counters reset when the radio context is rebuilt.
+
+Startup, post-drain, restart, reinitialization and readmission captures total
+110 seconds and 125 linked samples with zero sampled socket drops. Inspected
+frames retain the stock-matching camera scene. The candidate remains running in
+RAM. These observations do not establish exact interrupt timing, peer reception,
+sustained adaptation under controlled loss or full retained-buffer ownership.
+See [attempt-history coverage](parity.md#runtime-tx-attempt-history).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host

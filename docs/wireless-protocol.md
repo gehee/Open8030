@@ -430,9 +430,16 @@ is ignored while a decrease is pending. A decrease waits for six user-0
 interleaver events and applies on the seventh, then publishes the MCS-change
 event. Other users do not advance this drain. This uses the compared original
 bookkeeping and register-application helpers, within the existing copy-mode TX
-path. Retained-buffer ownership, retry/history producers, special PHY keys and
+path. Retained-buffer ownership, retry policy, special PHY keys and
 sustained adaptation under loss remain unintegrated or unverified. See the
 [runtime TX MCS validation limits](parity.md#runtime-tx-mcs-drain-integration).
+
+During a pending decrease, user-0 pre-encode attempts also update the compared
+history mask. An attempt can be recorded even if packet construction subsequently
+fails; the mask is not a peer acknowledgement or completion count. Paired bank
+bits are used when interleave mode is exactly 1. The initialized retry limit
+remains zero, so this integration does not enable a new retry-failure policy.
+See [attempt-history coverage](parity.md#runtime-tx-attempt-history).
 
 ## Hardware command preparation
 

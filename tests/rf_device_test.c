@@ -1315,6 +1315,17 @@ int main(void)
 		request[4] = 0xc1; receive_sync(request, 1); assert(txm->downgrades == 1 && txm->current == 2);
 		assert(*reg(0x0a110b00) == applied);
 		txm = ar_rf_tx_mcs_information(); assert(txm->pending == 0x10601);
+		assert(sizeof(struct ar_rf_tx_history_info) == 32);
+		const struct ar_rf_tx_history_info *history = ar_rf_tx_history_information();
+		assert(!history->history && !history->eligible);
+		uint32_t saved_budget = *reg(0x0a110f5c), saved_request = *reg(0x0a110f58);
+		/* History is an attempt, even when zero budget prevents submission. */
+		*reg(0x0a110f5c) = 0; *reg(0x0a110f70) = 0;
+		unsigned packets_before = ar_rf_receive_information()->tx_packets;
+		unsigned samples_before = history->samples;
+		*reg(0xe080117c) |= 1; ar_rf_poll();
+		assert(ar_rf_tx_history_information()->samples == samples_before + 1);
+		assert(!history->history && !history->eligible); /* Drain has not started. */
 		request[4] = 0xc0; receive_sync(request,1);
 		assert(txm->busy_requests == 1 && ar_rf_tx_mcs_information()->pending == 0x10601);
 		*reg(0x0a110f68) = 8u << 4; *reg(0xe0801178) |= 1; ar_rf_poll();
@@ -1325,12 +1336,28 @@ int main(void)
 			*reg(0xe0801178) |= 1; ar_rf_poll();
 			assert(txm->current == 2 && !txm->drained);
 			assert(ar_rf_tx_mcs_information()->pending == (0x10001 | (5 - i) << 8));
+			*reg(0x0a110b00) = (*reg(0x0a110b00) & ~16u) | (i ? 16u : 0);
+			*reg(0x0a110f58) = i ? 1 : 0;
+			*reg(0xe080117c) |= 1; ar_rf_poll();
+			assert(ar_rf_tx_history_information()->history == (i ? 3u : 1u));
+			assert(history->eligible == i + 1 && ((history->bookkeeping >> 8) & 0xffff) == 1);
 		}
+		unsigned eligible = history->eligible;
+		*reg(0x0a110f70) = 15u << 12; *reg(0xe080117c) |= 1; ar_rf_poll();
+		assert(ar_rf_tx_history_information()->last_user == 15 && history->other_users == 1);
+		assert(history->eligible == eligible && history->history == 3);
+		*reg(0x0a110f70) = 0;
+		*reg(0x0a110b00) = (*reg(0x0a110b00) & ~16u) | (applied & 16u);
 		*reg(0x0a110f64) = 12u << 20;
 		*reg(0xe0801178) |= 1; ar_rf_poll();
 		assert(txm->current == 1 && txm->drained == 1 && txm->applied == 2);
 		assert(ar_rf_tx_mcs_information()->pending == 0x10000);
 		assert((*reg(0x0a110b00) & 0x3f700u) == 0x13000 && *reg(0x0a110a00) == duration);
+		*reg(0xe080117c) |= 1; ar_rf_poll();
+		assert(ar_rf_tx_history_information()->history == 3 && history->eligible == eligible);
+		assert(!(history->bookkeeping & 255) && history->mcs == 1 && history->previous_mcs == 2);
+		assert(ar_rf_receive_information()->tx_packets == packets_before);
+		*reg(0x0a110f5c) = saved_budget; *reg(0x0a110f58) = saved_request;
 	}
 	/* Compact CRC integrity and token continuity are separate gates. */
 	uint8_t compact_control[6] = {0,23,9,2,0,0};
@@ -1492,6 +1519,7 @@ int main(void)
 	assert(!ar_rf_sync_information()->accepted && !ar_rf_sync_information()->pending);
 	assert(!ar_rf_traffic_information()->commands[6].accepted && !ar_rf_traffic_information()->ports[0].bytes);
 	assert(!ar_rf_tx_mcs_information()->requests && ar_rf_tx_mcs_information()->current == 1);
+	assert(!ar_rf_tx_history_information()->samples && !ar_rf_tx_history_information()->history);
 	measurement_banks = 1;
 	*reg(0x0a110f00) = (9 << 9) | 0x80;
 	*reg(0xe0801168) |= 1; ar_rf_poll();

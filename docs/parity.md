@@ -74,7 +74,7 @@ and scenario; they must be repeated after relevant changes.
 | Internal port-0 commands | Stream parsing; login checksum ACK transmission | Receiving a command currently mainly records it. Inventory and implement each original command's effects, responses and retries. |
 | PHY commands | See command table below | Exact callbacks, TTL/replacement ordering and side effects for every command. |
 | Hardware command preparation | Command builder, metadata updates and preparation selection; fixed DEV frame, cached board/TX calibration and TX look-ahead | Independent sweep and base-channel score arithmetic are integrated; active-catalog policy, auxiliary scans, PA-sleep policy, retained-buffer ownership and actual interrupt ordering remain open. Helper comparisons do not establish the complete original handler. |
-| MCS adaptation | RX adaptation and normal-key user-0 TX increase/decrease drain integrated; interleaver, TX MCS callbacks and pre-encode history compared offline | Hardware decrease under peer control, queue delivery/ownership, all PHY keys, retry/expiry, loss interactions and sustained adaptation. |
+| MCS adaptation | RX adaptation, normal-key user-0 TX increase/decrease drain and attempt history integrated; peer-requested decrease observed on hardware | Broader decrease scenarios, queue delivery/ownership, all PHY keys, retry/expiry, loss interactions and sustained adaptation. |
 | Power and calibration | Initial user-0 setup at level 25; calibration writes, cache ordering and band-offset helpers compared offline | Level 11 also fails acquisition in the accepted image with only its loader setting changed. Resolve the low-power transmit path, then normal backend power writes, all users, peer policy and calibration effects. |
 | Channel/band selection | Configured link search, independent measurement sweep and base-channel averaging | Match the original active catalog and sampling cadence; integrate automatic selection, independent uplink changes, subchannels, hopping, rollback and cross-band operation. |
 | Time synchronization | DEV AP-time decoding/getter; original-instruction comparison and hardware startup/restart checks | Physical peer-loss/stale time, long-run hardware wrap and other roles/modes. |
@@ -195,7 +195,7 @@ commands. Equal command numbers across those layers have no implied relationship
 | 0 | Compared cache semantics; synthesized admission reports unsupported | Mode-3 reconfiguration/admission and broader local-position state |
 | 1 | Unsupported | Original callback and hardware effects |
 | 2 | Unsupported | Original callback and hardware effects |
-| 3 | Normal-key user-0 TX increase/decrease drain; outgoing RX-MCS request | Hardware decrease validation, full ownership, retry and timing/acknowledgement behavior |
+| 3 | Normal-key user-0 TX increase/decrease drain and attempt history; outgoing RX-MCS request | Broader hardware decrease scenarios, full ownership, retry and timing/acknowledgement behavior |
 | 4 | Unsupported at runtime; callback, transaction and monitor helpers compared offline | Integrate PHY transport, channel transition, confirmation and rollback; verify physical retuning and failure recovery |
 | 5 | Unsupported | Original callback and hardware effects |
 | 6 | Selected RX/TX identity fields | All user/state combinations and shared-field effects |
@@ -1929,3 +1929,77 @@ Its 90,624-byte container has SHA-256
 The standard build reproduces it; RAM usage is 676,976 of 704,512 bytes. The
 bootstrap and private board profile are unchanged. Full original-firmware
 coverage remains incomplete.
+
+### Runtime TX attempt history
+
+Stage 201 connects the compared pre-encode history step to normal user-0 TX.
+After capturing the packet request fields, the runtime samples the hardware user
+again and updates history for user 0 before packet construction. Active
+bookkeeping and a nonzero retry counter are required. The existing helper
+preserves byte subtraction, RV32 shift masking and paired bits for interleave
+mode exactly 1. A zero budget can prevent submission after history is recorded:
+this remains an **attempt history, not a completion or acknowledgement mask**.
+Other hardware users are counted and skipped by this runtime integration.
+
+Initialization continues to clear the retry limit. This stage does not supply a
+new retry-limit policy or establish that every original caller leaves it zero.
+The full pre-encode/TX-end queue handlers, timestamps, observers, retained-buffer
+ownership and other users remain separate integration work. A cooperative call
+before packet construction does not prove original IRQ/task scheduling parity.
+
+The new project-only read diagnostic `0x0c5a0028` (daemon alias `0x015a0028`)
+returns eight little-endian 32-bit words: sampled pre-encode events, last sampled
+user, other-user samples, eligible user-0 attempts, history mask, packed
+bookkeeping, target MCS and previous MCS. Packed bookkeeping is
+`active | retries << 8 | limit << 16 | drain << 24`. Eligibility counts calls
+that can set a bit, even if that bit was already set. This endpoint does not
+inject requests or change radio state. Context preparation resets these counters
+and history; stopping alone preserves the diagnostic snapshot.
+
+Five ASan/UBSan suites and 18 Python tests pass. The synthetic RF test records
+history during a pending decrease with zero packet budget, exercises both banks
+and other-user isolation, and confirms that application ends further history
+updates. It also checks reset on new preparation. The extracted helper preserves
+4,884 corrected original IRQ replay cases, including 216 deliberate differences
+in uninitialized payload suffix bytes. Unsafe table probes remain excluded as
+described in the earlier bounds audit.
+
+Fresh original execution compares **270 composed scenarios** across all ten
+bookkeeping users: a request followed by eight rounds of interleaver, pre-encode
+and TX-end handlers. The original application and retry-reset bodies execute.
+The cases cover increase/equal/decrease requests, seeded retry boundaries and
+limits, and alternating bank samples. All 592 executed instruction locations
+match the reference payload/container/analysis ELF. Ordered comparisons include
+3,080 field reads, 2,610 field writes, 8,940 direct word reads, 6,480 queue posts,
+6,480 observer calls and 30 retry events. Synthetic retry seeds do not establish
+runtime policy producers. Clock, diagnostics, field MMIO, queue/observer and event
+delivery endpoints are intercepted; no real packet ownership or RF delivery
+executes in this comparison. Synthetic ELF, ABI and partial ISA semantics remain
+analysis metadata.
+
+Hardware testing uses freshly rebooted stock and the same matched Ascent VRX
+18.21.10 inputs. Unlike stage 200, the peer requests decreases in this trial:
+startup records one completed drain and five eligible attempts; restart records
+one drain and three attempts; candidate readmission records three drains and
+thirteen attempts. All three sessions finish at TX MCS 2 with history mask 1.
+Restart/readmission samples directly observe MCS 2 → 1 → 2 and the corresponding
+TX coding/rate field changes. No requests are rejected in these snapshots.
+This provides hardware evidence of the normal-key decrease/history path, while
+exact six-event timing remains covered by original execution and synthetic tests.
+Neither local register changes nor history establish peer acknowledgement.
+
+Startup, a separate post-drain check, stop/start, deinit/init/start and candidate
+removal/readmission have **110 seconds of direct HDMI-to-USB capture**, with 125
+linked samples, advancing AP time and zero sampled socket drops. Device identity
+and MJPEG 1920×1080/nominal-30-fps settings are recorded privately. Inspected
+frames retain the same dark textured camera scene as stock. Calibration survives
+the transitions; restart and reinitialization clear history before new traffic.
+Controlled freshness/latency, physical peer silence, sustained loss/adaptation,
+low-power acquisition and full firmware parity remain unresolved.
+
+The retained runtime is 72,912 bytes, SHA-256
+`baad0d33a1a60b5417fbdf8e981af8fa4c2216af2d5dd950b78124c175110428`.
+Its 91,136-byte container has SHA-256
+`5a574f6b296eb8aa4eee3aaf09c258b97735727848822776dfdb560183db36c5`.
+The standard build reproduces it; RAM usage is 677,520 of 704,512 bytes.
+Bootstrap and private board-profile hashes are unchanged.

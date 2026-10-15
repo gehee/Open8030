@@ -27,7 +27,7 @@ test ! -e "$STAGE/restored"
 test ! -e "$STAGE/native-left-running"
 test ! -e "$STAGE/keep-running"
 
-test "$(sha256sum "$STAGE/candidate.img" | cut -d ' ' -f 1)" = ea5bc92ea9b44cd41e10221e3e94bb9c1fd77ce3edf7b8948b0df729bd7f469c
+test "$(sha256sum "$STAGE/candidate.img" | cut -d ' ' -f 1)" = 5a574f6b296eb8aa4eee3aaf09c258b97735727848822776dfdb560183db36c5
 test "$(sha256sum "$STAGE/bb_config_gnd.json" | cut -d ' ' -f 1)" = 5cf0cd31645d4786c6b04399c6c609386d427ffc4c6d7f6e42d81e3e770c2a74
 test "$(sha256sum /usrdata/fpv/boot_ar8030/bb_demo_gnd_3v3.img | cut -d ' ' -f 1)" = dc58247910af564376350404383c5c411cbec21663873fba24e70c61a3584e3c
 GND=$(pidof ar_ldy_gnd)

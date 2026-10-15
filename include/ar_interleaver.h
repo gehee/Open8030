@@ -2,8 +2,8 @@
 #ifndef AR_INTERLEAVER_H
 #define AR_INTERLEAVER_H
 #include <stdint.h>
-/* Source-only interleaver service. These are native analysis interfaces;
- * runtime ownership, callbacks and IRQ timing still require integration. */
+/* Native interleaver interfaces. The user-0 TX bookkeeping step is integrated;
+ * full service ownership, callbacks and IRQ timing still require integration. */
 #define AR_INTERLEAVER_USERS 10
 /* The original initializes ten 12-byte bookkeeping records. Hardware user
  * numbers beyond 9 do not establish additional software records; the next

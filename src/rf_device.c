@@ -17,6 +17,7 @@
 #include "ar_tune.h"
 #include "ar_power_control.h"
 #include "ar_tx_mcs.h"
+#include "ar_tx_irq.h"
 #include <string.h>
 #ifndef AR_RF_SIMULATED
 #include "ar_sdio_device.h"
@@ -127,9 +128,19 @@ const struct ar_rf_sync_info *ar_rf_sync_information(void) { return &sync_info; 
 static struct ar_rf_traffic_info traffic_info;
 const struct ar_rf_traffic_info *ar_rf_traffic_information(void) { return &traffic_info; }
 static struct ar_rf_tx_mcs_info tx_mcs_info;
-/* User-0 drain/application only. Retry limits and pre-encode history producers
- * are not integrated; initialization leaves the retry limit at zero. */
+/* User-0 drain/application and attempt history. Initialization leaves the retry
+ * limit at zero; no runtime retry-limit policy is established yet. */
 static struct ar_interleaver tx_interleaver;
+static struct ar_rf_tx_history_info tx_history_info;
+const struct ar_rf_tx_history_info *ar_rf_tx_history_information(void)
+{
+	const struct ar_interleaver_user *u = &tx_interleaver.users[0];
+	tx_history_info.history = u->history;
+	tx_history_info.bookkeeping = u->active | (uint32_t)u->retries << 8 |
+		(uint32_t)u->limit << 16 | (uint32_t)u->drain << 24;
+	tx_history_info.mcs = u->mcs; tx_history_info.previous_mcs = u->previous_mcs;
+	return &tx_history_info;
+}
 const struct ar_rf_tx_mcs_info *ar_rf_tx_mcs_information(void)
 {
 	const struct ar_interleaver_user *u = &tx_interleaver.users[0];
@@ -266,6 +277,7 @@ static void tx_mcs_event(unsigned event, const uint8_t payload[9], void *context
 	(void)context; publish_event(event,payload,9);
 }
 static const struct ar_tx_mcs_ops tx_mcs_ops = {tx_mcs_read,tx_mcs_word,tx_mcs_field,tx_mcs_event};
+static const struct ar_tx_irq_ops tx_history_ops = {.word=tx_mcs_word,.read=tx_mcs_read};
 static void tx_mcs_applied(unsigned mcs)
 {
 	tx_mcs_info.after = read32(BB + 0xb00);
@@ -1261,6 +1273,18 @@ static void dev_preencode(void)
 	receiver.last_tx_user = (read32(BB + 0xf70) >> 12) & 15;
 	receiver.last_tx_budget = read32(BB + 0xf5c) >> 16;
 	receiver.last_tx_request = (read32(BB + 0xf58) >> 4) & 15;
+	if (receive_operation >= 72) {
+		/* Original 0x221556 samples the user again for attempt history.
+		 * Record before packet construction; this is not an ACK or TX-end. */
+		unsigned user = (read32(BB + 0xf70) >> 12) & 15;
+		tx_history_info.samples++; tx_history_info.last_user = user;
+		if (user) { tx_history_info.other_users++; }
+		else {
+			const struct ar_interleaver_user *u = &tx_interleaver.users[0];
+			if (u->active && u->retries) { tx_history_info.eligible++; }
+			(void)ar_tx_irq_history(&tx_interleaver,0,&tx_history_ops,NULL);
+		}
+	}
 	if (receiver.last_tx_user != 0) {
 		receiver.tx_errors++; dev_tx_finish_segments(); return;
 	}
@@ -1763,6 +1787,7 @@ static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t 
 	memset(&traffic_info, 0, sizeof traffic_info); traffic_info.version = 1;
 	memset(&tx_mcs_info, 0, sizeof tx_mcs_info); tx_mcs_info.current = 1;
 	memset(&tx_interleaver,0,sizeof tx_interleaver);
+	memset(&tx_history_info,0,sizeof tx_history_info);
 	memset(&mcs_info, 0, sizeof mcs_info); mcs_info.first_observed_mcs = 25;
 	if (operation < 67) { memset(&dev_mcs, 0, sizeof dev_mcs); mcs_sync_mmio = 0; }
 	memset(phy_header_valid, 0, sizeof phy_header_valid); memset(phy_eop_seen, 0, sizeof phy_eop_seen);

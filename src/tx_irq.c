@@ -8,6 +8,26 @@ static void put32(uint8_t *p, uint32_t value)
 		p[i] = (uint8_t)(value >> (i * 8));
 }
 
+int ar_tx_irq_history(struct ar_interleaver *state, unsigned user,
+	const struct ar_tx_irq_ops *ops, void *context)
+{
+	if (!state || user >= AR_INTERLEAVER_USERS || !ops || !ops->word || !ops->read)
+		return -22;
+	struct ar_interleaver_user *u = &state->users[user];
+	if (u->active && u->retries) {
+		uint32_t interleave = ops->read(((user + 0x2c0) << 18) | 0x401, context);
+		unsigned shift = (uint8_t)(u->retries - 1);
+		uint32_t history = u->history;
+		uint32_t bit = 1;
+		if (interleave == 1) {
+			bit <<= ops->word(0xf58, context) & 1;
+			shift *= 2;
+		}
+		u->history = history | (bit << (shift & 31));
+	}
+	return 0;
+}
+
 int ar_tx_irq_preencode(struct ar_tx_irq *irq, struct ar_interleaver *state,
 	const struct ar_tx_irq_ops *ops, void *context)
 {
@@ -25,24 +45,7 @@ int ar_tx_irq_preencode(struct ar_tx_irq *irq, struct ar_interleaver *state,
 	payload[8] = (ops->word(0xf58, context) >> 4) & 15;
 	(void)ops->post(0x301, payload, sizeof(payload), context);
 	user = (ops->word(0xf70, context) >> 12) & 15;
-	int result = 0;
-	if (user >= AR_INTERLEAVER_USERS) {
-		result = -22;
-	} else {
-		struct ar_interleaver_user *u = &state->users[user];
-		if (u->active && u->retries) {
-			uint32_t interleave = ops->read(((user + 0x2c0) << 18) | 0x401,
-				context);
-			unsigned shift = (uint8_t)(u->retries - 1);
-			uint32_t history = u->history;
-			uint32_t bit = 1;
-			if (interleave == 1) {
-				bit <<= ops->word(0xf58, context) & 1;
-				shift *= 2;
-			}
-			u->history = history | (bit << (shift & 31));
-		}
-	}
+	int result = ar_tx_irq_history(state,user,ops,context);
 	ops->notify(19, payload, context);
 	return result;
 }

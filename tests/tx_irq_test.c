@@ -129,6 +129,9 @@ int main(void)
 	assert(ar_tx_irq_preencode(&f.irq, &f.state, &invalid, &f) == -22);
 	assert(ar_tx_irq_preencode(NULL, &f.state, &ops, &f) == -22);
 	assert(ar_tx_irq_end(&f.irq, NULL, &f) == -22);
+	assert(ar_tx_irq_history(NULL, 0, &ops, &f) == -22);
+	assert(ar_tx_irq_history(&f.state, 10, &ops, &f) == -22);
+	assert(ar_tx_irq_history(&f.state, 0, &invalid, &f) == -22);
 	assert(!memcmp(&f, &original, sizeof f));
 	puts("TX pre-encode history/order, mutation/wrap, duplicate end and queue-failure paths passed");
 }

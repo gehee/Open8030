@@ -2,12 +2,12 @@
   "baseline": "working-video",
   "target": "VRX/GND Ascent VRX; matched 18.21.10 inputs",
   "runtime": {
-    "bytes": 72528,
-    "sha256": "83a2ca3937356399ce8e6369b138985e77c3cad4d51862bdb578ce62bf320bed",
+    "bytes": 72912,
+    "sha256": "baad0d33a1a60b5417fbdf8e981af8fa4c2216af2d5dd950b78124c175110428",
     "load_address": "0x204000"
   },
   "ram": {
-    "used_bytes": 676976,
+    "used_bytes": 677520,
     "capacity_bytes": 704512
   },
   "private_board_profile": {
@@ -19,20 +19,20 @@
     "sha256": "c69e46c57bbb3e5fc7fe0c5581e59fb5735dcf8a97bf0e05ae7aaa0273657768"
   },
   "container": {
-    "bytes": 90624,
-    "sha256": "ea5bc92ea9b44cd41e10221e3e94bb9c1fd77ce3edf7b8948b0df729bd7f469c",
+    "bytes": 91136,
+    "sha256": "5a574f6b296eb8aa4eee3aaf09c258b97735727848822776dfdb560183db36c5",
     "payload_alignment": 512
   },
   "original_stock_sha256": "dc58247910af564376350404383c5c411cbec21663873fba24e70c61a3584e3c",
   "external_config_sha256": "5cf0cd31645d4786c6b04399c6c609386d427ffc4c6d7f6e42d81e3e770c2a74",
   "scope": "Experimental Ascent VRX 18.21.10 native video baseline; private inputs not distributed",
   "generated_container": {
-    "bytes": 90624,
-    "sha256": "ea5bc92ea9b44cd41e10221e3e94bb9c1fd77ce3edf7b8948b0df729bd7f469c",
+    "bytes": 91136,
+    "sha256": "5a574f6b296eb8aa4eee3aaf09c258b97735727848822776dfdb560183db36c5",
     "payload_alignment": 512,
     "configuration": "zero-filled 16 KiB; external loader JSON required",
     "hardware_verified": true,
-    "verification_scope": "Ascent VRX 18.21.10 stage200: normal-key user0 TX MCS request/application and interleaver drain integration; startup, stop/start, deinit/init/start and candidate removal/readmission; 80 seconds inspected direct HDMI-to-USB capture matching fresh stock dark scene, 92 linked/AP-time samples and zero sampled socket drops. Each hardware session applied TX MCS1-to2; no decrease observed. Decrease timing has original-trace and synthetic integration coverage only. Retained ownership, retry/history, low-power acquisition, broader keys and full protocol parity remain open",
+    "verification_scope": "Ascent VRX 18.21.10 stage201: user0 preencode attempt-history integrated with TX MCS drain; startup, post-drain, stop/start, deinit/init/start and candidate removal/readmission; 110 seconds inspected direct HDMI-to-USB capture matching fresh stock dark scene, 125 linked/AP-time samples and zero sampled socket drops. Startup/restart/recovery observed 1/1/3 completed decreases, with 5/3/13 eligible attempts and history mask1; restart/recovery samples show MCS2-to1-to2 and register changes. History resets on context rebuild. Full IRQ/retained ownership, retry policy, low-power acquisition, broader keys and full protocol parity remain open",
     "verified_utc_date": "2026-10-15"
   }
 }

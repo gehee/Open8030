@@ -131,6 +131,7 @@ int main(void)
 	assert(ar_diagnostic_request_id(AR_DAEMON_DIAGNOSTIC_BASE | 0x24) == AR_REQ_BOOT_INFO);
 	assert(ar_diagnostic_request_id(AR_DAEMON_DIAGNOSTIC_BASE | 0x25) == AR_REQ_RF_LIFECYCLE_INFO);
 	assert(ar_diagnostic_request_id(AR_DAEMON_DIAGNOSTIC_BASE | 0x26) == AR_REQ_RF_RECOVERY_INFO);
+	assert(ar_diagnostic_request_id(AR_DAEMON_DIAGNOSTIC_BASE | 0x28) == AR_REQ_RF_TX_HISTORY_INFO);
 	for (unsigned i = 0x10; i <= 0x16; i++) {
 		assert(ar_diagnostic_request_id(AR_DAEMON_DIAGNOSTIC_BASE | i) == (AR_DAEMON_DIAGNOSTIC_BASE | i));
 	}
