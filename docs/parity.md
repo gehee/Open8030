@@ -69,7 +69,7 @@ and scenario; they must be repeated after relevant changes.
 | Host lifecycle | Explicit stop/start and stop/deinit/init/start tested historically | Every wrong-state/repeated operation, cancellation, pending DMA, failure recovery and complete reset semantics. |
 | Events | All twelve original host subscriptions and declared payload sizes; copied FIFO transport; producers for IDs 0 and 1 | Integrate other producers and internal routes; compare their payload meaning, scheduling, overflow and lifecycle behavior. Subscription success alone does not establish a working producer. |
 | Host sockets | Slot-0 copy-mode data path, deferred close and active-write cancellation; normal backend video/control; stream/handle admission and queue factories compared offline | Stock host ports 0/1 reject opens because their streams already exist; native admission differs. Heap/RTOS internals, table initialization, worker startup, runtime ownership, other modes/slots, retained-descriptor TX, saturation, teardown races and complete capacity/error behavior remain open. |
-| Internal data interfaces | Stock stream occupancy observed; mode-3 graph, event forwarding, framing, route delivery, queued writer, ingress and socket write gate compared offline; constructed parser-to-route composition, native predicates, route-list submission and worker transformations compared; submission-to-worker composition executes original pool allocation/recycling; worker discard, age, errors, route construction/merging and configuration preflight compared; five built-in mode tables inventoried; interface publication and reader/writer resource construction compared | Integrate UART/SBUS, parsers, event producers, shared stream ownership and payload routing; integrate the compared preflight and route builder with real interface provisioning and production pool/queue ownership and the compared service constructor; integrate the full parser and transformed delivery at runtime; establish copying-action reachability and cleanup, other framing profiles, scheduling, modes, timing, teardown and failure recovery. A reserved-port rejection alone does not implement these services. |
+| Internal data interfaces | Stock stream occupancy observed; mode-3 graph, event forwarding, framing, route delivery, queued writer, ingress and socket write gate compared offline; constructed parser-to-route composition, native predicates, route-list submission and worker transformations compared; submission-to-worker composition executes original pool allocation/recycling; worker discard, age, errors, route construction/merging and configuration preflight compared; five built-in mode tables inventoried; interface publication, reader/writer resource construction and non-UART constructor branches compared | Integrate UART/SBUS, parsers, event producers, shared stream ownership and payload routing; integrate the compared preflight and route builder with real interface provisioning and production pool/queue ownership and the compared service constructor; integrate the full parser and transformed delivery at runtime; establish copying-action reachability and cleanup, other framing profiles, scheduling, modes, timing, teardown and failure recovery. A reserved-port rejection alone does not implement these services. |
 | MAC framing | Header/descriptor parser and DEV encoder | Other formats/flags, receive ordering, duplicate handling and all original rejection rules. |
 | AP full/compact controls | Selected mode-0/slot-0 admission and connected control | All extensions, remote synchronization effects, changed channels, slots, stale/duplicate controls and unsupported modes. |
 | Internal port-0 commands | Stream parsing; login checksum ACK transmission | Receiving a command currently mainly records it. Inventory and implement each original command's effects, responses and retries. |
@@ -3849,6 +3849,97 @@ A fresh 30-second `/dev/video0` HDMI-to-USB capture shows the dark textured came
 scene and right-side objects. All 33 samples remain linked with advancing AP time
 and zero socket drops; video delivery increases by 13,372,956 bytes. A separate
 60-sample flow check records zero socket drops or SDIO errors and 24,559,216
+delivered bytes over 59.01 seconds. Image, configuration and boot identity
+match the retained baseline. Open8030 remains running. This unchanged-runtime
+check does not establish fresh stock parity, controlled freshness/latency or a
+fix for the earlier intermittent receive loss.
+
+
+### Non-UART interface construction and profile selection
+
+Stage 229 adds the source-only [interface constructor](../src/data_interface.c),
+composing non-UART admission and type setup with the stage-228 service constructor.
+It consumes a semantic specification after preflight; the outer caller remains
+responsible for skipping disabled records. Native registry entries now retain
+port and full-width selector fields for duplicate lookup and future routing.
+
+**694 scenarios match the complete original non-UART constructor** from
+`0x210d2c` through return. They cover types 1–9 and `0xffffffff`, ports 0/1/2/65,535,
+role masks and role values across the shift boundary, selector truncation,
+existing registry entries, supplied socket handles, stream-open failures,
+allocation failures, reader/writer failures and ID wrap. There are 2,171 allocation
+attempts, 126 allocation failures, 78 releases, 277 stream opens, 872 task requests,
+550 published interfaces and 472 published readers. Results are zero in 523
+cases, `-9996` in six, `-9999` in 117 and `-9998` in 48. A zero result includes
+role rejection and the handle-allocation case below; it does not imply that an
+interface was published.
+
+The compared rules include:
+
+- A zero role mask admits every role. Otherwise the role byte selects a bit using
+  its value modulo 32. For example, roles 0 and 32 select the same bit. A missing
+  bit returns zero before duplicate lookup or allocation.
+- Duplicate lookup compares type and port, but truncates the requested selector
+  to 16 bits while comparing it to existing 32-bit selectors. A new interface
+  retains the full selector. Thus a requested selector of 65,536 conflicts with
+  an existing selector of zero, while an existing selector of 65,536 does not
+  block another such request at this boundary. Duplicates return `-9996`.
+- New interfaces copy framing enable and read/write timeout values. For socket
+  type 2, supplied handle storage is borrowed. Otherwise the constructor opens
+  the stream with the full selector, flags `0x13` for port 0 or `3` for other
+  ports, and the configured TX/RX capacities. A negative open result frees the
+  interface and returns `-9998`.
+- After a successful open, failure to allocate the four-byte handle storage
+  frees only the interface and returns zero. The interface is not published and
+  no stream-close call occurs. This records the original boundary behavior;
+  cleanup elsewhere and the production ownership policy remain unresolved.
+- Socket port 0 selects the SBUS-related profile; socket port 1 and event type 3
+  port 0 select the C8 profile. These choices override framing enable to one.
+  Other ports retain the configured framing enable and have no custom profile.
+  Writer selection follows the original type dispatch; only socket type 2 also
+  selects the socket reader. Types 5/6 and out-of-table types still proceed to
+  publication with no selected writer.
+
+The SBUS-related action profile trims one leading and one trailing byte and
+recognizes prefix `0x0f`. The C8 action profile trims two leading and one trailing
+byte and recognizes prefix `0xc8`. The native constructor initializes those
+worker-action views and profile selectors. This does not implement physical SBUS
+signaling, the generic original framing engine or the selected backend callbacks.
+Among published interfaces, 51 select SBUS-related framing, 215 select C8 and
+284 have no custom profile. Full 64-byte original profile snapshots are retained
+privately as reference; only profile selection, framing enable and the compared
+action fields are represented here. Remaining parser parameters are not claimed
+as native implementation coverage.
+
+All **462 executed instruction locations**, plus the eight-entry original type
+branch table, match the original payload/container/analysis-ELF bytes. Real
+original duplicate lookup, type branches, profile initialization and service
+construction execute. Allocation/free, stream open, queue/mutex/task creation,
+locking and diagnostic/formatting endpoints are adapters. Native allocation sizes
+are compared by resource kind; payload capacities are compared directly. Known
+identity, timeout, callback-selection, profile-action and service/list state match.
+The 1,221 diagnostic/formatting calls are counted privately; their text is excluded
+from native effect matching. Synthetic ELF, pointers, ABI and partial ISA remain
+analysis metadata. Evidence stays in ignored `.local/stage229-interface-types/`.
+
+Five ASan/UBSan suites and 18 Python tests pass. The **1,698 split/wrap pipeline
+cases** now construct the tested event/socket source after preflight, assert its
+C8 profile, then build routes and parse from reader-owned storage through worker
+delivery. Only that source interface is instantiated; the complete identity
+registry, stream open, packet/queue storage and scheduling remain test adapters.
+This is native composition of compared components, not a new execution of the
+entire original boot and streaming system.
+
+UART type 0 is explicitly unsupported by this native constructor (`-95`, no
+side effects), and invalid native arguments/adapters return `-22`. UART conversion,
+physical setup, SBUS services, normal shared stream ownership, callback execution,
+scheduling, full teardown and runtime integration remain open. The helper stays
+outside the firmware build, which reproduces the retained stage-215 image.
+
+A fresh 30-second `/dev/video0` HDMI-to-USB capture shows the dark textured camera
+scene and right-side objects. All 33 samples remain linked with advancing AP time
+and zero socket drops; video delivery increases by 13,380,599 bytes. A separate
+60-sample flow check records zero socket drops or SDIO errors and 24,406,867
 delivered bytes over 59.01 seconds. Image, configuration and boot identity
 match the retained baseline. Open8030 remains running. This unchanged-runtime
 check does not establish fresh stock parity, controlled freshness/latency or a

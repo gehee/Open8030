@@ -739,6 +739,17 @@ reproduces stage 215. See
 Fresh HDMI-to-USB video shows the camera scene with 33 linked samples; 60 flow
 samples show no socket drops or SDIO errors. Stage 215 remains running.
 
+Stage 229 adds non-UART interface construction and profile selection, composed
+with reader/writer resource setup. All 694 original scenarios match, including
+role/duplicate admission, borrowed handles, open/allocation failures and retained
+partial state. Five sanitizer suites and 18 Python tests pass. The 1,698 pipeline
+cases now construct their event/socket source and check its C8 profile. UART setup,
+physical SBUS, callback execution, full teardown and runtime integration remain
+open. This remains source-only; the build reproduces stage 215. See
+[interface construction](parity.md#non-uart-interface-construction-and-profile-selection).
+Fresh HDMI-to-USB video shows the camera scene with 33 linked samples; 60 flow
+samples show no socket drops or SDIO errors. Stage 215 remains running.
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host

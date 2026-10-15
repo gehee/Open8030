@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "ar_data_framing.h"
 #include "ar_data_preflight.h"
-#include "ar_data_service.h"
+#include "ar_data_interface.h"
 #include <stdlib.h>
 #include "data_mode3_fixture.h"
 #include "ar_data_route.h"
@@ -9,13 +9,12 @@
 #include <assert.h>
 #include <string.h>
 
-/* Native preflight, reader allocation, route construction, parsing and delivery
+/* Native preflight, interface construction, route construction, parsing and delivery
  * are composed here. Only the tested source reader is instantiated; the full
  * identity registry, packet/queue storage and scheduling remain adapters. */
 struct fixture {
 	struct ar_data_services services;
-	struct ar_data_service_interface service_interface;
-	void *service_storage[3];
+	void *service_storage[5];
 	unsigned service_allocations;
 	unsigned source, role, writes, emissions, allocations, segments;
 	int destination, queued, references;
@@ -36,7 +35,8 @@ struct fixture {
 static void *service_allocate(enum ar_data_service_allocation kind, size_t size, void *context)
 {
 	struct fixture *f = context;
-	assert(f->service_allocations < 3 && (unsigned)kind == f->service_allocations);
+	assert(f->service_allocations < 5);
+	(void)kind;
 	void *p = malloc(size); assert(p);
 	f->service_storage[f->service_allocations++] = p; return p;
 }
@@ -55,6 +55,13 @@ static int service_task(enum ar_data_service_task task, void *argument, uint32_t
 {
 	(void)task; (void)argument; (void)priority; (void)stack; (void)handle; (void)context;
 	assert(0 && "pipeline scheduling is synchronous"); return -1;
+}
+static int32_t service_open(uint32_t selector, uint16_t port, uint32_t flags,
+	uint32_t tx, uint32_t rx, void *context)
+{
+	struct fixture *f = context;
+	assert(f->source == 4 && selector == 0 && port == 1 && flags == 3 && tx == 524 && rx == 1024);
+	return 0;
 }
 static uint8_t *allocate(size_t size, void *context)
 {
@@ -238,14 +245,18 @@ int main(void)
 					const uint8_t uart_at[3] = {0};
 					assert(!ar_data_preflight(interfaces, 5, routes, 6, 0, uart_at));
 					for (unsigned i = 0; i < 5; ++i) { assert(!interfaces[i].disabled); }
-					const struct ar_data_service_config service_config = {.read_capacity = (uint16_t)capacities[type]};
-					const struct ar_data_service_ops service_ops = {service_allocate, service_release,
-						service_mutex, service_lock, service_unlock, service_queue, service_task};
-					f.service_interface.type = type ? 2 : 3;
+					const struct ar_data_interface_spec service_config = {
+						.type = type ? 2 : 3, .port = type ? 1 : 0,
+						.socket_tx_capacity = 524, .socket_rx_capacity = 1024,
+						.service = {.read_capacity = (uint16_t)capacities[type]}};
+					const struct ar_data_interface_ops service_ops = {{service_allocate, service_release,
+						service_mutex, service_lock, service_unlock, service_queue, service_task}, service_open};
 					f.services.next_id = (uint16_t)f.source;
-					assert(!ar_data_service_publish(&f.services, &f.service_interface,
-						&service_config, &service_ops, &f));
-					assert(f.service_interface.id == f.source && f.service_interface.read_enabled);
+					assert(!ar_data_interface_create(&f.services, &service_config, (uint8_t)role, &service_ops, &f));
+					struct ar_data_interface *interface = (struct ar_data_interface *)f.services.interfaces;
+					assert(interface && interface->profile == AR_DATA_PROFILE_C8 && interface->framed);
+					assert(interface->service.id == f.source && interface->service.read_enabled);
+					assert(interface->writer == (type ? AR_DATA_WRITE_SOCKET : AR_DATA_WRITE_EVENT));
 					assert(f.services.readers && f.services.readers->ring);
 					uint8_t *ring = f.services.readers->ring->bytes;
 					assert(f.services.readers->ring->capacity == capacities[type]);

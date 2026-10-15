@@ -12,6 +12,9 @@ struct ar_data_service_interface {
 	uint8_t write_enabled, read_enabled;
 	void *writer_queue, *writer_mutex, *writer_task;
 	struct ar_data_service_interface *next;
+	/* Duplicate lookup truncates the request, not this stored selector. */
+	uint16_t port;
+	uint32_t selector;
 };
 struct ar_data_service_ring {
 	uint8_t *bytes;
@@ -34,7 +37,10 @@ struct ar_data_service_config {
 	uint16_t read_capacity, read_stack, write_capacity, write_stack;
 	uint8_t uart_at;
 };
-enum ar_data_service_allocation { AR_DATA_SERVICE_READER, AR_DATA_SERVICE_RING, AR_DATA_SERVICE_BYTES };
+enum ar_data_service_allocation {
+	AR_DATA_SERVICE_READER, AR_DATA_SERVICE_RING, AR_DATA_SERVICE_BYTES,
+	AR_DATA_SERVICE_INTERFACE, AR_DATA_SERVICE_SOCKET_HANDLE
+};
 enum ar_data_service_task { AR_DATA_SERVICE_AT, AR_DATA_SERVICE_READ, AR_DATA_SERVICE_WRITE };
 struct ar_data_service_ops {
 	/* Allocate native storage; size is a native size, never an original ABI size.
