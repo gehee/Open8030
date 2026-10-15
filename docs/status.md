@@ -657,6 +657,16 @@ HDMI-to-USB capture shows the camera scene with 33 linked samples, and 60 flow
 samples show no socket drops or SDIO errors. Stage 215 remains running. See
 [composed route coverage](parity.md#constructed-parser-to-route-composition).
 
+Stage 221 adds native predicates for an admitted route: source/second-interface
+identity, metadata range and byte-pattern matching. There are 649 matching
+original cases and 45 documented native bounds-guard differences. The 108
+composed traces still match with native source selection. Two sanitizer suites
+and 18 Python tests pass. Construction, complete route-list handling and runtime
+ownership remain open. The build reproduces stage 215; fresh HDMI-to-USB video
+shows the camera scene with 33 linked samples, and 60 flow samples show no socket
+drops or SDIO errors. Stage 215 remains running. See
+[route predicate coverage](parity.md#admitted-route-selection-predicates).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host

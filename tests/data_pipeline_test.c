@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "ar_data_framing.h"
+#include "ar_data_filter.h"
 #include "ar_data_route.h"
 #include "ar_data_event.h"
 #include <assert.h>
@@ -77,6 +78,37 @@ static void unexpected_diagnostic(struct ar_data_destination *d, void *context)
 	(void)d; (void)context;
 	assert(0 && "unexpected delivery failure");
 }
+static int identity(const struct ar_data_identity *key, uint16_t *id, void *context)
+{
+	(void)context;
+	const struct ar_data_identity registry[] = {{0, 2, 0}, {0, 1, 0},
+		{3, 0, 0}, {2, 0, 0}, {2, 1, 0}};
+	for (unsigned i = 0; i < 5; ++i) {
+		if (key->type == registry[i].type && key->port == registry[i].port &&
+			key->selector == registry[i].selector) { *id = (uint16_t)i; return 0; }
+	}
+	return -1;
+}
+static int select_destination(struct fixture *f)
+{
+	/* Role admission is still a fixture; the actual source predicate now uses
+	 * the native filter. Order follows the original constructed route list. */
+	const unsigned routes[][3] = {{3, 1, 2}, {1, 3, 2},
+		{4, 2, 1}, {2, 4, 1}, {0, 4, 0}, {4, 0, 0}};
+	const struct ar_data_filter_input input = {
+		.source = f->source == 2 ? (struct ar_data_identity){3, 0, 0} :
+			(struct ar_data_identity){2, 1, 0}};
+	const struct ar_data_filter_ops ops = {.identity = identity};
+	for (unsigned i = 0; i < sizeof routes / sizeof routes[0]; ++i) {
+		if (routes[i][2] != 2 && routes[i][2] != f->role) { continue; }
+		const struct ar_data_filter filter = {.flags = 1,
+			.source = (uint16_t)routes[i][0]};
+		int result = ar_data_filter_match(&filter, &input, &ops, NULL);
+		assert(result >= 0);
+		if (result) { return (int)routes[i][1]; }
+	}
+	return -1;
+}
 static int segment(enum ar_data_segment_kind kind, const uint8_t *a, size_t n,
 	const uint8_t *b, size_t m, void *context)
 {
@@ -88,8 +120,7 @@ static int segment(enum ar_data_segment_kind kind, const uint8_t *a, size_t n,
 	if (m) { memcpy(f->packet_bytes + n, b, m); }
 	f->packet = (struct ar_data_packet){f->packet_bytes, (uint32_t)(n + m)};
 	f->references = 1;
-	f->destination = f->source == 2 ? (f->role == 1 ? 4 : -1) :
-		(f->role == 0 ? 0 : f->role == 1 ? 2 : -1);
+	f->destination = select_destination(f);
 	if (f->destination >= 0) {
 		f->references++;
 		f->queued = 1;

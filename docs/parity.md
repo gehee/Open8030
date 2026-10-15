@@ -3229,3 +3229,70 @@ bytes over 59.01 seconds. Image, configuration and boot identity match the
 retained baseline. Open8030 remains running. This is an unchanged-runtime
 regression check, not fresh stock parity or controlled freshness/latency evidence;
 the earlier intermittent loss remains unresolved.
+
+### Admitted-route selection predicates
+
+Stage 221 adds the source-only [route filter](../src/data_filter.c), replacing
+the test adapter's hard-coded source-ID comparison in the composed pipeline.
+It evaluates an already admitted route. Construction and role admission still
+precede this helper; worker mapping, action selection and delivery follow it.
+
+The original predicate reads the low flags in this order:
+
+| Flag | Predicate |
+| --- | --- |
+| `1` | Resolve the source's type/port/selector to an interface ID and require the configured source ID. |
+| `2` | Resolve the source again, then look up that ID. If that interface has a nonzero framing field, require metadata within the inclusive configured minimum/maximum. An unframed interface bypasses the range check. |
+| `4` | Resolve the second input interface's type/port/selector and require the configured second ID. This is the optional interface context supplied to the parser, not an inferred radio-peer identity. |
+| `16` | Compare the configured bytes at the configured offset within the supplied logical data span. |
+
+Any lookup failure rejects the route. Registry order matters: identity and ID
+lookups each select their first match. Source resolution is repeated for flag 2
+even if flag 1 already succeeded. An inverted metadata range rejects every value
+on a framed interface. Flag 8, used for role admission by the constructor, has
+no predicate effect here; neither do the other flag bits. The caller must supply
+the parser's prepared logical data pointer and length. This helper does not
+implement or validate that preceding preparation.
+
+**649 original cases match**, with 440 accepted and 209 rejected. They cover all
+low-five-bit combinations, metadata endpoints, framing enabled/disabled,
+missing and duplicate registry entries, ID/type/port/selector boundaries,
+inverted ranges, byte matches/mismatches and high flag bits. All **971 lookup
+calls** across the full probe set match in order and arguments. The **89 executed
+instruction locations** are bound to the matched original payload/container/ELF.
+The original identity and ID lookup functions execute against a synthetic ordered
+registry; no helper is intercepted inside this predicate slice. Route fields,
+parser-produced metadata and data span are fixture inputs. This does not execute
+route construction, parsing, locking, scheduling or delivery in the new slice.
+
+**45 additional probes document an intentional guard difference.** The original
+checks that pattern length fits the logical input length, but does not include
+the starting offset in that check. It can therefore compare bytes outside the
+logical span. The native helper returns `-22` before such a read. Private original
+probes use padded allocated memory, and these cases are excluded from matching
+counts. A zero-length pattern matches without accessing data; a pattern longer
+than the logical input rejects before storage checks. Native null-storage and
+missing-adapter guards are separate from original matching behavior.
+
+The immutable stage-220 composed traces were also compared again with the new
+native predicate: **108 cases / 3,540 feeds**, 54 delivered packets and 54
+unmatched cases still agree on messages, outputs, counters and reference balance.
+Role admission and packet queues remain test adapters. The native composition
+suite retains its 1,698 split/wrap cases, and the filter suite adds all 256
+metadata values with framing on/off, lookup ordering/failure checks and exact-size
+storage under ASan/UBSan. Two sanitizer suites and 18 Python tests pass.
+
+The original comparison stops at a single route's match/reject boundary. Full
+route-list iteration, action suppression/transform ordering, worker selection,
+constructor cleanup and runtime internal-service ownership remain open. Synthetic
+ELF, pointers, ABI and partial ISA remain analysis metadata. Detailed receipts
+and original traces stay in ignored `.local/stage221-route-filter/`.
+
+The standard build reproduces stage 215, which remains running on the receiver.
+A fresh 30-second `/dev/video0` HDMI-to-USB capture shows the dark textured camera
+scene and right-side objects. All 33 samples are linked with advancing AP time
+and zero socket drops; delivered video bytes increase by 13,359,202. A separate
+60-sample flow check records no socket drops or SDIO errors. Image, configuration
+and boot identity match the retained baseline. This unchanged-runtime check does
+not establish fresh stock parity, controlled video freshness/latency or resolution
+of the earlier intermittent receive loss.
