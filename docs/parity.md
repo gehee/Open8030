@@ -60,7 +60,7 @@ and scenario; they must be repeated after relevant changes.
 
 | Area | Current Open8030 coverage | Required comparison / remaining gap |
 | --- | --- | --- |
-| Original behavior inventory | Partial | Enumerate all original dispatch branches, callbacks, timers, configuration options and reachable modes. Unmapped behavior blocks a full-coverage claim. |
+| Original behavior inventory | Core API routing inventoried; full system inventory incomplete | Resolve command contracts, transport dispatch, callbacks, timers, configuration options and reachable modes. Unmapped behavior blocks a full-coverage claim. |
 | Container, bootstrap and loader | Working matched-board baseline | Repeated cold starts; bad/truncated configuration and failed preparation; ordering and recovery across original loader paths. |
 | OTP, flash and factory data | Identity and read-only lookup; hardware covers zero-offset fallback | Valid factory records, partition variants, corrupt records and hardware-calibrated offsets. |
 | Host framing and SDIO | Framing, enumeration and cooperative transport | Original error/reset semantics, saturation, concurrent traffic, reconnect and interrupted DMA. |
@@ -83,6 +83,66 @@ and scenario; they must be repeated after relevant changes.
 | Other roles/boards | Unverified | Separate original inventories and hardware validation; no inferred VRX-to-VTX parity. |
 
 ## Host request coverage
+
+### Core API and reply-size inventory
+
+The [command checklist](host-command-coverage.csv) records **114 distinct IDs**
+across the matched original core dispatcher and reply-size table. Of these,
+**108 have recognized core routes**. Every ID has a separate row, including
+commands whose behavior is still unresolved. These are inventory counts, not
+implemented features or a firmware coverage percentage.
+
+| Core family | Recognized IDs | Current native coverage |
+| --- | ---: | --- |
+| Initialization/configuration (`0x00…`) | 12 | Direct commands unsupported; loader JSON is a separate, partial configuration path |
+| Getters (`0x01…`) | 35 | Status and DEV AP time have partial behavior/scenario coverage; 33 unsupported |
+| Setters (`0x02…`) | 56 | Candidate list has partial coverage; 55 unsupported |
+| Extension (`0x06000000`) | 1 | Unsupported; original callback contract unresolved |
+| Lifecycle (`0x0b…`) | 4 | Start, stop, init and deinit have partial behavior/scenario coverage |
+
+The inventory follows all four command tables, their range checks, the top-level
+family dispatch and explicit extension/lifecycle branches. Original-instruction
+execution matches 4,811 routing cases, including every table slot, extension IDs,
+initialization gating and boundary samples for all 256 high-byte families. The
+98 executed instruction locations and table bytes are bound to the original
+payload, container and synthetic ELF. No command handlers or hardware effects
+execute in this comparison; input/output pointers and initialization state are
+synthetic. The bounds were inspected as well as sampled; this is not an execution
+of all 2³² possible IDs.
+
+The original reply-size lookup has **99 entries**, with 93 also recognized by
+the core dispatcher. Its instructions match 1,537 lookup cases, including every
+entry and missing-ID cases; all 16 instruction locations are bound to original
+bytes. The checklist records these declared reply lengths, not a guarantee that
+every returned byte is initialized or meaningful. An empty length means no table
+entry; `0` means an explicit zero-byte reply. Request-length validation, allocation
+failures and response serialization remain separate comparison work.
+
+The mismatches are retained explicitly:
+
+- `0x0100006e`, `0x0100006f`, `0x02000017`, `0x02000019`, `0x0200001a` and
+  `0x0a000004` have reply-size entries but reach the core default rejection.
+  This does not rule out handling by another layer.
+- Eleven initialization/configuration IDs and setters `0x02000000`,
+  `0x02000001`, `0x02000071` and `0x02000074` have core routes without reply-size
+  entries. Their availability through the ordinary host transport cannot be
+  assumed. Initialization ID `0x00000002` does have a size entry.
+
+Recognition does not guarantee success: some entries depend on an installed
+callback, valid arguments or runtime state. The original core default returns
+`-4`; wire-level error mapping must be checked separately. Native implementation
+classifications follow the accepted source dispatcher, not an assumption that
+an observed request succeeded.
+
+These inventories are **not the whole host protocol**. Transport framing and
+request validation, events, sockets, daemon-local operations and reset/heartbeat
+routing need their own inventories. In particular, an ID absent here may be
+handled by another layer. Core initialization IDs are not automatically
+host-accessible commands.
+Indirect callbacks, internal radio messages and timers also remain open; finding
+all IDs in this dispatcher does not close those behaviors.
+
+### Selected runtime probes
 
 The selected read-only probe on 2026-10-15 UTC, using the accepted container above,
 returned:
@@ -174,7 +234,8 @@ DEV clock path for these scenarios, not every time-related behavior in stock.
 The accepted image and hardware limits are recorded in [status](status.md) and
 [baseline.json](../baseline.json); detailed receipts remain private.
 
-Next, complete the original dispatcher inventory and bind each known behavior
-to its tests, then implement gaps in isolated changes. Dynamic power still needs
-a separately isolated acquisition fix. Neither a large synthetic test count nor
-a visible scene can close the remaining matrix by itself.
+Next, extend the core inventory through the transport dispatchers and indirect
+callbacks, and bind each command's behavior to its comparison tests. Then cover
+radio messages, timers and state transitions in the same way. Dynamic power still
+needs a separately isolated acquisition fix. Neither a large synthetic test count
+nor a visible scene can close the remaining matrix by itself.
