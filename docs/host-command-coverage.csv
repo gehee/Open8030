@@ -56,7 +56,7 @@ request_id,family,core_route,original_reply_bytes,behavior,native_status,compari
 0x02000005,setter,recognized,0,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
 0x02000006,setter,recognized,0,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
 0x02000007,setter,recognized,0,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
-0x02000008,setter,recognized,0,User power level,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
+0x02000008,setter,recognized,0,User power level,unsupported,50772 calibration application cases; cached state and field ordering compared offline,"Host payload/error/state contract; runtime policy integration; physical power and low-power acquisition validation"
 0x02000009,setter,recognized,0,Power policy,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
 0x0200000a,setter,recognized,4,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
 0x0200000b,setter,recognized,4,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"

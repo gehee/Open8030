@@ -75,7 +75,7 @@ and scenario; they must be repeated after relevant changes.
 | PHY commands | See command table below | Exact callbacks, TTL/replacement ordering and side effects for every command. |
 | Hardware command preparation | Command builder, metadata updates and preparation selection; fixed DEV frame, cached board/TX calibration and TX look-ahead | Independent sweep and base-channel score arithmetic are integrated; active-catalog policy, auxiliary scans, PA-sleep policy, retained-buffer ownership and actual interrupt ordering remain open. Helper comparisons do not establish the complete original handler. |
 | MCS adaptation | RX adaptation and limited TX increase | TX decrease/interleaver drain, all PHY keys, retry/expiry, loss interactions and sustained adaptation. |
-| Power and calibration | Initial user-0 setup at level 25 | Level 11 also fails acquisition in the accepted image with only its loader setting changed. Resolve the low-power transmit path, then normal backend power writes, all users, peer policy and calibration effects. |
+| Power and calibration | Initial user-0 setup at level 25; calibration writes, cache ordering and band-offset helpers compared offline | Level 11 also fails acquisition in the accepted image with only its loader setting changed. Resolve the low-power transmit path, then normal backend power writes, all users, peer policy and calibration effects. |
 | Channel/band selection | Configured link search, independent measurement sweep and base-channel averaging | Match the original active catalog and sampling cadence; integrate automatic selection, independent uplink changes, subchannels, hopping, rollback and cross-band operation. |
 | Time synchronization | DEV AP-time decoding/getter; original-instruction comparison and hardware startup/restart checks | Physical peer-loss/stale time, long-run hardware wrap and other roles/modes. |
 | Link recovery | Candidate removal/readmission and bounded recovery machinery | Physical peer silence/restart, pending work, sustained reacquisition and repeated failures. |
@@ -1191,6 +1191,64 @@ delivery remains explicitly unsupported until its worker is connected. Other
 users/modes, original diagnostic history, physical peer silence and precise
 IRQ/timer timing remain open. The compared monitor's wider behavior alone does
 not establish those runtime capabilities.
+
+### Tuning power callbacks
+
+[The power-control helpers](../src/power_control.c) implement the per-user
+calibration application and band-offset field writes called by the original
+TX tuner. They are compared offline and are not linked into the runtime yet.
+The existing pure calibration planner supplies the ordered field writes.
+
+Power application preserves an original cache alias: the shared current-level
+byte is also user 0's cached level. Open-loop field writes occur first, then
+that shared byte changes, then closed-loop writes occur, then the requested
+user's cached level changes. Applying user 8 or 11 therefore also changes the
+cached level for user 0. This is a software cache effect, not evidence that both
+users' hardware power changed. Caller serialization is required; the helper
+itself does not acquire the original mutex.
+
+Calibration uses independently clamped signed path-plus-user offsets for closed
+paths, unadjusted analog rows for open paths, clock-dependent amplitude scaling
+and the DEV user-8 CSMA gain reduction with zero amplitude. Invalid byte-sized
+levels return the original `-3`. Native validation additionally rejects unsafe
+users, missing calibration, invalid configuration or absent callbacks before any
+state change or field write. Wider original argument-wrap aliases are outside
+the native contract.
+
+Band-offset handling accepts signed byte offsets. Values outside -6 through +6
+have no effects. With both paths closed, it selects the original paired gain
+steps; otherwise the first nibble is 12 and the second is 12 plus the offset
+clamped to -3 through +3. The first field precedes the second. Users 0–9 use
+paired per-user fields, user 10 uses dedicated fields, and user 11 has no fields.
+This operation changes neither calibration offsets nor cached levels.
+
+Fresh execution of the matched original instructions passes **50,772 power
+cases and 12,288 band-offset cases**, including every byte-sized power request
+for all 12 users, four closed/open combinations, both clock choices and both
+roles. Of the power cases, 7,572 apply valid levels and 43,200 reject invalid
+byte-sized levels. Additional cases exercise signed offset extremes, calibration clamps and
+CSMA reduction boundaries. Band comparison covers every signed byte offset for
+all users and closed/open combinations. It checks 24,336 power field writes and
+1,144 band field writes, their order, cached state at each write, final state and
+collateral memory preservation. The power and power-control sanitizer suites
+also pass, including atomic native rejection cases.
+
+The comparison executes the original power application at `0x24515a`, band
+policy at `0x228ec6` and field-address helpers at `0x21db68`/`0x21db9c`.
+All 234 executed instruction locations and the policy lookup bytes are bound to
+the hash-matched payload, container and synthetic analysis ELF. Only field MMIO
+and the 13-byte memory copy are intercepted. Calibration/state inputs are
+synthetic; native state structures are independent of the recovered memory layout.
+No emitted-power measurement, valid factory-record comparison, dynamic host
+setter, channel-switch integration or low-power acquisition fix is established.
+
+The rebuilt firmware remains byte-for-byte identical to the retained stage-187
+image. A fresh 30-second direct `/dev/video0` HDMI-to-USB capture shows the same
+dark textured camera scene and camera OSD; all 33 samples remain linked with
+advancing AP time and zero sampled socket drops. Boot identity and image,
+configuration, backend and daemon hashes remain matched. This is a regression
+check of the existing firmware, not hardware validation of these new helpers.
+No new stock capture or lifecycle transition was performed in this iteration.
 
 Next, extend the core inventory through the transport dispatchers and indirect
 callbacks, and bind each command's behavior to its comparison tests. Then cover

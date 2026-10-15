@@ -122,6 +122,7 @@ are implementation limits, not CLI tuning parameters.
 | `src/dev_mcs.c`, `fch_monitor.c` | Modulation/coding policy and monitor timing/threshold calculation |
 | `src/socket_rx.c`, `event.c` | Host socket streams, completions and events |
 | `src/power*.c`, `flash*.c`, `sfdp.c`, `factory*.c` | Calibration planning and read-only factory-data lookup |
+| `src/power_control.c` | Compared power-cache ordering and band-offset fields; pending runtime tuning/host-policy integration |
 | `tools/`, `tests/` | Build/loading tools and offline validation |
 
 ## Host protocol

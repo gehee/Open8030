@@ -281,6 +281,19 @@ and control-register writes without reset errors. The image is retained in RAM.
 Candidate removal is host-driven recovery; it does not establish physical
 peer-silence parity, controlled video freshness or latency.
 
+Power application and band-offset helpers now match 63,060 fresh original
+instruction cases, including per-write cache state and effect order. The power
+cache has an original alias: applying another user also updates user 0's cached
+level, without implying a second hardware power change. Both sanitizer suites
+pass. These helpers remain outside the runtime; channel-tuning callbacks,
+dynamic host policy and physical power validation remain open. See
+[tuning power callbacks](parity.md#tuning-power-callbacks).
+
+The rebuild matches the retained stage-187 image byte-for-byte. A fresh
+30-second HDMI-to-USB capture preserves the camera scene, with 33 linked/AP-time
+samples and zero sampled socket drops. The new helpers have no hardware
+validation yet; no new stock capture or lifecycle test was performed.
+
 A separate configuration-only test reproduced acquisition failure at initial
 power level 11 using the accepted AP-time image. No video was delivered;
 restoring the original level-25 configuration restored the stream. This failure
