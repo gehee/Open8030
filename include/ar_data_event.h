@@ -17,8 +17,8 @@ struct ar_data_event_ops {
 	int (*emit)(unsigned id, const uint8_t *message, void *context);
 };
 
-/* Source-only interface-to-event bridge. The first two message bytes hold the
- * little-endian payload length. Runtime route/parser integration is pending. */
+/* Interface-to-event bridge. The first two message bytes hold the little-endian
+ * payload length. The caller supplies runtime routing and storage ownership. */
 int ar_data_event_forward(struct ar_data_event *state,
 	const struct ar_data_event_interface *interface, const uint8_t *data,
 	size_t length, const struct ar_data_event_ops *ops, void *context);

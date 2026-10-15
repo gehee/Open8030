@@ -3944,3 +3944,58 @@ delivered bytes over 59.01 seconds. Image, configuration and boot identity
 match the retained baseline. Open8030 remains running. This unchanged-runtime
 check does not establish fresh stock parity, controlled freshness/latency or a
 fix for the earlier intermittent receive loss.
+
+### Telemetry receive integration and live host data
+
+Stage 230 integrates [telemetry.c](../src/telemetry.c) into the runtime. Connected
+slot-0 MAC port 2 feeds the compared C8 parser in bounded chunks, preserving
+fragmented frames and the 524-byte ring's reserved-byte constraint. Complete
+CRC-valid frames retain their envelope and pass through the compared event
+forwarder as host event 8. Fixed storage replaces allocation in this adapter;
+event publication copies data before the parser reuses its ring. Malformed
+segments never become valid telemetry events. Link changes clear partial frames
+and sampled data; already published host notifications keep their existing
+transport ownership. Missing subscription and publication overflow have separate
+counters. This is not the original task scheduler or full service constructor.
+
+The runtime also exposes a read-only bounded sample of MAC port 3, which retains
+its existing external socket delivery. Live samples establish a second telemetry
+path: the Linux application's `fe a5` envelope contains transmitter-status
+records and flight-controller MSP messages. The header sums bytes 3–5 into byte 2;
+the upper twelve bits of the little-endian halfword at offset 4 give payload
+length. Complete records occupy payload length plus eleven bytes. The final
+four bytes hold a little-endian CRC32C over the preceding bytes, initialized at
+zero with no final XOR. All 256 entries in the original Linux backend's CRC table
+match that polynomial; original framing and dispatch instructions were inspected.
+This is static backend evidence plus live checksum validation, not a new complete
+original-instruction emulator comparison.
+
+The initial 45-second sampling window contains 437 complete CRC-valid observed
+records: 404 type-2 records containing flight-controller data, 22 type-5 status
+records, seven type-7 records, three type-32 records and one type-4 record.
+Embedded MSP-v1 checks validate status (361 observations), firmware version (9),
+analog (5) and firmware identity (3). Sampling can miss or repeat packets; these
+counts are observations, not total traffic. Other inner formats/fields remain
+uninterpreted. This corrects the earlier broad inference that unintegrated
+UART/event services imply no flight-controller telemetry: the existing host-data
+path is separate. No C8 traffic was observed in either runtime check, so live
+VTX-to-event-8 delivery remains unverified.
+
+All 65 sanitizer suites and 18 Python tests pass. The new adapter suite covers
+33,401 frame-length/split combinations with ring wrap, concatenated maximum
+frames, corrupted CRCs, event storage exhaustion, owned event copies, absent
+subscriptions, link resets and diagnostic sample bounds. Existing parser and
+event-forwarder original comparisons remain their behavioral evidence; this new
+composition is tested natively.
+
+The first warm candidate load showed black camera output and failed acceptance.
+A receiver reboot restored stock video. The same candidate then passed a fresh
+30-second direct HDMI-to-USB capture with the dark textured camera scene and
+right-side objects: 33 linked samples, advancing AP time, zero socket drops and
+12,911,657 delivered video bytes. Sixty flow samples over 59.02 seconds record
+24,272,037 delivered bytes, zero drops and zero SDIO errors. A separate 20-second
+telemetry sample records 49,372 additional host-data bytes and no C8 input.
+The image remains running in RAM; runtime/container/config/boot provenance is
+recorded in ignored `.local/stage230-telemetry-20261015T202932Z/`. This does not
+resolve the warm-restoration cause, intermittent receive loss, controlled camera
+freshness, typed telemetry semantics or full internal-service ownership.

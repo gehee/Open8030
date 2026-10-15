@@ -116,6 +116,25 @@ Service ownership and runtime parser/routing integration remain pending. See
 [internal data coverage](parity.md#mode-3-internal-data-graph-and-event-forwarding)
 and [framing coverage](parity.md#internal-socket-port-1-framing).
 
+Stage 230 adds a cooperative receive adapter in `src/telemetry.c`: connected
+slot-0 MAC port 2 feeds the C8 parser, and each valid complete envelope is copied
+into a 1,024-byte event-8 body through `data_event.c`. It uses fixed storage and
+clears partial framing on link changes. This does not provision the original
+bidirectional internal sockets or UART services; external socket admission is
+unchanged. MAC port 3 continues through the normal host socket and also supplies
+a bounded diagnostic sample. Live samples on that separate path contain
+transmitter status and flight-controller MSP messages.
+
+Diagnostic `0x015a002b` (direct alias `0x0c5a002b`) accepts an empty request and
+returns 596 bytes: twenty little-endian words, a 260-byte last-C8-frame area,
+and a 256-byte most recent host-data fragment. Word order is defined by
+`ar_telemetry_info` in [ar_telemetry.h](../include/ar_telemetry.h). Lengths delimit
+initialized data; unused bytes are zero. Counters distinguish input, valid
+frames, publication, no subscription, event drops and malformed bytes. Host
+samples may be truncated or missed between reads; they are not a lossless capture
+or a decoded telemetry API. Reading has no subscription or queue-consumption
+side effects. Link changes clear partial and sampled data while retaining counters.
+
 Important compiled bounds include a 4,096-byte frame payload, four SDIO transmit
 queue entries, four socket ports, up to 56,320 receive bytes per port and two
 pending writes per port. Active ports can use smaller receive capacities. These
@@ -163,8 +182,9 @@ The host event transport supports all twelve original subscription IDs and
 declared payload sizes up to 1,024 bytes. Sixteen descriptors share a 4,096-byte
 FIFO; publications copy their input, and queued copies survive unsubscribe.
 The polling loop commits an event only after SDIO accepts its immutable copy.
-Only link/MCS producers (IDs 0/1) are integrated. Other subscriptions do not yet
-provide their original event sources or internal data routes. See
+Link/MCS producers (IDs 0/1) and the selected C8 receive bridge (ID 8) are
+integrated. Other subscriptions do not yet provide their original event sources
+or internal data routes. See
 [host event coverage](parity.md#host-event-subscriptions-and-copied-transport).
 
 ## Host protocol

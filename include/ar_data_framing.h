@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Source-only parser for the mode-3 event-port-0 and socket-port-1 profile:
+/* Parser for the mode-3 event-port-0 and socket-port-1 profile:
  * C8, length, body, CRC8-D5. This does not implement other original profiles,
  * route ownership, packet allocation, or RTOS workers. */
 #define AR_DATA_MODE3_EVENT_RING_SIZE 1043u

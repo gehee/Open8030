@@ -43,6 +43,7 @@ TESTS = {
     'ap_time': ('ap_time', [], []),
     'fch_monitor': ('fch_monitor', [], []),
     'event': ('event', [], []),
+    'telemetry': ('telemetry data_framing data_event event', [], []),
     'data_event': ('data_event', [], []),
     'data_framing': ('data_framing data_event', [], []),
     'data_route': ('data_route data_event', [], []),

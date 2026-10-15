@@ -32,10 +32,10 @@ verified scope.
 
 ## Link-management findings and implementation status
 
-The findings below describe the matched original 18.21.10 firmware and the
-Open8030 development state through stage 229. The running image remains stage 215;
-stages 216–229 add source-only comparisons and tests. Passing those tests does
-not mean their services are present in the running firmware.
+The findings below describe the matched original 18.21.10 firmware. Stages
+216–229 added source-only comparisons; stage 230 integrates a selected C8 receive
+bridge and telemetry diagnostics. Passing helper tests does not mean every
+compared service is present in the running firmware.
 
 | Mechanism | What we have established | Open8030 status |
 | --- | --- | --- |
@@ -321,8 +321,10 @@ little-endian payload length, the payload, and a cleared tail. Bridge port 0
 uses event ID 8. This event representation is distinct from the radio stream's
 packet framing, whose parser and routing still need runtime implementation.
 Open8030 currently lacks these internal owners. Its host transport accepts all
-twelve original event subscriptions, including ID 8, but only producers 0 and 1
-are integrated. Subscription success does not establish the internal data path.
+twelve original event subscriptions, including ID 8. Stage 230 adds a fixed C8
+receive-to-event-8 bridge alongside producers 0 and 1; it does not provision
+bidirectional internal services. The tested VTX has sent no packets on this C8
+stream. Subscription success does not establish live delivery on that path.
 A source-only forwarding helper and original
 mode-3 graph comparisons are described in
 [internal data coverage](parity.md#mode-3-internal-data-graph-and-event-forwarding).
@@ -338,6 +340,15 @@ This is a recovered internal stream profile, not a new MAC envelope or a claim
 of full compatibility with an external protocol. Its source-only implementation
 and comparison limits are documented in
 [framing coverage](parity.md#internal-socket-port-1-framing).
+
+Flight-controller data is not limited to the internal C8 stream. In the tested
+setup, the existing MAC port-3 / host socket-port-2 stream carries a separate
+Linux application envelope containing transmitter-status records and MSP
+messages. Stage-230 samples validate outer CRCs and inner MSP checksums. Thus
+absence of C8 traffic does not mean absence of flight-controller telemetry.
+Full application parsing, field meanings and freshness are separate from the
+radio's opaque byte transport. See
+[live host-data evidence](parity.md#telemetry-receive-integration-and-live-host-data).
 
 Host notifications copy the declared event payload into transport-owned storage.
 Unsubscribe stops new publication while preserving queued notifications. The
@@ -680,10 +691,11 @@ exposing payloads. That CRC does not cover the outband or payload bytes. AP
 control and PHY messages have their own checks, and internal command envelopes
 use XOR. A valid checksum does not admit a peer or authorize payload forwarding.
 
-The source-only C8 stream parser retains fragmented frames, handles ring wrap
+The C8 stream parser retains fragmented frames, handles ring wrap
 and resumes searching after invalid length or CRC8-D5. It preserves the complete
 valid envelope for routing and uses a separate error-segment path for malformed
-bytes. This parser is not yet a running internal service. See
+bytes. Stage 230 integrates it into a fixed receive bridge; full internal-service
+provisioning remains open. See
 [framing comparison](parity.md#internal-socket-port-1-framing).
 
 ### Congestion, discard and packet lifetime

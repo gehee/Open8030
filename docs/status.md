@@ -750,6 +750,30 @@ open. This remains source-only; the build reproduces stage 215. See
 Fresh HDMI-to-USB video shows the camera scene with 33 linked samples; 60 flow
 samples show no socket drops or SDIO errors. Stage 215 remains running.
 
+Stage 230 integrates a bounded C8 receive-to-event bridge: admitted MAC port-2
+data passes through the compared stream parser and complete valid frames are
+published as original host event 8. Partial frames are cleared on link changes;
+event overflow and absent subscriptions are counted separately. This is a
+cooperative receive adapter, not complete internal interface provisioning or an
+implementation of UART transmission, SBUS or the host ingress setters.
+
+New read-only diagnostics also sample the existing MAC port-3 host-data path.
+Live samples establish that this path already carries both transmitter-status
+records and flight-controller MSP data. Earlier statements that flight-controller
+telemetry was entirely absent were too broad: the unintegrated UART/event path
+is separate from this functioning host-data path. Sampled complete records pass
+the original backend's CRC32C check; MSP status, firmware identity/version and
+analog messages also pass their inner checksums. Typed telemetry reporting and
+freshness validation remain work in progress. The C8 stream itself was silent,
+so synthetic coverage does not establish live C8 delivery from the VTX.
+
+All 65 native sanitizer suites and 18 Python tests pass. The first warm load
+produced black camera output and was rejected. A receiver reboot restored stock
+video; reloading the same candidate restored the visible dark textured scene.
+The candidate is retained after direct HDMI-to-USB inspection. This recovery does
+not isolate or fix the warm-reload issue. See
+[telemetry integration evidence](parity.md#telemetry-receive-integration-and-live-host-data).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host
