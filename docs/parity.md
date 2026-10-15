@@ -69,7 +69,7 @@ and scenario; they must be repeated after relevant changes.
 | Host lifecycle | Explicit stop/start and stop/deinit/init/start tested historically | Every wrong-state/repeated operation, cancellation, pending DMA, failure recovery and complete reset semantics. |
 | Events | All twelve original host subscriptions and declared payload sizes; copied FIFO transport; producers for IDs 0 and 1 | Integrate other producers and internal routes; compare their payload meaning, scheduling, overflow and lifecycle behavior. Subscription success alone does not establish a working producer. |
 | Host sockets | Slot-0 copy-mode data path, deferred close and active-write cancellation; normal backend video/control; stream/handle admission and queue factories compared offline | Stock host ports 0/1 reject opens because their streams already exist; native admission differs. Heap/RTOS internals, table initialization, worker startup, runtime ownership, other modes/slots, retained-descriptor TX, saturation, teardown races and complete capacity/error behavior remain open. |
-| Internal data interfaces | Stock stream occupancy observed; mode-3 graph, event forwarding, framing, route delivery, queued writer, ingress and socket write gate compared offline; constructed parser-to-route composition, native predicates, route-list submission and worker transformations compared; submission-to-worker composition executes original pool allocation/recycling; worker discard, age and errors compared | Integrate UART/SBUS, parsers, event producers, shared stream ownership and payload routing; implement native route construction and production pool/queue ownership; connect the full parser to transformed delivery; establish copying-action reachability and cleanup, other framing profiles, scheduling, modes, timing, teardown and failure recovery. A reserved-port rejection alone does not implement these services. |
+| Internal data interfaces | Stock stream occupancy observed; mode-3 graph, event forwarding, framing, route delivery, queued writer, ingress and socket write gate compared offline; constructed parser-to-route composition, native predicates, route-list submission and worker transformations compared; submission-to-worker composition executes original pool allocation/recycling; worker discard, age, errors and route construction/merging compared | Integrate UART/SBUS, parsers, event producers, shared stream ownership and payload routing; connect route construction to preflight and production pool/queue ownership; integrate the full parser and transformed delivery at runtime; establish copying-action reachability and cleanup, other framing profiles, scheduling, modes, timing, teardown and failure recovery. A reserved-port rejection alone does not implement these services. |
 | MAC framing | Header/descriptor parser and DEV encoder | Other formats/flags, receive ordering, duplicate handling and all original rejection rules. |
 | AP full/compact controls | Selected mode-0/slot-0 admission and connected control | All extensions, remote synchronization effects, changed channels, slots, stale/duplicate controls and unsupported modes. |
 | Internal port-0 commands | Stream parsing; login checksum ACK transmission | Receiving a command currently mainly records it. Inventory and implement each original command's effects, responses and retries. |
@@ -3612,3 +3612,82 @@ delivered bytes over 59.00 seconds. Image, configuration and boot identity match
 the retained baseline, and Open8030 remains running. This unchanged-runtime check
 does not establish fresh stock parity, controlled video freshness/latency or a
 fix for the earlier intermittent receive loss.
+
+### Native route construction and merging
+
+Stage 226 adds the source-only [route builder](../src/data_builder.c). It consumes
+semantic route specifications and an interface registry adapter, producing the
+native dispatch list and worker actions. It does not interpret loader JSON or
+provision interfaces. Its structures are native views, not original binary layouts.
+
+**574 original-constructor scenarios match**. These cover all low-five-bit
+predicate flags, selected low/high action bits, interface failures and IDs at
+0/63/64/65,535, role/disable admission, metadata framing, duplicate routes,
+pattern length/offset boundaries, worker-byte truncation and allocation failures.
+There are 1,075 identity lookups, 24 framing lookups, 1,041 allocation attempts,
+26 allocation failures, 501 published nodes and 13 unlinked allocations at the
+final boundaries. Results are zero for 498 cases, `-10000` for 41 admission
+failures, `-9997` for nine interface lookup failures and `-9999` for 26 allocation
+failures. These counts describe this test set, not a coverage percentage.
+
+The observed rules include:
+
+- A disabled record is skipped. Predicate flag 8 additionally requires its
+  configured role to equal the current role.
+- Flags 1/2 resolve the source; flag 4 resolves the second interface. Resolved
+  IDs must be below 64. Actions containing `0xc8` bits also require a destination.
+- With predicate flag 16, pattern offset plus length must not exceed 4,114.
+  Actions containing both `0x08` and `0x20` are rejected. Copying actions such as
+  `0x0a`/`0x0c` are admitted when supplied; this does not establish their use by
+  shipped configurations outside the matched mode-3 table.
+- New nodes prepend to the list. Existing nodes merge only when the full predicate
+  flags and action flags agree, along with the IDs/range/offset/length selected
+  by those predicate flags. Metadata bounds matter only when the newly resolved
+  source's framing field is nonzero.
+- The merge test compares pattern **length and offset, but not pattern bytes**.
+  It also compares source IDs only when flag 1 is set. A merge retains the first
+  filter/pattern, combines destination bits, replaces metadata override and stores
+  the new worker value's low byte. Existing accounting remains intact.
+- Allocation failure stops construction without undoing earlier records. A new
+  node is published only after its action allocation succeeds. If that allocation
+  fails, the unlinked node remains allocated. Native allocator adapters own all
+  returned storage, including this partial state; no original rollback is inferred.
+
+All **514 executed instruction locations** match original payload/container/ELF
+bytes. The constructor, identity/ID lookups, copy and bit helpers execute;
+allocation, mutex and diagnostic endpoints are adapters. The original six-record
+mode-3 table is bound to its payload bytes, and constructed route lists for roles
+0/1/2 also agree with the immutable stage-220 traces that used the table directly.
+The existing narrowly modeled WEXTI instruction is unchanged. Synthetic ELF,
+pointers, ABI and partial ISA remain analysis metadata. Detailed evidence stays
+in ignored `.local/stage226-route-builder/`.
+
+Native guards reject patterns longer than the native 38-byte storage, null
+pattern storage and record counts above 65,535 with `-22`. The original's unchecked
+long copies and counter wrap are not reproduced. Matching original probes use
+patterns of at most 32 bytes; the 38-byte native boundary has a sanitizer test.
+Reserved action bytes are zero in the fixtures and matched table and are not
+modeled. Existing null-action nodes, concurrency, full teardown and other mode
+catalogs remain open comparison work.
+
+The native pipeline suite now uses the builder, predicates, dispatcher and worker
+instead of hard-coded role selection and submission. Across **1,698 split/wrap
+cases**, it connects C8 parsing to constructed mode-3 routes and direct/event
+output, checking the expected destination and worker for each tested role.
+Registry, packet storage, queue transfer and scheduling remain test adapters.
+This is sanitizer-tested native composition of compared components, not a new
+execution of the entire original pipeline in these 1,698 cases. Four ASan/UBSan
+suites and 18 Python tests pass.
+
+Production preflight, interface provisioning, real queue/pool ownership, lifecycle
+and backend integration remain open. The builder stays outside the firmware build,
+which reproduces stage 215.
+
+A fresh 30-second `/dev/video0` HDMI-to-USB capture shows the dark textured camera
+scene and right-side objects. All 33 samples remain linked with advancing AP time
+and zero socket drops; video delivery increases by 13,187,127 bytes. A separate
+60-sample flow check records zero socket drops or SDIO errors and 24,501,647
+delivered bytes over 59.01 seconds. Image, configuration and boot identity match
+the retained baseline. Open8030 remains running. This unchanged-runtime check
+does not establish fresh stock parity, controlled freshness/latency or a fix for
+the earlier intermittent receive loss.

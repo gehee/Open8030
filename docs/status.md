@@ -706,6 +706,17 @@ stage 215. Normal lifecycle configuration and runtime ownership remain open. See
 Fresh HDMI-to-USB video shows the camera scene with 33 linked samples; 60 flow
 samples show no socket drops or SDIO errors. Stage 215 remains running.
 
+Stage 226 adds native route construction and merging. All 574 original cases
+match, including partial allocation failure. Mode-3 lists for roles 0/1/2 also
+match the retained original constructed traces. The native pipeline now composes
+construction, parsing, dispatch and worker delivery across 1,698 split/wrap cases.
+Four sanitizer suites and 18 Python tests pass. Registry, storage and scheduling
+remain adapters; production preflight and runtime integration remain open. The
+build reproduces stage 215. See
+[route builder coverage](parity.md#native-route-construction-and-merging).
+Fresh HDMI-to-USB video shows the camera scene with 33 linked samples; 60 flow
+samples show no socket drops or SDIO errors. Stage 215 remains running.
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host
