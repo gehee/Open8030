@@ -20,6 +20,7 @@ struct ar_tx_stream_queue {
 	uint64_t acquired_bytes;
 	uint32_t high_water, short_writes;
 	uint64_t written_bytes;
+	uint32_t disables;
 };
 struct ar_tx_stream {
 	uint32_t references;
@@ -30,6 +31,7 @@ struct ar_tx_stream {
 struct ar_tx_stream_registry {
 	uint32_t mutex;
 	struct ar_tx_stream *streams[8][5][2];
+	uint8_t present_mask; /* Selector allocation, needed to distinguish close -2. */
 };
 struct ar_tx_stream_ops {
 	int (*lock)(uint32_t mutex, uint32_t timeout, void *context);
@@ -51,6 +53,33 @@ struct ar_tx_stream_write_ops {
 	uint64_t (*clock_us)(void *context);
 	int (*wait)(uint32_t signal, uint32_t timeout_ms, void *context);
 };
+struct ar_tx_stream_close_ops {
+	int (*lock)(uint32_t mutex, uint32_t timeout, void *context);
+	void (*unlock)(uint32_t mutex, void *context);
+	void (*destroy_sync)(uint32_t token, void *context);
+	void (*free_queue)(struct ar_tx_stream_queue *queue, void *context);
+	void (*free_stream)(struct ar_tx_stream *stream, void *context);
+	void (*delay)(uint32_t units, void *context);
+};
+/* Source-only queue disable and stream close. Disable clears queue flag bit 1
+ * and increments disables only on the enabled-to-disabled transition; no wake.
+ * Close mask bit 1 selects direction 0 (TX), bit 0 direction 1 (RX), in that
+ * order. Invalid selector/port/no selected direction returns -6; an unallocated
+ * selector returns -2. Higher mask bits are ignored. Busy streams stay registered
+ * with their queues disabled while close unlocks and delays one scheduler unit,
+ * retrying indefinitely. Delay adapters must allow held references to drain.
+ * Zero-reference streams destroy ready/space/mutex objects, then free their
+ * queue unless queue flag bit 0 marks external storage, and finally free the
+ * stream and clear its registry slot. Queued bytes alone do not prevent freeing.
+ * Free/destroy callbacks run under the registry lock. Registry selector storage
+ * must remain stable throughout close, including delays; adapters serialize all
+ * mutations. Missing native arguments/adapters return -22. Lock results are
+ * ignored. No RTOS timing, pending-DMA safety or runtime integration is implied. */
+int ar_tx_queue_disable(struct ar_tx_stream_queue *queue,
+	const struct ar_tx_stream_close_ops *ops, void *context);
+int ar_tx_stream_close(struct ar_tx_stream_registry *registry,
+	unsigned selector, unsigned port, unsigned mask,
+	const struct ar_tx_stream_close_ops *ops, void *context);
 /* Source-only queue producer. Storage is a stable native mapping of the queue's
  * data area; it must cover capacity bytes and must not overlap input. Retained
  * entry serialization belongs to the caller. Full writes add pending_increment;

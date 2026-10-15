@@ -2060,3 +2060,67 @@ retained-session identity are recorded privately. Stage 201 remains running in
 RAM; this capture confirms continuity, not hardware integration of the new helper
 or controlled video freshness. Runtime ownership, pending-DMA teardown and full
 original-firmware coverage remain open.
+
+### Stream close and held-reference lifetime
+
+Stage 203 adds source-only stream close and queue disable, compared with the
+original close (`0x231ef6`), stream destruction (`0x231e5e`) and queue disable
+(`0x242f62`) bodies. This establishes another prerequisite for runtime ownership
+integration. It does not replace the current host socket close implementation.
+
+Close accepts selector 0–7, port 0–4 and a direction mask: bit 1 selects TX,
+bit 0 RX, processed in that order. Invalid indices or no selected direction
+return `-6`; a missing selector allocation returns `-2`. Higher mask bits do not
+select additional directions. The native registry records selector allocation
+separately because an allocated selector with empty stream slots closes
+successfully.
+
+A stream with nonzero references remains registered. Close disables its queue
+under the queue mutex, unlocks the registry, delays one scheduler unit, and
+retries indefinitely. Disable clears queue flag bit 1 and increments a wrapping
+counter only if the queue was enabled. It does not wake readers or writers.
+The delay endpoint's argument is compared; actual scheduler timing is not.
+
+At zero references, close destroys the queue's ready signal, space signal and
+mutex in that order. It frees queue storage unless queue flag bit 0 marks
+external storage, clears the stream's queue pointer, frees the stream, and clears
+the registry slot. Destruction runs under the registry lock. Queue occupancy does
+not independently prevent destruction, and this destructor does not release
+queued retained-buffer callbacks. Higher-level shutdown must therefore satisfy
+the ownership contract; disabling a queue alone does not establish DMA completion.
+
+After destroying TX, close clears its local TX selection bit before considering
+RX. A new TX stream published while close waits for RX is left alone. If TX was
+initially absent, the bit remains selected and a newly published TX stream is
+visited on retry. Both cases are compared, along with missing queues, external
+storage, unequal TX/RX reference counts, repeated disable, counter wrap,
+re-enabling during a wait, and changes to synchronization tokens and allocation
+flags during destruction callbacks.
+
+Fresh original execution passes **1,064 scenarios**, including **24 composed
+acquire/close/retire sequences** with byte and retained-entry queues. In those
+sequences, acquisition holds a reference, close disables the queue, and the
+intercepted scheduler delay runs the original packet retirement and stream release
+bodies before close resumes and frees storage. The comparison checks complete
+queue/stream views, registry slots, packet-ring state, acquisition spans, results
+and ordered effects. It covers 506 waiting scenarios, 2,794 locks and unlocks,
+1,716 synchronization-destruction calls, 1,196 frees and 1,058 delays. All 848
+executed instruction locations match the reference payload/container/analysis ELF.
+
+RTOS locking, delay, synchronization destruction, heap free, buffer callbacks and
+diagnostics are intercepted. The 86 invalid-argument diagnostic clock reads are
+excluded from native functional comparison. Synthetic retirement during a delay
+does not prove concurrent scheduling or real DMA completion. Selector storage is
+held stable across retries. Synthetic ELF, ABI and partial ISA semantics remain
+analysis metadata; missing native adapter guards return an additional `-22`.
+
+Five ASan/UBSan suites and 18 Python tests pass, including actual native frees
+under ASan and stream publication during close. The previous 1,554 producer
+scenarios still pass. The standard build reproduces stage 201 exactly. A fresh
+30-second `/dev/video0` HDMI-to-USB capture at MJPEG 1920×1080/nominal 30 fps
+shows the camera texture and right-side features at 5 and 27 seconds. All 33
+samples remain linked with advancing AP time and zero sampled socket drops.
+Device image/configuration and retained-session identity are recorded privately;
+stage 201 remains running. Stream allocation, retained-entry publication, host
+socket shutdown, runtime ownership and hardware pending-DMA tests remain open,
+as do controlled video freshness and full original-firmware coverage.

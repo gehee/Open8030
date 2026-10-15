@@ -2,6 +2,79 @@
 #include "ar_tx_stream.h"
 #include <string.h>
 
+int ar_tx_queue_disable(struct ar_tx_stream_queue *queue,
+	const struct ar_tx_stream_close_ops *ops, void *context)
+{
+	if (!queue)
+		return 0;
+	if (!ops || !ops->lock || !ops->unlock)
+		return -22;
+	(void)ops->lock(queue->mutex, UINT32_MAX, context);
+	if (queue->flags & 2) {
+		queue->flags &= ~2u;
+		queue->disables++;
+	}
+	ops->unlock(queue->mutex, context);
+	return 0;
+}
+
+static void destroy_stream(struct ar_tx_stream *stream,
+	const struct ar_tx_stream_close_ops *ops, void *context)
+{
+	struct ar_tx_stream_queue *queue = stream->queue;
+	if (queue) {
+		ops->destroy_sync(queue->ready_signal, context);
+		ops->destroy_sync(queue->signal, context);
+		ops->destroy_sync(queue->mutex, context);
+		if (!(queue->flags & 1))
+			ops->free_queue(queue, context);
+		stream->queue = NULL;
+	}
+	ops->free_stream(stream, context);
+}
+
+int ar_tx_stream_close(struct ar_tx_stream_registry *registry,
+	unsigned selector, unsigned port, unsigned mask,
+	const struct ar_tx_stream_close_ops *ops, void *context)
+{
+	if (!registry || !ops || !ops->lock || !ops->unlock || !ops->destroy_sync ||
+	    !ops->free_queue || !ops->free_stream || !ops->delay)
+		return -22;
+	if (selector > 7 || port > 4 || !(mask & 3))
+		return -6;
+	if (!(registry->present_mask & (1u << selector)))
+		return -2;
+	struct ar_tx_stream **slots = registry->streams[selector][port];
+	for (;;) {
+		(void)ops->lock(registry->mutex, UINT32_MAX, context);
+		struct ar_tx_stream *busy = NULL;
+		if ((mask & 2) && slots[0]) {
+			if (slots[0]->references) {
+				busy = slots[0];
+			} else {
+				destroy_stream(slots[0], ops, context);
+				mask &= ~2u;
+				slots[0] = NULL;
+			}
+		}
+		if (!busy && (mask & 1) && slots[1]) {
+			if (slots[1]->references) {
+				busy = slots[1];
+			} else {
+				destroy_stream(slots[1], ops, context);
+				slots[1] = NULL;
+			}
+		}
+		if (!busy) {
+			ops->unlock(registry->mutex, context);
+			return 0;
+		}
+		(void)ar_tx_queue_disable(busy->queue, ops, context);
+		ops->unlock(registry->mutex, context);
+		ops->delay(1, context);
+	}
+}
+
 int ar_tx_queue_write(struct ar_tx_stream_queue *queue, uint8_t *storage,
 	size_t storage_size, const uint8_t *input, uint32_t amount,
 	uint32_t timeout_ms, unsigned require_space, unsigned discard_available,

@@ -26,6 +26,7 @@ TESTS = {
     'tx_stream': ('tx_stream tx_retire', [], []),
     'tx_acquire': ('tx_stream', [], []),
     'tx_write': ('tx_stream', [], []),
+    'tx_close': ('tx_stream tx_retire', [], []),
     'tx_packet': ('tx_packet tx_stream tx_retire mac', [], []),
     'tune': ('tune', [], []),
     'socket_rx': ('socket_rx', [], []),

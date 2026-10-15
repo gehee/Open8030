@@ -464,6 +464,15 @@ A fresh 30-second HDMI-to-USB capture shows the camera scene, with 33 linked
 samples and zero sampled socket drops. Stage 201 remains running in RAM.
 See [queue producer coverage](parity.md#tx-queue-producer-and-backpressure).
 
+Stage 203 compares stream close and queue disable against 1,064 original
+scenarios, including 24 acquire/close/retire sequences. Held references prevent
+freeing until retirement; close disables busy queues and yields while waiting.
+Five sanitizer suites, 18 Python tests and 1,554 producer regression cases pass.
+The helpers remain source-only; the build reproduces stage 201. A fresh
+30-second HDMI-to-USB capture shows the camera scene with 33 linked samples and
+zero sampled socket drops. Stage 201 remains running in RAM. See
+[stream close coverage](parity.md#stream-close-and-held-reference-lifetime).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host
