@@ -122,6 +122,16 @@ No firmware bytes changed during this investigation. A fresh 20-second native
 HDMI capture preserves the stock-matching dark scene, with 23 linked/AP-time
 samples and zero sampled socket drops; the accepted image remains running in RAM.
 
+A source-only catalog module now matches the original serialization and work-list
+decisions in 1,645 instruction-emulator cases. Its policy, AP tuning and scan-reset
+callbacks are comparison boundaries, and processed scores are supplied inputs.
+It is not yet part of the firmware build or host dispatcher; the three catalog
+commands remain unsupported on the device. Its sanitizer test also checks the
+existing scan iterator against the selected list. A fresh 20-second direct HDMI
+capture of the unchanged accepted image passes with 23 linked/AP-time samples
+and zero sampled socket drops. See [catalog contracts](parity.md#channel-catalog-command-contracts)
+for the exact scope and remaining integration work.
+
 A separate configuration-only test reproduced acquisition failure at initial
 power level 11 using the accepted AP-time image. No video was delivered;
 restoring the original level-25 configuration restored the stream. This failure

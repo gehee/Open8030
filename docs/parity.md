@@ -526,6 +526,52 @@ all 23 native samples remain linked with advancing AP time and zero sampled
 socket drops. The accepted image was retained in RAM. These observations do not
 establish controlled freshness, image quality or measured latency.
 
+### Channel-catalog command contracts
+
+The independent [catalog module](../src/catalog.c) now implements serialization
+and work-list decisions for this workflow. It is tested offline and **is not yet
+connected to the firmware dispatcher or included in the firmware build**. All
+three host commands remain unsupported in the running image. Runtime integration
+must supply the original processed scan scores and implement the policy, AP
+tuning and auxiliary-scan reset callbacks.
+
+Original-instruction comparison covers 160 channel-information cases, 90
+enabled-list cases and 1,395 work-list cases, including 3,086 ordered callback
+actions. All 407 executed instruction locations are bound to the matched original
+payload, container and analysis ELF bytes. Cases include both catalog banks,
+empty through 128-entry catalogs, DEV/AP channel reporting, null enabled-list
+output/catalog pointers, count boundaries, duplicate/invalid/forbidden indices,
+automatic-policy precedence, AP state and callback-induced current-channel changes.
+
+The original dispatcher, mode getter, base-channel score lookup and group/catalog
+iterators execute. Memory copy, clock/division/logging, policy, AP lock/tune/unlock
+and auxiliary-scan reset helpers are intercepted. The comparison validates their
+arguments and order, not their internal effects. Processed scores are synthetic;
+score generation and physical measurement attribution remain open. Original
+unused reply bytes retain the seeded buffer contents; native serialization
+deliberately zeroes them. Native bounds/null validation additionally rejects
+unsafe structural inputs that are not executed against the original.
+
+The work-list implementation preserves several consequential details:
+
+- Invalid and forbidden entries do not enable channels, but the first supplied
+  index can still become the fallback/AP tune request. The policy/tune callbacks
+  must apply their own validation.
+- Current-channel membership compares the complete 16-bit channel value;
+  subsequent group lookup uses its low byte. Automatic policy takes precedence
+  over current-channel membership.
+- Group selector 3 matches any enabled channel. Other group winners are cleared
+  only when their group has no enabled entries; surviving winners are retained.
+- AP locking surrounds the conditional broadcast-channel update. The auxiliary
+  scan reset follows group updates even when no channel change was requested.
+
+The new native test suite passes with address/undefined-behavior sanitizers and
+checks interoperability with the existing scan iterator. Fresh direct 20-second
+HDMI capture of the unchanged accepted image retains the stock-matching dark
+scene, with 23 linked/AP-time samples and zero sampled socket drops. This closes
+the compared serialization and decision logic only; the connected backend
+workflow, callback behavior, score processing and hardware parity remain open.
+
 Next, extend the core inventory through the transport dispatchers and indirect
 callbacks, and bind each command's behavior to its comparison tests. Then cover
 radio messages, timers and state transitions in the same way. Dynamic power still

@@ -104,6 +104,7 @@ are implementation limits, not CLI tuning parameters.
 | --- | --- |
 | `bootstrap/`, `boards/`, `soc/` | Bootstrap, memory layout and CPU/platform setup |
 | `src/command.c` | Command expansion, register-field writes, retained metadata and first-match profile updates |
+| `src/catalog.c` | Offline-tested channel-catalog serialization and work-list decisions; pending runtime integration |
 | `src/main.c`, `frame.c`, `dispatch.c` | Polling loop, framing, request dispatch and diagnostics |
 | `src/sdio_device.c` | Host transport and bounded SDIO queues |
 | `src/boot.c`, `json.c`, `config.c` | Startup and loader configuration |
