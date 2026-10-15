@@ -74,7 +74,7 @@ and scenario; they must be repeated after relevant changes.
 | Internal port-0 commands | Stream parsing; login checksum ACK transmission | Receiving a command currently mainly records it. Inventory and implement each original command's effects, responses and retries. |
 | PHY commands | See command table below | Exact callbacks, TTL/replacement ordering and side effects for every command. |
 | Hardware command preparation | Command builder, metadata updates and preparation selection; fixed DEV frame, cached board/TX calibration and TX look-ahead | Independent sweep and base-channel score arithmetic are integrated; active-catalog policy, auxiliary scans, PA-sleep policy, retained-buffer ownership and actual interrupt ordering remain open. Helper comparisons do not establish the complete original handler. |
-| MCS adaptation | RX adaptation and limited TX increase; interleaver, TX MCS callbacks and pre-encode history compared offline | Integrate TX decrease/drain producers and callbacks, queue delivery/ownership, all PHY keys, retry/expiry, loss interactions and sustained adaptation. |
+| MCS adaptation | RX adaptation and normal-key user-0 TX increase/decrease drain integrated; interleaver, TX MCS callbacks and pre-encode history compared offline | Hardware decrease under peer control, queue delivery/ownership, all PHY keys, retry/expiry, loss interactions and sustained adaptation. |
 | Power and calibration | Initial user-0 setup at level 25; calibration writes, cache ordering and band-offset helpers compared offline | Level 11 also fails acquisition in the accepted image with only its loader setting changed. Resolve the low-power transmit path, then normal backend power writes, all users, peer policy and calibration effects. |
 | Channel/band selection | Configured link search, independent measurement sweep and base-channel averaging | Match the original active catalog and sampling cadence; integrate automatic selection, independent uplink changes, subchannels, hopping, rollback and cross-band operation. |
 | Time synchronization | DEV AP-time decoding/getter; original-instruction comparison and hardware startup/restart checks | Physical peer-loss/stale time, long-run hardware wrap and other roles/modes. |
@@ -195,7 +195,7 @@ commands. Equal command numbers across those layers have no implied relationship
 | 0 | Compared cache semantics; synthesized admission reports unsupported | Mode-3 reconfiguration/admission and broader local-position state |
 | 1 | Unsupported | Original callback and hardware effects |
 | 2 | Unsupported | Original callback and hardware effects |
-| 3 | Limited TX-MCS update; outgoing RX-MCS request | Decrease/drain and full timing/acknowledgement behavior |
+| 3 | Normal-key user-0 TX increase/decrease drain; outgoing RX-MCS request | Hardware decrease validation, full ownership, retry and timing/acknowledgement behavior |
 | 4 | Unsupported at runtime; callback, transaction and monitor helpers compared offline | Integrate PHY transport, channel transition, confirmation and rollback; verify physical retuning and failure recovery |
 | 5 | Unsupported | Original callback and hardware effects |
 | 6 | Selected RX/TX identity fields | All user/state combinations and shared-field effects |
@@ -1871,3 +1871,61 @@ and indirect callbacks, binding each contract to its comparison tests. Then cove
 radio messages, timers and state transitions in the same way. Dynamic power still
 needs a separately isolated acquisition fix. Neither a large synthetic test count
 nor a visible scene can close the remaining matrix by itself.
+
+### Runtime TX MCS drain integration
+
+Stage 200 connects the compared TX MCS helper and the TX bookkeeping portion of
+interleaver service to the normal mode-0 DEV runtime. Initialization derives the
+current user-0 MCS from programmed fields. Incoming command 3 still requires
+slot 0, an index below 16 and a supported normal encoding key. Increases apply
+immediately; equal targets do nothing. A decrease preserves its pending target
+against subsequent requests, counts six user-0 interleaver events and applies on
+the seventh. A second hardware-user read selects the bookkeeping entry; other
+users do not advance user 0. Successful application publishes the existing
+MCS-change event. The compared chip-profile-1 block-count adjustment is included.
+
+This is a partial integration into the existing cooperative copy-mode TX path.
+It does not install the original full interrupt handler, queue delivery or
+retained-buffer ownership. Retry limits remain zero: pre-encode history and
+retry-failure event producers are not integrated. Other bookkeeping users,
+special PHY keys and cancellation with outstanding hardware work remain gaps.
+The 64-byte TX diagnostic uses its former final three reserved words for pending
+state (`active | drain << 8 | target_mcs << 16`), completed drain applications
+and requests ignored while busy.
+
+The refactored helper replays 7,540 original interleaver scenarios and 18,030
+TX MCS scenarios: 17,496 nonfatal outcomes and 534 assertion-prefix comparisons.
+The latter set includes 270 composed request/interleaver sequences. These reuse
+the corrected, hash-bound traces described above, with 2,220 and 6,486 unsafe
+user probes respectively excluded. Forty interleaver effects differ only in
+reserved payload bytes that native code deliberately initializes. Intercepted
+MMIO/RTOS helpers, synthetic state, partial ISA semantics and synthetic ELF/ABI
+metadata retain their earlier limitations; replay is not fresh hardware or full
+handler execution.
+
+Three sanitizer suites and 18 Python tests pass. The synthetic RF integration
+test exercises immediate increase, pending decrease, competing requests,
+other-user isolation, six drain steps, seventh-event application, register
+fields, unchanged command duration and exact event ordering.
+
+Hardware validation uses the matched Ascent VRX 18.21.10 inputs after a receiver
+reboot into stock. Direct `/dev/video0` capture through the HDMI-to-USB adapter
+uses MJPEG 1920×1080 at nominal 30 fps, with device identity and settings recorded
+privately. Native startup, stop/start, deinit/init/start and candidate
+removal/readmission captures total 80 seconds and 92 linked/AP-time samples,
+with zero sampled socket drops. Inspected frames show the same dark textured
+camera scene and right-side features as fresh stock. Compensation survives the
+transitions, and the normal backend causes one TX MCS increase from 1 to 2 in
+each session. **No decrease is observed on hardware.** Consequently this trial
+establishes baseline video/lifecycle compatibility and increase application;
+the new decrease path retains offline and synthetic integration evidence only.
+Physical peer loss, sustained adaptation, controlled freshness/latency and the
+previous low-power acquisition failure remain unresolved.
+
+The retained runtime is 72,528 bytes, SHA-256
+`83a2ca3937356399ce8e6369b138985e77c3cad4d51862bdb578ce62bf320bed`.
+Its 90,624-byte container has SHA-256
+`ea5bc92ea9b44cd41e10221e3e94bb9c1fd77ce3edf7b8948b0df729bd7f469c`.
+The standard build reproduces it; RAM usage is 676,976 of 704,512 bytes. The
+bootstrap and private board profile are unchanged. Full original-firmware
+coverage remains incomplete.

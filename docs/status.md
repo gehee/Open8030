@@ -425,6 +425,21 @@ These are accounting effects, not host notifications. Four sanitizer suites and
 samples and zero sampled socket drops. See
 [reservation and accounting coverage](parity.md#tx-slot-reservation-and-post-submission-accounting).
 
+Stage 200 integrates normal-key user-0 TX MCS requests and the compared
+interleaver drain into the running firmware. Synthetic RF tests verify six drain
+events followed by application on the seventh, pending-target preservation,
+other-user isolation and event order. Replaying the original traces passes
+7,540 interleaver cases and 18,030 TX MCS cases, including 534 assertion prefixes.
+Three sanitizer suites and 18 Python tests pass.
+
+The new image passes startup, stop/start, deinit/init/start and candidate
+removal/readmission. Its 80 seconds of inspected HDMI-to-USB capture show the
+same camera scene as fresh stock, with 92 linked samples and zero sampled socket
+drops. Each session exercised an increase from TX MCS 1 to 2; **no hardware
+decrease was observed**. The image remains running in RAM. Hardware decrease
+testing, full retained-buffer ownership, retries/history and broader keys remain
+open. See [runtime TX MCS coverage](parity.md#runtime-tx-mcs-drain-integration).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host

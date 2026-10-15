@@ -424,10 +424,15 @@ the MCS change complete. Cancellation clears the active command bits rather than
 inventing peer acknowledgement.
 
 Incoming command 3 addresses the receiver's **transmit** MCS. Integration accepts
-slot 0 and an internal index below 16, validates its encoding key, and can apply
-an increase. Equal values require no change. Decreases are recorded but not
-applied: the required interleaver-drain and buffer-ownership transition is not
-implemented. This is a material limit on adaptive-link parity.
+slot 0 and an internal index below 16, validates its normal encoding key, and
+applies an increase immediately. Equal targets require no change; another target
+is ignored while a decrease is pending. A decrease waits for six user-0
+interleaver events and applies on the seventh, then publishes the MCS-change
+event. Other users do not advance this drain. This uses the compared original
+bookkeeping and register-application helpers, within the existing copy-mode TX
+path. Retained-buffer ownership, retry/history producers, special PHY keys and
+sustained adaptation under loss remain unintegrated or unverified. See the
+[runtime TX MCS validation limits](parity.md#runtime-tx-mcs-drain-integration).
 
 ## Hardware command preparation
 

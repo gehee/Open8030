@@ -83,7 +83,7 @@ const struct ar_rf_traffic_info *ar_rf_traffic_information(void);
 struct ar_rf_tx_mcs_info {
 	uint32_t requests, applied, unchanged, rejected, downgrades;
 	uint32_t first_apply_us, last_apply_us, current, requested, before, after, key;
-	uint32_t mode_changed, reserved[3];
+	uint32_t mode_changed, pending, drained, busy_requests;
 };
 const struct ar_rf_tx_mcs_info *ar_rf_tx_mcs_information(void);
 struct ar_rf_phy_info {

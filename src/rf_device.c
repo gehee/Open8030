@@ -16,6 +16,7 @@
 #include "ar_scan_scores.h"
 #include "ar_tune.h"
 #include "ar_power_control.h"
+#include "ar_tx_mcs.h"
 #include <string.h>
 #ifndef AR_RF_SIMULATED
 #include "ar_sdio_device.h"
@@ -126,7 +127,15 @@ const struct ar_rf_sync_info *ar_rf_sync_information(void) { return &sync_info; 
 static struct ar_rf_traffic_info traffic_info;
 const struct ar_rf_traffic_info *ar_rf_traffic_information(void) { return &traffic_info; }
 static struct ar_rf_tx_mcs_info tx_mcs_info;
-const struct ar_rf_tx_mcs_info *ar_rf_tx_mcs_information(void) { return &tx_mcs_info; }
+/* User-0 drain/application only. Retry limits and pre-encode history producers
+ * are not integrated; initialization leaves the retry limit at zero. */
+static struct ar_interleaver tx_interleaver;
+const struct ar_rf_tx_mcs_info *ar_rf_tx_mcs_information(void)
+{
+	const struct ar_interleaver_user *u = &tx_interleaver.users[0];
+	tx_mcs_info.pending = u->active | (uint32_t)u->drain << 8 | (uint32_t)u->mcs << 16;
+	return &tx_mcs_info;
+}
 const struct ar_rf_mcs_info *ar_rf_mcs_information(void)
 {
 	mcs_info.samples = dev_mcs.samples; mcs_info.requests = dev_mcs.requests;
@@ -238,6 +247,53 @@ static void field(uint32_t encoded, uint32_t value)
 	uint32_t mask = encoded & 0xe0 ? UINT32_MAX : (UINT32_C(1) << width) - 1;
 	update(BB + (encoded >> 16), mask << shift, (value & mask) << shift);
 }
+static uint32_t tx_mcs_read(uint32_t encoded, void *context)
+{
+	(void)context;
+	return (read32(BB + (encoded >> 16)) >> ((encoded >> 8) & 31)) &
+		((UINT32_C(1) << (encoded & 31)) - 1);
+}
+static uint32_t tx_mcs_word(uint32_t offset, void *context)
+{
+	(void)context; return read32(BB + offset);
+}
+static void tx_mcs_field(uint32_t encoded, uint32_t value, void *context)
+{
+	(void)context; field(encoded,value);
+}
+static void tx_mcs_event(unsigned event, const uint8_t payload[9], void *context)
+{
+	(void)context; publish_event(event,payload,9);
+}
+static const struct ar_tx_mcs_ops tx_mcs_ops = {tx_mcs_read,tx_mcs_word,tx_mcs_field,tx_mcs_event};
+static void tx_mcs_applied(unsigned mcs)
+{
+	tx_mcs_info.after = read32(BB + 0xb00);
+	if (((tx_mcs_info.before >> 22) & 3) != ((tx_mcs_info.after >> 22) & 3))
+		tx_mcs_info.mode_changed++;
+	mcs_event(0,mcs,tx_mcs_info.current); tx_mcs_info.current = mcs;
+	tx_mcs_info.last_apply_us = elapsed_us();
+	if (!tx_mcs_info.applied++) { tx_mcs_info.first_apply_us = tx_mcs_info.last_apply_us; }
+}
+static void tx_mcs_drain_apply(unsigned user, unsigned mcs, void *context)
+{
+	(void)context;
+	tx_mcs_info.before = read32(BB + 0xb00); tx_mcs_info.key = mcs_fch_keys[mcs];
+	if (ar_tx_mcs_control(&tx_interleaver,AR_TX_MCS_DRAIN_APPLY,user,mcs,
+	    mcs_fch_keys,information.chip_profile,1,&tx_mcs_ops,NULL)) {
+		tx_mcs_info.rejected++; return;
+	}
+	tx_mcs_info.drained++; tx_mcs_applied(mcs);
+}
+static void tx_mcs_retry_reset(unsigned user, void *context)
+{
+	(void)context;
+	(void)ar_tx_mcs_control(&tx_interleaver,AR_TX_MCS_RETRY_RESET,user,0,
+		mcs_fch_keys,information.chip_profile,1,&tx_mcs_ops,NULL);
+}
+static const struct ar_interleaver_ops tx_step_ops = {
+	.apply=tx_mcs_drain_apply,.retry_reset=tx_mcs_retry_reset
+};
 static void sync_tx_mcs(const uint8_t control[7])
 {
 	/* 0x2300a2 -> 0x229bd4 -> PHY107: mode0 DEV accepts slot0;
@@ -246,10 +302,9 @@ static void sync_tx_mcs(const uint8_t control[7])
 	unsigned mcs = control[4] & 31;
 	tx_mcs_info.requests++; tx_mcs_info.requested = mcs;
 	if (control[3] || mcs >= 16) { tx_mcs_info.rejected++; return; }
-	if (mcs == tx_mcs_info.current) { tx_mcs_info.unchanged++; return; }
-	/* The stock decrease path has a six-interleaver drain and ownership
-	 * changes. Do not replace that contract with an immediate field write. */
-	if (mcs < tx_mcs_info.current) { tx_mcs_info.downgrades++; return; }
+	struct ar_interleaver_user *u = &tx_interleaver.users[0];
+	if (mcs == u->mcs) { tx_mcs_info.unchanged++; return; }
+	if (u->active) { tx_mcs_info.busy_requests++; return; }
 	uint32_t key = mcs_fch_keys[mcs], word = read32(BB + 0xb00);
 	unsigned modulation = (key >> 16) & 255, code = (key >> 8) & 255, rate = key & 255;
 	if ((key >> 24) || modulation > 4 || code > 2 || rate > 2) { tx_mcs_info.rejected++; return; }
@@ -258,18 +313,12 @@ static void sync_tx_mcs(const uint8_t control[7])
 	static const uint8_t bits[] = {1,2,4,6,8};
 	unsigned exponent = (word & 7) + 2 - rate + ((word >> 18) & 7);
 	unsigned value = ((unsigned)bits[modulation] << exponent) >> 2;
-	unsigned code_length;
-	if (value == 2) { code_length = 0; }
-	else if (value == 4) { code_length = 1; }
-	else if (value && !(value & 7)) { code_length = 2; }
-	else { tx_mcs_info.rejected++; return; }
+	if (value != 2 && value != 4 && (!value || (value & 7))) { tx_mcs_info.rejected++; return; }
 	tx_mcs_info.before = word; tx_mcs_info.key = key;
-	if (((word >> 22) & 3) == 2) { field(0xb001602, 1); tx_mcs_info.mode_changed++; }
-	field(0xb000803, modulation); field(0xb000c04, code + code_length * 3); field(0xb001002, rate);
-	tx_mcs_info.after = read32(BB + 0xb00);
-	mcs_event(0, mcs, tx_mcs_info.current); tx_mcs_info.current = mcs;
-	tx_mcs_info.last_apply_us = elapsed_us();
-	if (!tx_mcs_info.applied++) { tx_mcs_info.first_apply_us = tx_mcs_info.last_apply_us; }
+	if (ar_tx_mcs_control(&tx_interleaver,AR_TX_MCS_REQUEST,0,mcs,mcs_fch_keys,
+	    information.chip_profile,1,&tx_mcs_ops,NULL)) { tx_mcs_info.rejected++; return; }
+	if (u->active) { tx_mcs_info.downgrades++; }
+	else { tx_mcs_applied(mcs); }
 }
 static void sync_apply(void)
 {
@@ -1713,6 +1762,7 @@ static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t 
 	phy_control.tx[0] = ar_phy_control_checksum(phy_control.tx); phy_control.ticks = 0;
 	memset(&traffic_info, 0, sizeof traffic_info); traffic_info.version = 1;
 	memset(&tx_mcs_info, 0, sizeof tx_mcs_info); tx_mcs_info.current = 1;
+	memset(&tx_interleaver,0,sizeof tx_interleaver);
 	memset(&mcs_info, 0, sizeof mcs_info); mcs_info.first_observed_mcs = 25;
 	if (operation < 67) { memset(&dev_mcs, 0, sizeof dev_mcs); mcs_sync_mmio = 0; }
 	memset(phy_header_valid, 0, sizeof phy_header_valid); memset(phy_eop_seen, 0, sizeof phy_eop_seen);
@@ -1941,6 +1991,11 @@ static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t 
 		 * Program before deriving search dwell; preserve the other slot. */
 		field(0xb000803, 0); field(0xb000c04, 3); field(0xb001002, 1);
 		field(0xa000010, (2234u * 10000 / 640 + 5) / 10);
+		if (operation >= 72) {
+			(void)ar_tx_mcs_control(&tx_interleaver,AR_TX_MCS_INITIALIZE,0,0,
+				mcs_fch_keys,information.chip_profile,1,&tx_mcs_ops,NULL);
+			tx_mcs_info.current = tx_interleaver.users[0].mcs;
+		}
 	}
 	if (operation == 36 || operation == 37 || operation == 39 || operation >= 41) {
 		/* 0x222cac(8,0) also clears the shared identity field. Trial 59
@@ -2105,6 +2160,12 @@ void ar_rf_poll(void)
 					receiver.interleaver_updates++;
 				}
 				receiver.interleaver_b4c_after = read32(BB + 0xb4c);
+				if (receive_operation >= 72 && dev_active) {
+					unsigned second_user = (read32(BB + 0xf68) >> 4) & 15;
+					if (!second_user) {
+						(void)ar_interleaver_tx_step(&tx_interleaver,0,&tx_step_ops,NULL);
+					}
+				}
 				if (receive_operation >= 67 && dev_active && user != 8) {
 					phy_configure();
 					(void)ar_phy_control_tick(&phy_control,timer_ticks()/40000,&phy_ops,NULL);

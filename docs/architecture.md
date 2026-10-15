@@ -112,8 +112,8 @@ are implementation limits, not CLI tuning parameters.
 | `src/channel_monitor.c` | Compared monitor decisions; normal mode0 RX8 loss/recovery integrated; channel completion and hopping workers pending |
 | `src/phy_control.c` | Compared PHY transport; normal mode0 MCS enqueue/TX/cancel and receive-timer dispatch integrated; channel-policy callbacks pending |
 | `src/phy_receive.c` | Compared receive/cache/timer decisions integrated for normal mode0; broader callbacks, mode3 flags and admission remain pending |
-| `src/interleaver.c` | Compared source-only drain/retry service and conditional clock correction for ten bookkeeping users; ownership and runtime integration pending |
-| `src/tx_mcs.c` | Compared source-only MCS requests, initialization, register application and retry-failure events; connected to the interleaver in offline sequence comparisons |
+| `src/interleaver.c` | Compared drain/retry service for ten bookkeeping users; user-0 TX drain step integrated; full queue delivery, ownership and conditional clock correction pending |
+| `src/tx_mcs.c` | Compared MCS requests, initialization, register application and retry-failure events; normal-key user-0 initialization/request/drain application integrated; retry/history and broader keys pending |
 | `src/tx_irq.c` | Compared source-only pre-encode attempt history and TX-end release notification; actual queue delivery, packet retirement and runtime integration pending |
 | `src/tx_retire.c` | Compared source-only slot reservation, retained-descriptor retirement and release-call ordering; composed with packet preparation and stream consumers offline |
 | `src/tx_stream.c` | Compared source-only acquisition/release, span budgets, reference updates and byte/retained queues; allocation, RTOS ownership and runtime integration pending |

@@ -1314,6 +1314,23 @@ int main(void)
 		request[3] = 0; request[4] = 0x3f; receive_sync(request, 1); assert(txm->rejected == 2);
 		request[4] = 0xc1; receive_sync(request, 1); assert(txm->downgrades == 1 && txm->current == 2);
 		assert(*reg(0x0a110b00) == applied);
+		txm = ar_rf_tx_mcs_information(); assert(txm->pending == 0x10601);
+		request[4] = 0xc0; receive_sync(request,1);
+		assert(txm->busy_requests == 1 && ar_rf_tx_mcs_information()->pending == 0x10601);
+		*reg(0x0a110f68) = 8u << 4; *reg(0xe0801178) |= 1; ar_rf_poll();
+		assert(ar_rf_tx_mcs_information()->pending == 0x10601);
+		*reg(0x0a110f68) = 0;
+		for (unsigned i = 0; i < 6; ++i) {
+			*reg(0x0a110f64) = (i + 6) << 20;
+			*reg(0xe0801178) |= 1; ar_rf_poll();
+			assert(txm->current == 2 && !txm->drained);
+			assert(ar_rf_tx_mcs_information()->pending == (0x10001 | (5 - i) << 8));
+		}
+		*reg(0x0a110f64) = 12u << 20;
+		*reg(0xe0801178) |= 1; ar_rf_poll();
+		assert(txm->current == 1 && txm->drained == 1 && txm->applied == 2);
+		assert(ar_rf_tx_mcs_information()->pending == 0x10000);
+		assert((*reg(0x0a110b00) & 0x3f700u) == 0x13000 && *reg(0x0a110a00) == duration);
 	}
 	/* Compact CRC integrity and token continuity are separate gates. */
 	uint8_t compact_control[6] = {0,23,9,2,0,0};
@@ -1449,9 +1466,13 @@ int main(void)
 		for (unsigned i = 3; i + 1 < event_count; i++) {
 			assert(event_ids[i] == 1 && event_data[i][0] == 0);
 			if (event_data[i][1]) { rx_events++; }
-			else { tx_events++; assert(!memcmp(event_data[i], (uint8_t[]){0,0,2,1}, 4)); }
+			else {
+				const uint8_t expected[][4] = {{0,0,2,1}, {0,0,1,2}};
+				assert(tx_events < 2 && !memcmp(event_data[i], expected[tx_events], 4));
+				tx_events++;
+			}
 		}
-		assert(tx_events == 1 && rx_events == ar_rf_mcs_information()->buffer_applies);
+		assert(tx_events == 2 && rx_events == ar_rf_mcs_information()->buffer_applies);
 		assert(!event_ids[event_count - 1] && !memcmp(event_data[event_count - 1], (uint8_t[]){0,0,2}, 3));
 	} else { assert(!event_count); }
 	}

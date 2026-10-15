@@ -2,12 +2,12 @@
   "baseline": "working-video",
   "target": "VRX/GND Ascent VRX; matched 18.21.10 inputs",
   "runtime": {
-    "bytes": 70880,
-    "sha256": "bff5242708d3404a671061d52ee617c95149cc676262c791af9462f6c82a93f7",
+    "bytes": 72528,
+    "sha256": "83a2ca3937356399ce8e6369b138985e77c3cad4d51862bdb578ce62bf320bed",
     "load_address": "0x204000"
   },
   "ram": {
-    "used_bytes": 675312,
+    "used_bytes": 676976,
     "capacity_bytes": 704512
   },
   "private_board_profile": {
@@ -19,20 +19,20 @@
     "sha256": "c69e46c57bbb3e5fc7fe0c5581e59fb5735dcf8a97bf0e05ae7aaa0273657768"
   },
   "container": {
-    "bytes": 89088,
-    "sha256": "7ca36a978d23f8b980057e96506cb33fc82350e7548ecc05f838a49b87ab697b",
+    "bytes": 90624,
+    "sha256": "ea5bc92ea9b44cd41e10221e3e94bb9c1fd77ce3edf7b8948b0df729bd7f469c",
     "payload_alignment": 512
   },
   "original_stock_sha256": "dc58247910af564376350404383c5c411cbec21663873fba24e70c61a3584e3c",
   "external_config_sha256": "5cf0cd31645d4786c6b04399c6c609386d427ffc4c6d7f6e42d81e3e770c2a74",
   "scope": "Experimental Ascent VRX 18.21.10 native video baseline; private inputs not distributed",
   "generated_container": {
-    "bytes": 89088,
-    "sha256": "7ca36a978d23f8b980057e96506cb33fc82350e7548ecc05f838a49b87ab697b",
+    "bytes": 90624,
+    "sha256": "ea5bc92ea9b44cd41e10221e3e94bb9c1fd77ce3edf7b8948b0df729bd7f469c",
     "payload_alignment": 512,
     "configuration": "zero-filled 16 KiB; external loader JSON required",
     "hardware_verified": true,
-    "verification_scope": "Ascent VRX 18.21.10: retained loader calibration and compared initial user0 power application; startup, stop/start, deinit/init/start and candidate removal/readmission; 80 seconds inspected direct HDMI-to-USB capture matching fresh stock dark scene, 92 linked/AP-time samples and zero sampled socket drops. Calibration and user0 power fields remained stable; each session exercised MCS transport. Native user0 gain fields match earlier accepted firmware but differ from stock; host power policy, dynamic tuning, physical peer silence and full protocol parity remain open",
+    "verification_scope": "Ascent VRX 18.21.10 stage200: normal-key user0 TX MCS request/application and interleaver drain integration; startup, stop/start, deinit/init/start and candidate removal/readmission; 80 seconds inspected direct HDMI-to-USB capture matching fresh stock dark scene, 92 linked/AP-time samples and zero sampled socket drops. Each hardware session applied TX MCS1-to2; no decrease observed. Decrease timing has original-trace and synthetic integration coverage only. Retained ownership, retry/history, low-power acquisition, broader keys and full protocol parity remain open",
     "verified_utc_date": "2026-10-15"
   }
 }

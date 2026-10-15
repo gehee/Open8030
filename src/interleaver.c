@@ -1,6 +1,29 @@
 /* SPDX-License-Identifier: MIT */
 #include "ar_interleaver.h"
 
+int ar_interleaver_tx_step(struct ar_interleaver *state, unsigned user,
+	const struct ar_interleaver_ops *ops, void *context)
+{
+	if (!state || user >= AR_INTERLEAVER_USERS || !ops || !ops->apply || !ops->retry_reset)
+		return -22;
+	struct ar_interleaver_user *u = &state->users[user];
+	unsigned suppress = 0;
+	if (u->active == 1) {
+		if (u->drain) {
+			suppress = u->drain == 6 && !u->retries;
+			u->drain--;
+			if (suppress) { u->retries = 1; }
+		} else {
+			ops->apply(user,u->mcs,context);
+		}
+	}
+	if (u->active && !suppress && u->retries && u->limit) {
+		if ((uint8_t)(u->retries - 1) >= u->limit) { ops->retry_reset(user,context); }
+		else { u->retries++; }
+	}
+	return 0;
+}
+
 int ar_interleaver_service(struct ar_interleaver *state,
 	const struct ar_interleaver_input *input, unsigned source,
 	const struct ar_interleaver_ops *ops, void *context)
@@ -46,21 +69,7 @@ int ar_interleaver_service(struct ar_interleaver *state,
 	if (ops->read(((user + 0x2c0u) << 18) | 0x401u,context)) {
 		payload[5] = (input->request >> 16) & 15;
 	}
-	struct ar_interleaver_user *u = &state->users[input->second_user];
-	unsigned suppress = 0;
-	if (u->active == 1) {
-		if (u->drain) {
-			suppress = u->drain == 6 && !u->retries;
-			u->drain--;
-			if (suppress) { u->retries = 1; }
-		} else {
-			ops->apply(input->second_user,u->mcs,context);
-		}
-	}
-	if (u->active && !suppress && u->retries && u->limit) {
-		if ((uint8_t)(u->retries - 1) >= u->limit) { ops->retry_reset(input->second_user,context); }
-		else { u->retries++; }
-	}
+	(void)ar_interleaver_tx_step(state,input->second_user,ops,context);
 	ops->post(payload,context); ops->notify(source,payload,context);
 	return 0;
 }

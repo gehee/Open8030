@@ -44,4 +44,8 @@ struct ar_interleaver_ops {
 int ar_interleaver_service(struct ar_interleaver *state,
 	const struct ar_interleaver_input *input, unsigned source,
 	const struct ar_interleaver_ops *ops, void *context);
+/* The TX bookkeeping portion of the service, after payload sampling and before
+ * queue delivery. Only apply/retry_reset adapters are required. */
+int ar_interleaver_tx_step(struct ar_interleaver *state, unsigned user,
+	const struct ar_interleaver_ops *ops, void *context);
 #endif
