@@ -10,6 +10,7 @@
 #include "ar_fch_monitor.h"
 #include "ar_ap_time.h"
 #include "ar_command.h"
+#include "ar_scan.h"
 #include <string.h>
 #ifndef AR_RF_SIMULATED
 #include "ar_sdio_device.h"
@@ -64,6 +65,11 @@ static uint64_t channel_plls[AR_RF_MAX_CHANNELS];
 static struct ar_command_program command_program;
 static struct ar_command_state command_state = {.cached_bank = 3, .board_band = -1};
 static unsigned commands_ready;
+static struct ar_rf_scan_info scan_info;
+static uint32_t scan_rows[AR_RF_MAX_CHANNELS];
+static uint64_t scan_plls[AR_RF_MAX_CHANNELS];
+static void tune_measurement(void);
+const struct ar_rf_scan_info *ar_rf_scan_information(void) { return &scan_info; }
 #ifdef AR_RF_SIMULATED
 const struct ar_command_program *ar_rf_command_information(void) { return &command_program; }
 #endif
@@ -647,6 +653,7 @@ static void tune_context_plls(uint64_t pll)
 		serial_word(shadows[user], pll);
 		serial_word(other_shadows[user], pll);
 	}
+	if (commands_ready && receive_operation == 76) { tune_measurement(); }
 }
 static void configure_receive_context(uint64_t pll)
 {
@@ -1406,11 +1413,56 @@ static void command_byte(uint32_t offset, uint32_t value, void *context)
 	unsigned shift = (offset & 3) * 8;
 	update(BB + (offset & ~3u),255u << shift,value << shift);
 }
+static void tune_measurement(void)
+{
+	unsigned channel = scan_info.channel;
+	if (channel >= scan_info.count) { scan_info.errors++; scan_info.phase = 0; return; }
+	uint32_t frequency = scan_rows[channel] & 0xffffff;
+	scan_info.phase = 0;
+	/* Supported loader uses band_single. Original user11 skips the ordinary
+	 * users' gain hints and frequency/2000 register fields. */
+	(void)ar_scan_tune(frequency,scan_plls[channel],0,command_write,command_byte,NULL);
+	(void)ar_command_update(&command_program,1,11,1,1,2,0);
+	(void)ar_command_update(&command_program,1,11,1,3,frequency,0);
+	scan_info.frequency_khz = frequency; scan_info.tunes++;
+}
+static void scan_drop_pending(void)
+{
+	if (read8(0xe0801000u + irq_vector(5) * 4) & 1) { irq_ack(5); scan_info.stale++; }
+}
+static void command_prepare(uint32_t observed)
+{
+	int next = ar_command_step(&command_program,observed,&command_state,1,0,0,
+		read32(BB + 0x48c),command_write,command_byte,NULL);
+	if (next < 0) { scan_info.phase = 0; return; }
+	unsigned mode = observed >> 20 & 3, raw = observed >> 16 & 15;
+	if (mode == 0 || mode == 3) {
+		if (raw == 13) {
+			scan_drop_pending();
+			if (scan_info.phase == 1) { scan_info.phase = 2; scan_info.armed++; }
+			else { scan_info.phase = 0; }
+		}
+		return;
+	}
+	if ((command_program.entries[next].bits >> 4 & 15) != 13) { return; }
+	/* Original ISR ordering cannot be assumed by a polling runtime. A stale
+	 * cursor or a changing hardware command cannot justify a tune/sample. */
+	if ((command_program.entries[command_program.cursor].bits >> 4 & 15) != raw ||
+	    ((read32(BB + 0xe6c) ^ observed) & 0x3f0000)) {
+		scan_info.errors++; scan_info.phase = 0; return;
+	}
+	uint16_t channel = scan_info.channel;
+	(void)ar_scan_advance(scan_rows,scan_info.count,&channel,0,0);
+	scan_drop_pending(); scan_info.channel = channel;
+	tune_measurement(); scan_drop_pending();
+	if ((read32(BB + 0xe6c) ^ observed) & 0x3f0000) { scan_info.errors++; }
+	else { scan_info.phase = 1; }
+}
 static int build_commands(void)
 {
 	/* Mode-0 DEV frame from 0x22c774: RX8, independent measurement RX11,
-	 * TX0 with pre-command mode6. All three currently share one frequency.
-	 * Scan actions and retained TX-buffer ownership remain separate gaps. */
+	 * TX0 with pre-command mode6. RX8/TX0 begin on the link frequency;
+	 * RX11 is tuned independently below. Retained TX ownership remains open. */
 	static const struct ar_command_descriptor frame[] = {{0x3621,0},{0x358,0},{0x3413,0}};
 	struct ar_command_profile profiles[AR_COMMAND_USERS];
 	for (unsigned user = 0; user < AR_COMMAND_USERS; user++) {
@@ -1426,6 +1478,7 @@ static int build_commands(void)
 	command_state.valid_banks = 4; /* Only bank 2 is calibrated by this runtime. */
 	int result = ar_command_build(&command_program,frame,3,1,profiles,command_write,NULL);
 	commands_ready = !result;
+	if (!result) { tune_measurement(); }
 	return result;
 }
 
@@ -1439,6 +1492,7 @@ static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t 
 		return failure(-22);
 	}
 	uint8_t fixed_channel[4], tx_gain[4] = {0};
+	const uint8_t *scan_channels = NULL; unsigned scan_count = 0;
 	struct ar_dev_mcs_config policy = {0};
 	if (operation >= 54) {
 		unsigned prefix = operation >= 67 ? AR_RF_DEV4_PREFIX : operation >= 59 ? 32 : operation >= 58 ? 28 : 24;
@@ -1470,6 +1524,7 @@ static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t 
 				if (value == le32(channels + prefix + j * 4)) { return failure(-22); }
 			}
 		}
+		if (operation == 76) { scan_channels = channels + prefix; scan_count = count; }
 		memset(&dev_config, 0, sizeof dev_config);
 		memcpy(dev_config.local, channels + 4, 4);
 		memcpy(dev_config.configured_peer, channels + 8, 4);
@@ -1507,6 +1562,11 @@ static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t 
 		}
 	} else if (length) { return failure(-22); }
 	commands_ready = 0;
+	memset(&scan_info,0,sizeof scan_info); scan_info.version = 1; scan_info.count = scan_count;
+	for (unsigned i = 0; i < scan_count; i++) {
+		scan_rows[i] = le32(scan_channels + 4*i) | 0x11000000;
+		(void)ar_rf_pll_word(scan_rows[i] & 0xffffff,&scan_plls[i]);
+	}
 	memset(&receiver, 0, sizeof receiver);
 	memset(&tx_payload_info, 0, sizeof tx_payload_info);
 	ar_dev_stream_init(&dev_stream);
@@ -1948,8 +2008,19 @@ void ar_rf_poll(void)
 				if (!receiver.power_samples || power < receiver.power_min) { receiver.power_min = power; }
 				if (!receiver.power_samples || power > receiver.power_max) { receiver.power_max = power; }
 				receiver.power_samples++;
-				if (receiver.channel_count) {
-					struct ar_rf_channel_info *channel = &receiver.channels[receiver.channel_index];
+				unsigned sample_channel = receiver.channel_index;
+				if (receive_operation == 76) {
+					sample_channel = receiver.channel_count;
+					if (scan_info.phase == 2 && scan_info.channel < scan_info.count) {
+						scan_info.samples++; scan_info.channel_samples[scan_info.channel]++;
+						for (unsigned i = 0; i < receiver.channel_count; i++) {
+							if (receiver.channels[i].frequency_khz == scan_info.frequency_khz) { sample_channel = i; break; }
+						}
+					} else { scan_info.dropped++; }
+					scan_info.phase = 0;
+				}
+				if (sample_channel < receiver.channel_count) {
+					struct ar_rf_channel_info *channel = &receiver.channels[sample_channel];
 					channel->power_last = power;
 					if (!channel->power_samples || power < channel->power_min) { channel->power_min = power; }
 					if (!channel->power_samples || power > channel->power_max) { channel->power_max = power; }
@@ -2079,11 +2150,7 @@ void ar_rf_poll(void)
 				receiver.command_last = read32(BB + 0xe6c);
 				receiver.command_modes[(receiver.command_last >> 20) & 3]++;
 				if (receive_operation == 76 && commands_ready) {
-					/* Fixed mode-0 DEV frame. The copy-mode TX path does not
-					 * yet use the original retained-buffer ownership flags.
-					 * Non-preparation scan callbacks remain unimplemented. */
-					(void)ar_command_step(&command_program,receiver.command_last,
-						&command_state,1,0,0,read32(BB + 0x48c),command_write,command_byte,NULL);
+					command_prepare(receiver.command_last);
 				} else if (((receiver.command_last >> 20) & 3) == 0) {
 					/* Historical diagnostic modes keep their bounded setup. */
 					static const uint16_t offsets[] = {9, 0x5b, 0x83, 0x85, 0x58, 0x5e};
@@ -2185,9 +2252,9 @@ void ar_rf_poll(void)
 					receiver.channel_wraps += wrap;
 					receiver.frequency_khz = receiver.channels[next].frequency_khz;
 					if (commands_ready) {
-						const unsigned users[] = {8,11,0};
-						for (unsigned i = 0; i < 3; i++) {
-							unsigned direction = i != 2;
+						const unsigned users[] = {8,0};
+						for (unsigned i = 0; i < 2; i++) {
+							unsigned direction = i == 0;
 							(void)ar_command_update(&command_program,1,users[i],direction,3,receiver.frequency_khz,0);
 							/* Normal search validates every channel as band 2. */
 							(void)ar_command_update(&command_program,1,users[i],direction,1,2,0);

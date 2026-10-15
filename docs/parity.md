@@ -73,10 +73,10 @@ and scenario; they must be repeated after relevant changes.
 | AP full/compact controls | Selected mode-0/slot-0 admission and connected control | All extensions, remote synchronization effects, changed channels, slots, stale/duplicate controls and unsupported modes. |
 | Internal port-0 commands | Stream parsing; login checksum ACK transmission | Receiving a command currently mainly records it. Inventory and implement each original command's effects, responses and retries. |
 | PHY commands | See command table below | Exact callbacks, TTL/replacement ordering and side effects for every command. |
-| Hardware command preparation | Command builder, metadata updates and preparation selection; fixed DEV frame, cached board/TX calibration and TX look-ahead | Non-preparation scan callbacks, PA-sleep policy, retained-buffer ownership integration, other runtime modes/bands and actual interrupt ordering. Helper comparisons do not establish the complete original handler. |
+| Hardware command preparation | Command builder, metadata updates and preparation selection; fixed DEV frame, cached board/TX calibration and TX look-ahead | Independent configured-channel sweep is integrated; active-catalog policy, original scan scoring, auxiliary scans, PA-sleep policy, retained-buffer ownership and actual interrupt ordering remain open. Helper comparisons do not establish the complete original handler. |
 | MCS adaptation | RX adaptation and limited TX increase | TX decrease/interleaver drain, all PHY keys, retry/expiry, loss interactions and sustained adaptation. |
 | Power and calibration | Initial user-0 setup at level 25 | Level 11 also fails acquisition in the accepted image with only its loader setting changed. Resolve the low-power transmit path, then normal backend power writes, all users, peer policy and calibration effects. |
-| Channel/band selection | Configured search and matched channel | Independent uplink changes, subchannels, hopping, scan scoring, automatic policies, rollback and cross-band operation. |
+| Channel/band selection | Configured link search and independent measurement sweep | Match the original active catalog; independent uplink changes, subchannels, hopping, scan scoring, automatic policies, rollback and cross-band operation. |
 | Time synchronization | DEV AP-time decoding/getter; original-instruction comparison and hardware startup/restart checks | Physical peer-loss/stale time, long-run hardware wrap and other roles/modes. |
 | Link recovery | Candidate removal/readmission and bounded recovery machinery | Physical peer silence/restart, pending work, sustained reacquisition and repeated failures. |
 | Video/control/telemetry | Visible camera video and byte transport | Freshness challenge, measured end-to-end latency, telemetry values, control effects, loss/throughput and prolonged operation against stock. |
@@ -433,6 +433,51 @@ stock. The four HDMI-to-USB captures total 70 seconds, with 82 linked/AP-time
 samples and zero sampled socket drops. The recovery counter advances without a
 failure. These observations do not establish controlled freshness, clear-scene
 quality, emitted power, physical peer-loss recovery or all IRQ timing.
+
+### Independent measurement scan
+
+The normal DEV body notification before raw user 13 now advances the measurement
+channel and tunes only logical user 11 RX. The five PLL bytes occupy the shared
+special-user shadow at `0x90a`; link RX8 and TX0 retain their own shadows. The
+measurement command's frequency/bank metadata follows this tune. Link search
+restores the independent measurement context after rebuilding shared settings.
+The configured catalog is retained even when acquisition starts on a fixed channel.
+
+Native channel advancement composed with command selection matches 7,808
+original scheduler cases, including 1,696 scan actions. Original catalog iteration,
+subchannel advancement and configuration lookup execute; board callbacks and tune
+requests are captured. A separate user-11 RX tuning comparison matches 66 cases
+and 528 ordered writes. Its PLL conversion returns synthetic 40-bit words; it
+validates byte placement, band controls and metadata-update arguments rather than
+PLL arithmetic. The combined 409 executed instruction locations are checked
+against the matched original bytes. Other users, physical RF and actual IRQ timing
+are outside these comparisons.
+
+The polling runtime adds consistency checks before tuning and a tune/prepare/sample
+sequence before assigning a power event to a channel. Pending, duplicate or
+unconfirmed events are excluded from per-channel counts. These counts are project
+observations, **not the original averaged scan scores**. Original scoring, automatic
+selection, subchannel measurement processing and auxiliary user-12 scans remain
+unimplemented. The small project diagnostic `0x015a0027` exposes scan progress and
+excluded events; it is not a vendor command.
+
+Hardware sampling shows the measurement PLL changing while both stock and native
+link RX/TX remain at 5,770 MHz. However, 50 stock reads observe four measurement
+frequencies, while 50 native reads observe 33 across its configured 42-channel
+catalog. This is an unresolved active-catalog policy discrepancy, not proof of the
+complete stock active set. The native window records 38 attributed power samples,
+442 excluded events and 158 command-consistency failures. The large exclusion
+count leaves interrupt timing and physical sample attribution unproven; changing
+PLL shadows alone cannot close scan parity.
+
+Startup, stop/start, deinit/init/start and candidate removal/readmission retain
+compensation and the dark camera scene seen on fresh stock. The four direct
+HDMI-to-USB captures total 70 seconds, with 82 linked/AP-time samples and zero
+sampled socket drops. These video checks preserve the development baseline; they
+do not resolve the scan catalog, sample-attribution or timing discrepancies above.
+
+The next scan work must establish the original active catalog and interrupt
+ordering before claiming complete measurement or automatic-selection parity.
 
 Next, extend the core inventory through the transport dispatchers and indirect
 callbacks, and bind each command's behavior to its comparison tests. Then cover

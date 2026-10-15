@@ -148,7 +148,7 @@ static void assert_channel_plls(uint32_t frequency)
 	assert(commands->count == 3 && commands->cursor == -1);
 	const unsigned users[] = {8,11,0};
 	for (unsigned i = 0; i < 3; i++) {
-		assert(commands->entries[i].frequency == frequency);
+		assert(commands->entries[i].frequency == (i == 1 ? ar_rf_scan_information()->frequency_khz : frequency));
 		assert((commands->entries[i].bits >> 13 & 3) == 2);
 		uint32_t profile = *reg(0x0a110000 + (i == 2 ? 0xb00 : 0x9a0 + users[i] * 8));
 		assert((commands->entries[i].bits >> 10 & 7) == (i == 2 ? profile & 7 : profile >> 8 & 7));
@@ -162,7 +162,10 @@ static void assert_channel_plls(uint32_t frequency)
 			unsigned offset = offsets[i] + b;
 			actual = actual << 8 | ((*reg(0x0a110000 + (offset & ~3u)) >> (8 * (offset & 3))) & 255);
 		}
-		assert(actual == expected);
+		if (offsets[i] == 0x90a) {
+			uint64_t scan_pll; assert(!ar_rf_pll_word(ar_rf_scan_information()->frequency_khz,&scan_pll));
+			assert(actual == scan_pll);
+		} else { assert(actual == expected); }
 	}
 }
 static void receive_sync(uint8_t control[7], unsigned seal)
@@ -1550,6 +1553,29 @@ int main(void)
 	assert(ar_rf_command_information()->cursor==-1 && compensation_writes == loaded_writes);
 	prepare_frame();
 	assert(compensation_writes==loaded_writes && board_prepare_writes==board_before);
+	/* The measurement PLL follows its own two-channel sweep after link lock.
+	 * Delayed power before a fresh prepare is counted as unattributed. */
+	const struct ar_rf_scan_info *scan=ar_rf_scan_information();
+	assert(scan->count==2 && scan->frequency_khz==5770000);
+	unsigned scan_samples=scan->samples, scan_dropped=scan->dropped;
+	*reg(0xe0801144)|=1; ar_rf_poll(); assert(scan->dropped==scan_dropped+1);
+	for (unsigned cycle=0;cycle<4;cycle++) {
+		*reg(0x0a110e6c)=0x380000; inject_command=1; ar_rf_poll();
+		*reg(0x0a110e6c)=0x180000; inject_command=1; ar_rf_poll();
+		assert(scan->channel==(cycle+1)%2 && scan->phase==1);
+		assert(ar_rf_command_information()->entries[1].frequency==scan->frequency_khz);
+		assert(ar_rf_command_information()->entries[0].frequency==5805000);
+		assert(ar_rf_command_information()->entries[2].frequency==5805000);
+		*reg(0x0a110e6c)=0x3d0000; inject_command=1; ar_rf_poll();
+		assert(scan->phase==2);
+		*reg(0x0a110e70)=0x78563412; *reg(0xe0801144)|=1; ar_rf_poll();
+		assert(scan->samples==scan_samples+cycle+1 && !scan->phase);
+		*reg(0xe0801144)|=1; ar_rf_poll(); /* Duplicate cannot be assigned. */
+		assert(scan->samples==scan_samples+cycle+1);
+		*reg(0x0a110e6c)=0; inject_command=1; ar_rf_poll();
+	}
+	assert(scan->channel_samples[0]==2 && scan->channel_samples[1]==2);
+	assert(compensation_writes==loaded_writes);
 	const struct ar_rf_lifecycle_info *life = ar_rf_lifecycle_information();
 	assert(life->version == 1 && life->state == 2);
 	unsigned starts = life->starts, stops = life->stops, cancelled = life->cancelled_rx;

@@ -86,7 +86,7 @@ scene, with 59 linked/AP-time samples and zero sampled socket drops. The image
 was retained in RAM after inspection. The remaining preparation IRQ actions and
 broader frame modes are still open; see [command construction](parity.md#command-construction-and-retained-metadata).
 
-The current image connects that metadata to preparation IRQ handling: cursor
+The preceding image connected that metadata to preparation IRQ handling: cursor
 selection, cached board-band writes, calibration reuse and TX bandwidth
 look-ahead. The helper matches 14,864 original-instruction cases, including
 15,956 ordered write arguments. All 22 native C suites and 18 Python tests pass.
@@ -97,6 +97,19 @@ scene matches fresh stock. The image was retained in RAM after inspection.
 Scan callbacks, PA-sleep policy and retained-buffer ownership integration remain
 open, along with other runtime bands/modes and low-power acquisition. See
 [preparation integration](parity.md#command-preparation-integration).
+
+The current image adds an independent configured-channel measurement sweep,
+keeping link RX/TX PLLs fixed. It matches 7,808 scheduler cases and 66 measurement
+tuning cases against original instructions. All 23 native C suites and 18 Python
+tests pass. Startup, restart, reinit and candidate recovery preserve compensation
+and video: 70 seconds of inspected HDMI capture, 82 linked/AP-time samples and
+zero sampled socket drops. The candidate was retained in RAM.
+
+This is incomplete scan behavior. Stock sampling observes four measurement
+frequencies while native sampling observes 33 from its configured 42-channel
+list. Native polling also excludes many ambiguous power events. Active-catalog
+policy, original scan scoring and IRQ timing remain explicit gaps; see
+[independent measurement scan](parity.md#independent-measurement-scan).
 
 A separate configuration-only test reproduced acquisition failure at initial
 power level 11 using the accepted AP-time image. No video was delivered;

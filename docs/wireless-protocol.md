@@ -453,10 +453,26 @@ The preparation helper has original-instruction comparisons for all three
 synthetic calibration banks, board-band boundaries, bypass ordering, buffer
 flags and work-mode flags. Runtime integration remains the fixed mode-0 DEV
 frame. Its copy-mode TX path does not yet carry the original retained-buffer
-ownership flags. Non-preparation scan callbacks and the board's PA-sleep policy
-also remain unimplemented. Matching helper writes cannot establish these missing
+ownership flags. The independent measurement sweep is integrated as described below; auxiliary
+scan callbacks and the board's PA-sleep policy remain unimplemented. Matching helper writes cannot establish these missing
 state transitions or interrupt timing. The [parity checklist](parity.md#command-preparation-integration)
 records the comparison scope. Low-power acquisition remains unresolved.
+
+### Independent measurement interval
+
+The normal frame includes raw user 13, logical RX user 11. A preceding body
+notification advances its channel and writes a separate five-byte PLL shadow.
+This sweep can continue while the link's receive and transmit frequencies stay
+fixed. Preparation metadata tracks the measurement frequency independently.
+
+Open8030 currently sweeps the loader's configured channels. It has not yet
+matched the original active-catalog policy: the latest stock sampling observes
+four measurement frequencies, while native sampling observes 33 of its 42
+configured channels. The original averaged scoring and automatic selection are
+also missing. Native power counts require a consistent tune and subsequent
+measurement preparation; ambiguous polling events are excluded. Many events are
+still excluded, so those counts cannot establish complete or unbiased RF sampling.
+See [measurement scan comparison](parity.md#independent-measurement-scan).
 
 ## Timing, retransmission and recovery
 

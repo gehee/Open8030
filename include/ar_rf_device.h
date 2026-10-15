@@ -90,6 +90,12 @@ struct ar_rf_phy_info {
 	uint8_t sample[16], first_sample[16];
 };
 const struct ar_rf_phy_info *ar_rf_phy_information(void);
+/* Project diagnostic; sample counts are observations, not original scan scores. */
+struct ar_rf_scan_info {
+	uint32_t version, count, channel, frequency_khz, tunes, armed, samples, dropped, stale, errors, phase;
+	uint32_t channel_samples[AR_RF_MAX_CHANNELS];
+};
+const struct ar_rf_scan_info *ar_rf_scan_information(void);
 struct ar_rf_rx_info {
 	uint32_t frequency_khz, irq_total, irq_counts[20];
 	uint32_t fch_last, fch_locked, receive_events, dma_completions;

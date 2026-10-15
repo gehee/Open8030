@@ -86,6 +86,12 @@ static void receive(const struct ar_frame *frame, void *context)
 #ifdef CONFIG_SOC_AR8030_BRINGUP
 	struct ar_frame socket_response;
 	uint32_t diagnostic_reqid = ar_diagnostic_request_id(frame->reqid);
+	if (diagnostic_reqid == AR_REQ_RF_SCAN_INFO && !frame->status && !frame->length) {
+		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid,
+			.payload = (const uint8_t *)ar_rf_scan_information(), .length = sizeof(struct ar_rf_scan_info)};
+		size_t size = ar_encode(reply, sizeof reply, &response);
+		(void)ar_sdio_send(reply, size); return;
+	}
 	if (diagnostic_reqid == AR_REQ_RF_RECOVERY_INFO && !frame->status && !frame->length) {
 		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid,
 			.payload = (const uint8_t *)ar_rf_recovery_information(), .length = sizeof(struct ar_rf_recovery_info)};
