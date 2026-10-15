@@ -21,6 +21,7 @@ TESTS = {
     'phy_receive': ('phy_receive phy_control mac ap_time', [], []),
     'interleaver': ('interleaver', [], []),
     'tx_mcs': ('tx_mcs interleaver', [], []),
+    'tx_irq': ('tx_irq', [], []),
     'tune': ('tune', [], []),
     'socket_rx': ('socket_rx', [], []),
     'sdio_device': ('sdio_device', ['AR_SDIO_SIMULATED', 'AR_SDIO_STOCK_MEMORY_ATTRIBUTES=1'], []),

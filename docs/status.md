@@ -350,8 +350,18 @@ and 324 composed request/interleaver sequences. It fixes the source-only
 retry-reset interface to pass the affected user. Two sanitizer suites and 18
 Python tests pass. Accepted stage 189 still builds identically and remains
 running; a fresh 30-second capture shows camera video with 33 linked samples.
-Runtime ownership and TX-completion history remain integration dependencies;
+Runtime ownership and TX-attempt history remained integration dependencies;
 low-power acquisition is unresolved. See [TX MCS coverage](parity.md#tx-mcs-producer-and-application-callbacks).
+
+Stage 193 compares source-only pre-encode and TX-end bookkeeping in 5,586
+original-instruction scenarios. History records attempts during pre-encode;
+it does not establish completed transmissions or peer reception. TX-end posts
+a separate release request for the remembered user. Three sanitizer suites and
+18 Python tests pass. Accepted stage 189 still builds identically and remains
+running; a fresh 30-second HDMI-to-USB capture shows the camera scene with 33
+linked samples and zero sampled socket drops. Queue delivery, packet ownership
+and integration of the compared TX helpers remain open. See
+[TX interrupt coverage](parity.md#tx-pre-encode-history-and-end-notification).
 
 ## Remaining work
 

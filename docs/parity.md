@@ -74,7 +74,7 @@ and scenario; they must be repeated after relevant changes.
 | Internal port-0 commands | Stream parsing; login checksum ACK transmission | Receiving a command currently mainly records it. Inventory and implement each original command's effects, responses and retries. |
 | PHY commands | See command table below | Exact callbacks, TTL/replacement ordering and side effects for every command. |
 | Hardware command preparation | Command builder, metadata updates and preparation selection; fixed DEV frame, cached board/TX calibration and TX look-ahead | Independent sweep and base-channel score arithmetic are integrated; active-catalog policy, auxiliary scans, PA-sleep policy, retained-buffer ownership and actual interrupt ordering remain open. Helper comparisons do not establish the complete original handler. |
-| MCS adaptation | RX adaptation and limited TX increase; interleaver service compared offline | Integrate TX decrease/drain producers and callbacks, all PHY keys, retry/expiry, loss interactions and sustained adaptation. |
+| MCS adaptation | RX adaptation and limited TX increase; interleaver, TX MCS callbacks and pre-encode history compared offline | Integrate TX decrease/drain producers and callbacks, queue delivery/ownership, all PHY keys, retry/expiry, loss interactions and sustained adaptation. |
 | Power and calibration | Initial user-0 setup at level 25; calibration writes, cache ordering and band-offset helpers compared offline | Level 11 also fails acquisition in the accepted image with only its loader setting changed. Resolve the low-power transmit path, then normal backend power writes, all users, peer policy and calibration effects. |
 | Channel/band selection | Configured link search, independent measurement sweep and base-channel averaging | Match the original active catalog and sampling cadence; integrate automatic selection, independent uplink changes, subchannels, hopping, rollback and cross-band operation. |
 | Time synchronization | DEV AP-time decoding/getter; original-instruction comparison and hardware startup/restart checks | Physical peer-loss/stale time, long-run hardware wrap and other roles/modes. |
@@ -1463,8 +1463,56 @@ HDMI-to-USB capture shows the camera scene with 33 linked/AP-time samples and ze
 sampled socket drops. This verifies the retained image, not hardware execution
 of the new callbacks or controlled scene freshness/latency.
 
-Next, connect TX completion history and runtime ownership to the compared MCS
-service, and isolate low-power acquisition before retrying host power integration. Extend the core
+### TX pre-encode history and end notification
+
+Source-only `tx_irq.c` implements the bookkeeping of the original pre-encode
+handler at `0x221490` and TX-end handler at `0x21f778`. **History is recorded
+during pre-encode, before completion.** The earlier description of it as
+"TX completion history" was inaccurate. Neither the history bit nor a local
+TX-end notification proves peer reception or acknowledgement.
+
+Pre-encode marks the transmitter busy, samples its timestamp and remembers the
+first hardware user. It posts queue 2/message `0x301` with that user, the budget
+and request nibble, then samples the hardware user again for retry bookkeeping.
+The second user can differ from the first. An active user with a nonzero retry
+counter gets a history bit; only interleave mode exactly 1 uses the bank-dependent
+pair of bits. Counter subtraction wraps as a byte and shifts use RV32 masking.
+Field-read callback mutations are visible when the counter is reloaded.
+
+TX-end clears busy only when its previous value is exactly 1, posts queue
+2/message `0x309` for the remembered user and notifies source 11 with no payload.
+Duplicate or stale end notifications still post; other busy values survive.
+Queue failure does not suppress subsequent bookkeeping or observer notification.
+These are endpoint contracts, not proof that a queued release actually executes.
+
+Fresh original execution compares **4,050 pre-encode and 1,536 TX-end scenarios**:
+all twelve valid table users, separately sampled users, active states, retry and
+shift boundaries, interleave values, both banks, busy states, queue failures and
+selected callback mutations. TX-end covers every remembered-user byte. Ordered
+comparisons include 17,022 word reads, 2,466 field reads, 4,050 timestamp samples
+and 5,586 queue/observer pairs, with user and IRQ state checked at each effect.
+All 156 executed instruction locations match the reference payload, container
+and analysis ELF. Diagnostics and their clock calls are intercepted.
+
+Native clears the original's three uninitialized pre-encode suffix bytes;
+324 queue/observer effects differ deliberately for this reason. Missing native
+arguments are rejected before effects. An invalid second table user is rejected
+after posting the first sample and still notifies, avoiding the original's unsafe
+table access; this extra guard has sanitizer coverage, not original-error parity.
+The comparison does not exercise real queue scheduling, packet construction,
+descriptor retirement, interrupt races or physical RF timing. The module remains
+outside the runtime while these integration dependencies are resolved.
+
+Three sanitizer suites cover this helper and the preceding MCS/interleaver
+helpers; 18 Python tests pass. The standard build remains byte-identical to
+accepted stage 189. A fresh 30-second direct `/dev/video0` HDMI-to-USB capture
+has 33 linked samples, advancing AP time and zero sampled socket drops. Inspected
+frames show the dark textured camera scene and camera OSD. This verifies the
+retained image, not hardware execution of the new helper or controlled scene
+freshness/latency. Original traces, tool provenance and captures remain private.
+
+Next, compare packet retirement and connect the compared TX helpers to runtime
+ownership, and isolate low-power acquisition before retrying host power integration. Extend the core
 inventory through transport dispatchers
 and indirect callbacks, binding each contract to its comparison tests. Then cover
 radio messages, timers and state transitions in the same way. Dynamic power still
