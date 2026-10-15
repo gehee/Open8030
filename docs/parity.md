@@ -3082,3 +3082,66 @@ visible camera output. Full internal-service and original-firmware parity remain
 open. Original instructions and comparison receipts stay in ignored
 `.local/stage218-constructed-framing/`; historical stage-212 receipts are retained
 with their original wording and superseded by this correction.
+
+
+### Internal socket write gate
+
+Stage 219 compares the internal socket-interface write callback and its port-1
+transmit gate. The source-only [helper](../src/data_socket.c) is distinct from
+the external host socket writer. Connecting internal telemetry directly to the
+current host write path would omit this policy.
+
+Null interface, data and handle-wrapper pointers return `-1`, `-2` and `-3`.
+A negative wrapped handle or selector-table type other than 2 returns zero
+without writing. With a valid handle/type, ports other than 1 delegate directly
+to the SDK byte writer. Port 1 performs the following sequence:
+
+1. Select a threshold of 262 bytes when the mode field equals 1, otherwise 32.
+2. Query `0x01000010` for selector 0 and host port 1, even when the interface's
+   own selector differs. The getter's TX-used word is at output offset 96.
+3. Read the current role. On a nonzero role, suppress the write when TX-used is
+   strictly greater than the threshold. Role 0 bypasses suppression but still
+   performs the query. The matched DEV role is 1.
+4. Otherwise pass the wrapped handle, unchanged bytes/count and configured
+   timeout to the SDK writer and return its result.
+
+The mode is sampled before the query; equality at either threshold permits a
+write. Suppression returns zero. The already compared route-delivery code treats
+that as failure for a nonempty packet and releases its reference without retry.
+The callback ignores route metadata/source arguments. The meaning and normal
+configuration of the mode and selector-type table still require broader
+configuration/lifecycle evidence; this comparison does not assign an application
+protocol identity to mode 1.
+
+**871 original cases** match statuses and ordered callback effects, including
+**294 getter executions**, **722 SDK-write calls** and **112 suppressed cases**.
+The cases vary ports, roles, modes, selector/type combinations, negative and
+missing handles, null inputs, unsigned occupancy extremes, threshold boundaries,
+zero/maximum framed lengths, short writes and errors. The actual original core
+routing, queue-status getter and role accessor execute. Synthetic TX and RX
+queues have different used/pending values; the fixture checks the selected
+TX-used word and stream acquire/release sequence. Missing TX streams or handle
+lookup failure leave that word zero in the getter's cleared output.
+
+All **247 executed instruction locations** and used dispatch tables match the
+original payload/container/ELF bytes. SDK handle lookup, stream acquire/release
+and the final SDK write are intercepted. This establishes the gate and selected
+getter field, not all 648 getter bytes, blocking queue writes, scheduling, RF
+transmission, route selection or ordinary backend configuration. Synthetic
+pointers, ELF, ABI and partial ISA remain analysis metadata.
+
+The native helper adds missing-adapter checks and initializes the selected query
+word to zero. The original callback leaves its stack uninitialized before the
+query; a failing replacement adapter that writes nothing is not a matching case.
+The normal original getter clears its output. Native tests separately confirm
+that query status is ignored when output is defined, sweep every occupancy from
+0 through 524 across three ports/modes and both roles, and compose the helper
+with route delivery to check failure accounting, release and absence of retries.
+
+One ASan/UBSan suite and 18 Python tests pass. The helper remains outside the
+runtime build; `0x01000010` remains unsupported through the native host API.
+The build reproduces stage 215. A fresh 30-second direct HDMI-to-USB capture shows
+the camera scene with 33 linked samples, and a 60-sample flow check records no
+socket drops or SDIO errors. Stage 215 remains running. Route selection, service
+ownership and full firmware parity remain open; the earlier intermittent video
+loss is not resolved by this source-only change.

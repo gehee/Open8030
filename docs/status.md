@@ -637,6 +637,15 @@ scene with all 33 samples linked; 60 flow samples have no socket drops or SDIO
 errors. Stage 215 remains running in RAM. See
 [constructed parser coverage](parity.md#constructed-internal-parser-profiles-and-capacities).
 
+Stage 219 compares the internal socket writer and port-1 TX occupancy gate.
+It matches 871 original cases, including 294 executions of the selected queue
+status getter path. Nonzero roles suppress port-1 writes above 32 queued bytes,
+or 262 when the mode field equals 1. One sanitizer suite and 18 Python tests pass.
+The helper remains source-only and the build reproduces stage 215. Fresh HDMI
+video remains visible with 33 linked samples; 60 flow samples show no socket
+drops or SDIO errors. Stage 215 remains running. See
+[internal write gate](parity.md#internal-socket-write-gate).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host

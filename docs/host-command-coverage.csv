@@ -27,7 +27,7 @@ request_id,family,core_route,original_reply_bytes,behavior,native_status,compari
 0x0100000d,getter,recognized,32,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
 0x0100000e,getter,recognized,132,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
 0x0100000f,getter,recognized,4,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
-0x01000010,getter,recognized,648,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
+0x01000010,getter,recognized,648,Stream queue status,unsupported,Selected TX-used word executes inside internal writer comparison (stage 219); getter not implemented,Full 648-byte layout; all selections and missing states; runtime implementation and hardware comparison
 0x01000011,getter,recognized,648,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
 0x01000012,getter,recognized,129,Enabled work-channel indices,unsupported,90 original-instruction enumeration cases; source-only module; see parity.md,Integrate runtime catalog and dispatcher; verify wire framing and lifecycle state
 0x01000013,getter,recognized,12,Unresolved contract,unsupported,Routing identified; behavior not closed,"Original payload, error, state and side-effect contract; implementation and comparison"
