@@ -334,10 +334,39 @@ not close multi-bank preparation, low-power acquisition or RF-power accuracy.
 
 A planned hardware candidate-removal test stopped before mutation: the large
 native RX diagnostic received an unexpected backend response. The cause remains
-unresolved; candidate-removal calibration retention currently has synthetic
-coverage only. A warm stock restoration followed by candidate reload also
+unresolved at that point; the following diagnostic change enabled the hardware
+check described below. A warm stock restoration followed by candidate reload also
 reproduced the known disconnected HDMI output. A full receiver reboot restored
 stock video before the final candidate reload and inspection.
+
+### Daemon response limits and recovery observation
+
+The matched original Linux daemon's encoder and TCP forwarding wrapper were
+executed in 27 offline cases at payload-size boundaries. All 99 executed
+instruction locations are checked against the daemon binary with SHA-256
+`63f16bb229a4091e3d5fc00537135a2f8bb692a3042ff27bde8009dd1bf5cefc`.
+The wrapper provides 4,096 bytes to the encoder; payload plus 19 bytes of framing
+must fit. With the former 4,084-byte RX diagnostic, encoding returns `-1` and the
+wrapper passes that value as the unsigned length to `send`. The harness intercepts
+`memcpy` and `send`; it neither executes the kernel send nor models daemon threads.
+This establishes an oversized-response defect without proving the exact source
+of the earlier unrelated backend response.
+
+Open8030 now requires bounded ranges for its RX diagnostic daemon alias. It
+returns at most 1,024 bytes and rejects empty, malformed and out-of-range requests
+without payload. The complete record remains available on the direct transport.
+These are project diagnostic contracts, not newly implemented vendor commands.
+Hardware checks cover ten complete records read in ranges, eleven invalid
+requests and both zero-length boundary reads, while camera video continues.
+
+The range reads and current host-audit record identify the active peer and a
+restorable candidate list. Removing and restoring that list triggers recovery:
+the candidate-removal and completed-recovery counters advance, the failure count
+does not, and the five compensation words remain unchanged while removed and
+linked again. Startup and post-recovery HDMI captures total 35 seconds, with 41
+linked/AP-time samples and zero sampled socket drops. Both show the dark textured
+camera scene also seen on fresh stock. Physical peer loss, pending DMA, repeated
+recovery stress and controlled scene freshness remain open.
 
 Next, extend the core inventory through the transport dispatchers and indirect
 callbacks, and bind each command's behavior to its comparison tests. Then cover

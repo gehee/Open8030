@@ -80,4 +80,10 @@ size_t ar_encode(uint8_t *dst, size_t capacity, const struct ar_frame *frame);
 void ar_feed(struct ar_parser *parser, const uint8_t *bytes, size_t length,
 	     ar_frame_callback callback, void *context);
 void ar_dispatch(const struct ar_frame *request, uint8_t *reply, size_t *length);
+/* Project RX diagnostic: LE16 offset/count, at most 1024 bytes per read.
+ * Empty direct requests retain the complete record; daemon aliases require a
+ * range because the matched daemon cannot safely forward the complete record.
+ * Returned storage is borrowed until the caller encodes the response. */
+void ar_rx_diagnostic_read(const struct ar_frame *request, const uint8_t *record,
+			  size_t size, struct ar_frame *response);
 #endif

@@ -61,15 +61,15 @@ These are the current generated image's contracts, not a general AR8030 memory m
 | Header | `0x0000` | Loader metadata | 64 bytes, padded to 512 |
 | Bootstrap | `0x0200` | `0x0a098a00` | 792 bytes, padded to 1,024 |
 | Configuration placeholder | `0x0600` | `0x00200000` | 16 KiB, initially zero |
-| Runtime | `0x4600` | `0x00204000` | 61,104 bytes, padded to 61,440 |
+| Runtime | `0x4600` | `0x00204000` | 60,728 bytes, padded to 60,928 |
 
-The complete image is 79,360 bytes. The receiver loader writes its external JSON
+The complete image is 78,848 bytes. The receiver loader writes its external JSON
 into the configuration region; an empty region alone cannot initialize the radio.
 The bootstrap uses temporary RAM in that region during its own execution, so the
 regions should not be interpreted as independent, permanently resident objects.
 
 The Zephyr board definition reserves 704,512 bytes starting at `0x00204000`.
-The recorded build uses 660,400 bytes of that region; the small binary size does
+The recorded build uses 659,888 bytes of that region; the small binary size does
 not describe total RAM consumption. These figures do not establish worst-case
 stack or DMA margins. Exact hashes and sizes are in [baseline.json](../baseline.json);
 the layout generator is [build.py](../tools/build.py).
@@ -134,6 +134,20 @@ transparent forwarding socket. Project diagnostics use `0x0c5a....` on the chip,
 with selected read-only `0x015a....` aliases for forwarding through that daemon.
 These are Open8030 extensions, not vendor commands. See
 [ar_frame.h](../include/ar_frame.h) for the supported aliases.
+
+The RX diagnostic alias `0x015a0017` requires a four-byte request: little-endian
+16-bit byte offset followed by little-endian 16-bit count, at most 1,024 bytes.
+The current record is 4,084 bytes; read it in ranges, or read only the required
+fields. Empty requests, malformed lengths and out-of-range reads return `-22`
+with no payload. Zero-byte reads through the end offset are valid. The direct
+`0x0c5a0017` transport retains its complete-record empty request and also accepts
+ranges. These diagnostic structures are development interfaces, not stable
+vendor APIs; successive ranges are live reads, not one atomic snapshot.
+
+The matched daemon's TCP forwarding wrapper gives its encoder a 4,096-byte
+buffer including the 19-byte frame overhead. The complete RX diagnostic exceeds
+that limit. Bounded reads avoid the oversized response; increasing the native
+SDIO buffer would not fix the daemon's independent limit.
 
 Implemented responses use `-22` for invalid input and `-95` for unsupported
 operations. The generic reset request synchronizes the protocol; it does not

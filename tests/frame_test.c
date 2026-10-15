@@ -17,8 +17,61 @@ static void receive(const struct ar_frame *frame, void *context)
 	received++;
 }
 
+static void diagnostic_ranges(void)
+{
+	uint8_t record[4084], range[4], wire[AR_MAX_FRAME], joined[4084];
+	for (unsigned i = 0; i < sizeof record; i++) { record[i] = (uint8_t)(i * 31 + i / 256); }
+	struct ar_frame request = {.reqid = AR_DAEMON_DIAGNOSTIC_BASE | 0x17,
+		.msgid = 0xabcdef12, .payload = range, .length = 4}, reply;
+	const unsigned counts[] = {0, 1, 1023, 1024, 1025, 4084, 65535};
+	/* Every record boundary, including one-past-end and overrun. Encode the
+	 * result to check the actual reply contract and daemon-safe frame size. */
+	for (unsigned offset = 0; offset <= sizeof record + 1; offset++) {
+		for (unsigned i = 0; i < sizeof counts / sizeof counts[0]; i++) {
+			unsigned count = counts[i];
+			range[0] = offset; range[1] = offset >> 8;
+			range[2] = count; range[3] = count >> 8;
+			ar_rx_diagnostic_read(&request, record, sizeof record, &reply);
+			assert(reply.reqid == request.reqid && reply.msgid == request.msgid);
+			if (offset <= sizeof record && count <= 1024 && count <= sizeof record - offset) {
+				assert(!reply.status && reply.length == count && reply.payload == record + offset);
+			} else { assert(reply.status == -22 && !reply.length && !reply.payload); }
+			assert(ar_encode(wire, sizeof wire, &reply) == reply.length + AR_OVERHEAD);
+			assert(reply.length <= 1024);
+		}
+	}
+	for (unsigned offset = 0; offset < sizeof record; offset += 1024) {
+		unsigned count = sizeof record - offset;
+		if (count > 1024) { count = 1024; }
+		range[0] = offset; range[1] = offset >> 8;
+		range[2] = count; range[3] = count >> 8;
+		ar_rx_diagnostic_read(&request, record, sizeof record, &reply);
+		memcpy(joined + offset, reply.payload, reply.length);
+	}
+	assert(!memcmp(joined, record, sizeof record));
+	for (unsigned n = 0; n <= 6; n++) {
+		if (n == 4) { continue; }
+		request.length = n;
+		ar_rx_diagnostic_read(&request, record, sizeof record, &reply);
+		assert(reply.status == -22 && !reply.length);
+	}
+	request.length = 4; request.status = 1;
+	ar_rx_diagnostic_read(&request, record, sizeof record, &reply);
+	assert(reply.status == -22 && !reply.length);
+	request.status = 0; request.payload = NULL;
+	ar_rx_diagnostic_read(&request, record, sizeof record, &reply);
+	assert(reply.status == -22 && !reply.length);
+	request.reqid = AR_REQ_RF_RX_INFO; request.length = 0;
+	ar_rx_diagnostic_read(&request, record, sizeof record, &reply);
+	assert(!reply.status && reply.length == sizeof record && reply.payload == record);
+	assert(ar_encode(wire, sizeof wire, &reply) == sizeof record + AR_OVERHEAD);
+	ar_rx_diagnostic_read(&request, record, AR_MAX_PAYLOAD + 1, &reply);
+	assert(reply.status == -22 && !reply.length);
+}
+
 int main(void)
 {
+	diagnostic_ranges();
 	struct ar_parser parser = {0};
 	uint8_t wire[AR_MAX_FRAME], response[AR_MAX_FRAME];
 	const uint8_t bytes[] = {0xaa, 0xbb, 0x00, 0xff};

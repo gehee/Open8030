@@ -49,7 +49,7 @@ time and zero sampled socket drops. Scene lighting/freshness was not controlled;
 this is not a new bright-scene quality or latency measurement. The image was
 retained after inspection.
 
-The current image fixes calibration lifetime across normal context rebuilds:
+The preceding image fixed calibration lifetime across normal context rebuilds:
 loaded high-band TX compensation survives stop/start and stop/deinit/init/start.
 The previous code cleared it until another preparation notification. Validation
 includes 128 original-reset cases, regression tests that fail on the previous
@@ -62,13 +62,23 @@ stock. This is not controlled freshness or bright-scene quality verification.
 The first test window expired before retention. A subsequent warm reload showed
 the disconnected HDMI background despite a radio link; rebooting into stock and
 reloading restored the scene. The final candidate was inspected and retained in
-RAM. Candidate-removal calibration retention has synthetic coverage only: its
-planned hardware check stopped before mutation when the large RX diagnostic
-returned an unexpected backend response. See [calibration lifetime](parity.md#calibration-lifetime-across-normal-restart)
+RAM. Its planned candidate-removal check stopped before mutation when the large
+RX diagnostic returned an unexpected backend response. See [calibration lifetime](parity.md#calibration-lifetime-across-normal-restart)
 for the original-comparison assumptions and remaining preparation gaps.
 
+The current image adds bounded RX diagnostic reads through the original daemon,
+whose encoder cannot forward the former complete record. Ten complete records
+read in ranges and eleven invalid requests pass on hardware. Candidate removal
+and readmission now also confirm calibration retention: the receiver reconnects
+without a recovery failure and the compensation words remain unchanged.
+The 15-second startup capture and 20-second post-recovery capture show the same
+dark textured camera scene as freshly rebooted stock. All 41 samples remain
+linked with valid advancing AP time and zero sampled socket drops. The image
+was retained in RAM after inspection. These checks do not establish physical
+peer-loss recovery, controlled freshness or full protocol parity.
+
 A separate configuration-only test reproduced acquisition failure at initial
-power level 11 using the preceding accepted image. No video was delivered;
+power level 11 using the accepted AP-time image. No video was delivered;
 restoring the original level-25 configuration restored the stream. This failure
 does not depend on the later, unaccepted dynamic-power code. Low-power operation
 remains unresolved; see [configuration](configuration.md#power-and-factory-data).

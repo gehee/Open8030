@@ -1,6 +1,26 @@
 /* SPDX-License-Identifier: MIT */
 #include "ar_frame.h"
 
+void ar_rx_diagnostic_read(const struct ar_frame *request, const uint8_t *record,
+			  size_t size, struct ar_frame *response)
+{
+	*response = (struct ar_frame){.reqid = request->reqid, .msgid = request->msgid,
+		.status = AR_STATUS_INVALID};
+	if (request->status || ar_diagnostic_request_id(request->reqid) != AR_REQ_RF_RX_INFO) { return; }
+	size_t offset = 0, count = size;
+	if (!request->length && request->reqid == AR_REQ_RF_RX_INFO) {
+		if (size > AR_MAX_PAYLOAD) { return; }
+	} else {
+		if (request->length != 4 || !request->payload) { return; }
+		offset = request->payload[0] | (unsigned)request->payload[1] << 8;
+		count = request->payload[2] | (unsigned)request->payload[3] << 8;
+		if (count > 1024 || offset > size || count > size - offset) { return; }
+	}
+	response->status = 0;
+	response->payload = record + offset;
+	response->length = count;
+}
+
 void ar_dispatch(const struct ar_frame *request, uint8_t *reply, size_t *length)
 {
 	/* Deliberately identifies this diagnostic firmware, not a stock radio. */

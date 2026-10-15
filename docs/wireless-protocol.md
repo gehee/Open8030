@@ -439,9 +439,9 @@ and a single calibrated context. Loaded compensation survives normal stop/start,
 deinit/init/start and native recovery. Probe, default loading, calibration and
 transitions to/from diagnostic modes invalidate that cache. Normal restart no
 longer clears compensation while waiting for another preparation notification.
-This has hardware stop/start and deinit/init/start coverage; recovery retention
-has synthetic coverage. Open8030 does not yet implement the original metadata
-cursor and all preparation transitions. In particular, matching gain registers
+This has hardware stop/start, deinit/init/start and candidate-removal/readmission
+coverage. Physical peer-loss and pending-DMA recovery still need hardware checks.
+Open8030 does not yet implement the original metadata cursor and all preparation transitions. In particular, matching gain registers
 does not establish equivalent command ordering or calibration lifetime. The
 [parity checklist](parity.md#command-preparation-contract-investigation) records
 the original-instruction evidence and its limits. The low-power acquisition

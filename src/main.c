@@ -263,9 +263,10 @@ static void receive(const struct ar_frame *frame, void *context)
 		size_t size = ar_encode(reply, sizeof reply, &response);
 		(void)ar_sdio_send(reply, size); return;
 	}
-	if (diagnostic_reqid == AR_REQ_RF_RX_INFO && frame->status == 0 && frame->length == 0) {
-		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid,
-			.payload = (const uint8_t *)ar_rf_receive_information(), .length = sizeof(struct ar_rf_rx_info)};
+	if (diagnostic_reqid == AR_REQ_RF_RX_INFO) {
+		struct ar_frame response;
+		ar_rx_diagnostic_read(frame, (const uint8_t *)ar_rf_receive_information(),
+				      sizeof(struct ar_rf_rx_info), &response);
 		size_t size = ar_encode(reply, sizeof reply, &response);
 		(void)ar_sdio_send(reply, size); return;
 	}
