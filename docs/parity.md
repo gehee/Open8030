@@ -1563,8 +1563,67 @@ Inspected frames show the dark textured scene and camera OSD. This verifies the
 retained runtime, not hardware execution of the new descriptor helper or
 controlled scene freshness/latency. Detailed evidence remains private.
 
-Next, compare the stream-release consumer and remaining ownership producers,
-connect the compared TX helpers to the runtime, and isolate low-power acquisition
+### Stream-release consumer and queue consumption
+
+Source-only `tx_stream.c` implements the consumer behind descriptor retirement.
+Fresh comparison executes the original consumer at `0x248998`, registry lookup
+at `0x231db8`, reference drop at `0x231e28`, entry traversal at `0x21a614` and
+`0x21a62e`, and queue consumption at `0x248228`. Composed cases also execute the
+original retirement loop. These bodies replace stage 194's intercepted release
+endpoint in the new comparison.
+
+Lookup accepts selectors 0..7 and streams 0..4; any nonzero direction selects
+the alternate direction. It increments a found object's reference counter.
+The consumer subsequently drops two references, each saturating at zero.
+This count behavior is compared, but it does not by itself establish which
+producer owns the additional reference or when its storage may be destroyed.
+
+With flag bit 2 clear, the consumer removes the requested byte count from the
+queue if enough bytes are present. With that bit set, it advances retained-entry
+consumed offsets. An entry is complete only when consumed equals produced and
+produced equals the full 32-bit length. Its optional buffer callback runs before
+the entry is removed. Completed entries are then consumed as 20-byte queue
+records; queue cursor/count updates precede the wake call. A partial or not fully
+published entry stops traversal.
+
+The retained path subtracts the **requested** byte count from its accounting
+counter even when fewer bytes were consumed. This subtraction and the available
+byte calculation preserve unsigned wrap; consumed offsets remain 16-bit.
+The helper does not reinterpret successful return as proof that all requested
+bytes existed. Missing queues, zero requests and absent registry entries have
+separate compared paths. Lock return values are ignored by these original bodies;
+the adapters preserve that behavior without claiming it is safe under an actual
+RTOS failure.
+
+Fresh comparison covers **3,600 scenarios**, including **96 composed retirement
+sequences**, and checks state at every recorded effect. Cases include both
+consumer paths, partial/full/unpublished/empty and wrapped entry arithmetic,
+queue cursor wrap and normalization, out-of-range selectors/streams, absent
+objects/queues, reference wrap and selected callback mutations. Comparisons cover
+13,628 lock calls, 13,628 unlock calls, 1,288 wakes and 418 buffer callbacks.
+Nineteen cases execute mutations to references, accounting and mutex tokens;
+later operations observe them. All 294 executed instruction locations match the
+reference payload, container and analysis ELF.
+
+RTOS lock/unlock, wake, buffer callback bodies and diagnostics remain intercepted.
+This does not prove scheduler behavior, mutex correctness, producer lifetimes,
+DMA concurrency or the host's backpressure contract. Native bounds guards reject
+unsafe entry metadata and missing adapters; these are additional errors, not
+original error parity. A guarded error releases acquired locks and drops the
+references but cannot undo prior buffer callbacks or consumed-offset changes.
+The selected stream, queue and entry storage must stay alive throughout the call.
+
+Three sanitizer suites cover the composed consumer/retirement path, partial
+consumption, mutation, accounting wrap and guarded cleanup, plus the existing
+socket implementation. Eighteen Python tests pass. The new helper remains
+outside the runtime; the standard build reproduces accepted stage 189 exactly.
+A fresh 30-second direct `/dev/video0` HDMI-to-USB capture has 33 linked samples,
+advancing AP time and zero sampled socket drops. Inspected frames show the dark
+textured scene and camera OSD. This verifies the retained firmware, not hardware
+execution of this consumer or controlled scene freshness/latency.
+
+Next, compare the remaining ownership and retry-limit producers, connect the
+compared TX helpers to the runtime, and isolate low-power acquisition
 before retrying host power integration. Extend the core
 inventory through transport dispatchers
 and indirect callbacks, binding each contract to its comparison tests. Then cover

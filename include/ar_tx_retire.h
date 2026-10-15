@@ -18,7 +18,8 @@ struct ar_tx_retire_ring {
 };
 /* The original release endpoint receives context bits 24..27, descriptor
  * bits 0..7, a zero direction and descriptor bits 12..31. Its return is ignored.
- * Implementing queue consumption behind this callback remains separate work. */
+ * ar_tx_stream_release supplies the separately compared source-only consumer;
+ * connecting it to producer ownership and the runtime remains separate work. */
 typedef void (*ar_tx_retire_release)(unsigned selector, unsigned stream,
 	unsigned direction, uint32_t length, void *context);
 

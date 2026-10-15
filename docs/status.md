@@ -373,6 +373,16 @@ identical to accepted stage 189; a fresh 30-second HDMI-to-USB capture shows the
 camera scene with 33 linked samples and zero sampled socket drops. See
 [retirement coverage](parity.md#retained-descriptor-retirement).
 
+Stage 195 compares the stream-release consumer, lookup/reference updates, entry
+traversal and queue consumption in 3,600 original scenarios, including 96 composed
+retirement sequences. It preserves partial-consumption and callback ordering,
+requested-byte accounting wrap, and the original two reference drops. The helper
+remains source-only; producer ownership and RTOS integration are still open.
+Three sanitizer suites and 18 Python tests pass. The standard build reproduces
+accepted stage 189; a fresh 30-second HDMI-to-USB capture shows the camera scene
+with 33 linked samples and zero sampled socket drops. See
+[stream-release coverage](parity.md#stream-release-consumer-and-queue-consumption).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host
