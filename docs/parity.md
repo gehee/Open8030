@@ -2124,3 +2124,59 @@ Device image/configuration and retained-session identity are recorded privately;
 stage 201 remains running. Stream allocation, retained-entry publication, host
 socket shutdown, runtime ownership and hardware pending-DMA tests remain open,
 as do controlled video freshness and full original-firmware coverage.
+
+### Handle lookup and close sequencing
+
+Stage 204 adds `src/tx_handle.c`, a source-only handle-table adapter compared
+with original lookup (`0x21a014`), snapshot/update (`0x219f9a`) and handle close
+(`0x2492f8`). These are the handle operations used above the stream-close path;
+they do not implement the host socket worker lifecycle.
+
+A table record occupies 12 bytes: little-endian flags at byte 0, selector at
+byte 4 and port at byte 8. Lookup preserves every byte. Flag bit 0 marks an active
+handle; bits 1–2 select RX/TX for stream close. An out-of-range handle returns
+`-1` without copying or locking. An in-range lookup copies under the table mutex
+and returns success from the copied active bit, even if that bit changes in the
+table before return. The update variant can clear the table's active bit while
+still returning the previous record. Native storage bounds and missing adapters
+have additional `-22` guards, outside the original error contract.
+
+Handle close first snapshots the record while preserving its active bit, then
+closes the selected streams. The table mutex is released before stream close,
+so it is not held while references drain. A stream-close error is propagated
+without a final table update. After success, handle close looks up the record
+again and clears its active bit. This second read uses the current table record,
+not the saved record. If the handle became inactive or the table count shrank,
+it can return `-1` after streams have already been destroyed; those effects are
+not rolled back. High flag bits and all unrelated record bytes are preserved.
+
+Fresh original execution passes **635 scenarios**, including **24 composed
+acquisition/handle-close/packet-retirement sequences** with byte and retained
+queues. The comparison covers ordinary and updating lookup, valid/inactive/
+out-of-range handles, direction masks, selector/port errors, missing selector
+allocation, external queue storage, and changes to active bits, record contents,
+table count and mutex tokens at callback boundaries. It compares complete
+records, queue/stream and registry state, packet retirement, results and ordered
+effects. All 951 executed instruction locations match the reference payload,
+container and analysis ELF. The traces contain 993 locks and unlocks, 498
+synchronization-destruction calls, 248 frees and 48 scheduler delays.
+
+Locking, delay, synchronization destruction, heap free, buffer callbacks and
+diagnostics are intercepted. The 113 invalid-close diagnostic clock reads are
+excluded from native functional comparison. The composed cases run the original
+stream close, acquisition, retirement and release bodies, but retirement during
+a simulated delay does not establish actual scheduling or DMA completion.
+Synthetic ELF, ABI, native pointer views and partial ISA remain analysis metadata.
+
+Six ASan/UBSan suites and 18 Python tests pass. The standard build reproduces
+stage 201 exactly. A fresh 30-second `/dev/video0` HDMI-to-USB capture at MJPEG
+1920×1080/nominal 30 fps shows the camera texture and right-side features at
+5 and 27 seconds. All 33 samples remain linked with advancing AP time and zero
+sampled socket drops. Image/configuration hashes and retained-session identity
+are recorded privately; stage 201 remains running in RAM.
+
+The original host close branch subsequently posts an empty message to the
+socket worker and clears its running flags. Worker draining, notification,
+resource cleanup and host response behavior require their own comparison before
+replacing the runtime socket close. Handle allocation/publication, retained TX
+publication, pending-DMA hardware tests and full firmware coverage remain open.

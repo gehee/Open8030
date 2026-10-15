@@ -473,6 +473,15 @@ The helpers remain source-only; the build reproduces stage 201. A fresh
 zero sampled socket drops. Stage 201 remains running in RAM. See
 [stream close coverage](parity.md#stream-close-and-held-reference-lifetime).
 
+Stage 204 compares handle lookup and close against 635 original scenarios,
+including 24 acquisition/handle-close/retirement sequences. The handle remains
+active during stream close and is cleared by a second table lookup after success;
+failure of that lookup does not restore destroyed streams. Six sanitizer suites
+and 18 Python tests pass. This remains source-only work; the build reproduces
+stage 201. A fresh 30-second HDMI-to-USB capture shows the camera scene with
+33 linked samples and zero sampled socket drops. Stage 201 remains running in
+RAM. See [handle lifetime coverage](parity.md#handle-lookup-and-close-sequencing).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host
