@@ -454,7 +454,9 @@ second, and repeated disable leaves the recovered link intact.
 
 Final-revision button binding and video acceptance remain open: captures show
 video socket drops and image corruption, in addition to the previously observed
-warm-load black-camera symptom. This is not yet an accepted hardware baseline or
+warm-load black-camera symptom. A fresh-boot control run with the exact accepted
+stage-232 image also reproduces socket drops, so that symptom is not specific to
+binding. This is not yet an accepted hardware baseline or
 support for AP, other frame modes or nonzero connected slots.
 
 Sources: [binding.c](../src/binding.c), [dev.c](../src/dev.c),

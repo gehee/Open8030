@@ -25,7 +25,11 @@ still pending.
 This trial is **not the accepted baseline**. HDMI-to-USB captures show a visible
 camera scene after a fresh receiver boot, but also video socket drops and image
 corruption. Drops occur in the preceding stage-233 fresh-start capture as well as
-after stage-234 cancellation; their cause has not been isolated. Warm loading also
+after stage-234 cancellation. A fresh-boot comparison with the exact accepted
+stage-232 image also drops 199,212 video socket bytes over 29 seconds, versus
+463,799 bytes in a 29-second post-cancellation stage-234 sample. Binding changes
+are therefore not required to reproduce the drops; these short sequential runs
+do not establish equal loss rates or isolate their cause. Warm loading also
 reproduced the existing black-camera/live-overlay symptom. See
 [binding coordination](wireless-protocol.md#button-binding-and-host-coordination).
 
