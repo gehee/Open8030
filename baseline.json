@@ -2,12 +2,12 @@
   "baseline": "working-video",
   "target": "VRX/GND Ascent VRX; matched 18.21.10 inputs",
   "runtime": {
-    "bytes": 66792,
-    "sha256": "b1e0d67df001fae9a4d982ca82be9afd00f2f1b95ea1d689bdfa8ece40a8990e",
+    "bytes": 68448,
+    "sha256": "60367a08f54f8bc3cf94aeaa75e5885c8adba78e8e967b46b213c8a5ee5904fb",
     "load_address": "0x204000"
   },
   "ram": {
-    "used_bytes": 670816,
+    "used_bytes": 672384,
     "capacity_bytes": 704512
   },
   "private_board_profile": {
@@ -19,20 +19,20 @@
     "sha256": "c69e46c57bbb3e5fc7fe0c5581e59fb5735dcf8a97bf0e05ae7aaa0273657768"
   },
   "container": {
-    "bytes": 84992,
-    "sha256": "c351fb40d7b9e1e7a9511b7151f5233619d92eab945216d91675a2570b8fa40c",
+    "bytes": 86528,
+    "sha256": "d1a17312775bdb85c0ce7fb9a603c4abbb7c3da06fedbe24497595493926961b",
     "payload_alignment": 512
   },
   "original_stock_sha256": "dc58247910af564376350404383c5c411cbec21663873fba24e70c61a3584e3c",
   "external_config_sha256": "5cf0cd31645d4786c6b04399c6c609386d427ffc4c6d7f6e42d81e3e770c2a74",
   "scope": "Experimental Ascent VRX 18.21.10 native video baseline; private inputs not distributed",
   "generated_container": {
-    "bytes": 84992,
-    "sha256": "c351fb40d7b9e1e7a9511b7151f5233619d92eab945216d91675a2570b8fa40c",
+    "bytes": 86528,
+    "sha256": "d1a17312775bdb85c0ce7fb9a603c4abbb7c3da06fedbe24497595493926961b",
     "payload_alignment": 512,
     "configuration": "zero-filled 16 KiB; external loader JSON required",
     "hardware_verified": true,
-    "verification_scope": "Ascent VRX 18.21.10: original-compared generic tuning applied to measurement RX11; stable link PLLs; startup, stop/start, deinit/init/start and candidate removal/readmission; 90 seconds inspected direct HDMI capture matching the initial fresh-stock dark scene, 102 linked/AP-time samples and zero sampled socket drops. A second stock boot showed fallback background despite link, while native recovered the scene; startup reliability, active catalog, sample timing and full protocol parity remain open",
+    "verification_scope": "Ascent VRX 18.21.10: compared normal mode0 PHY receive/cache and timer expiry integrated; startup, stop/start and deinit/init/start; 60 seconds inspected direct HDMI-to-USB capture matching fresh stock dark scene, 69 linked/AP-time samples and zero sampled socket drops. Mode3, synthesized admission, PHY sender/channel-policy integration, broader callbacks and full protocol parity remain open",
     "verified_utc_date": "2026-10-15"
   }
 }

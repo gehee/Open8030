@@ -9,6 +9,7 @@
 #include "ar_dev_mcs.h"
 #include "ar_fch_monitor.h"
 #include "ar_ap_time.h"
+#include "ar_phy_receive.h"
 #include "ar_command.h"
 #include "ar_scan.h"
 #include "ar_scan_scores.h"
@@ -33,7 +34,7 @@ static uint8_t receive_buffers[4][65536] __attribute__((aligned(512)));
 static unsigned receive_head, receive_pending, receive_length, receive_user;
 static uint32_t receive_metadata;
 static uint64_t receive_started;
-static struct ar_ap_time ap_time;
+static struct ar_phy_control phy_control;
 static uint32_t receive_milliseconds, receive_iterations;
 static unsigned receive_operation;
 static ar_rf_event_callback event_callback;
@@ -286,16 +287,68 @@ static void sync_apply(void)
 	if (!sync_info.rx_writes && !sync_info.tx_writes) { sync_info.first_apply_us = sync_info.last_apply_us; }
 	if (transmit) { sync_info.tx_writes++; } else { sync_info.rx_writes++; }
 }
+/* Polling serializes control handling; start_prepared_receive masks interrupt
+ * delivery. These callbacks must gain real locks before an interrupt/thread port. */
+static void sync_lock(enum ar_phy_receive_lock which, void *context) { (void)which; (void)context; }
+static void sync_control_lock(void *context) { (void)context; }
+static int sync_read(uint8_t packet[7], void *context) { memcpy(packet,context,7); return 0; }
+static void sync_prepare(void *context) { (void)context; }
+static void sync_field(uint32_t address, uint32_t value, void *context)
+{
+	(void)context; field(address,value);
+}
+static void sync_dispatch(unsigned command, uint8_t *payload, size_t length, void *context)
+{
+	(void)command; (void)payload; (void)length;
+	memcpy(sync_info.last_control,phy_control.rx,7);
+	if (context) { sync_info.immediate++; }
+	sync_apply();
+}
+static void sync_expire_dispatch(unsigned outgoing, unsigned command, uint8_t *payload,
+	size_t length, void *context)
+{
+	(void)outgoing; sync_dispatch(command,payload,length,context);
+}
+static void sync_stop_timer(void *context) { (void)context; sync_info.pending = 0; }
+static void sync_start_timer(uint32_t delay, void *context)
+{
+	(void)context; sync_info.deadline_ms = elapsed_ms()+delay;
+	sync_info.pending = 1; sync_info.armed++;
+}
+static int sync_admit(const uint8_t record[150], void *context)
+{
+	/* The original synthesized record requests mode3. Normal runtime still
+	 * supports mode0 only; do not pass this internal record to the MAC decoder
+	 * or pretend its required reconfiguration has been applied. */
+	(void)record; (void)context;
+	receiver.admission_attempts++; receiver.admission_rejects++;
+	receiver.last_admission_result = (uint32_t)-95;
+	return -95;
+}
+static uint32_t sync_now(void *context) { (void)context; return (uint32_t)(timer_ticks()/40000); }
+/* Expiry never writes a TX packet or refreshes an AP idle packet. */
+static void sync_unused_write(const uint8_t packet[7], void *context) { (void)packet; (void)context; }
+static void sync_unused_idle(uint8_t packet[7], void *context) { (void)packet; (void)context; }
+static const struct ar_phy_receive_ops sync_ops = {
+	sync_lock,sync_lock,sync_read,sync_prepare,sync_field,sync_dispatch,
+	sync_stop_timer,sync_start_timer,sync_admit,sync_now
+};
+static const struct ar_phy_control_ops sync_expire_ops = {
+	sync_control_lock,sync_control_lock,sync_field,sync_unused_write,sync_expire_dispatch,sync_unused_idle
+};
 static void sync_receive(const uint8_t control[7])
 {
-	/* 0x248b40 validates lengths before replacing the shared cache. The
-	 * checksum covers all seven bytes, including unused payload tails. */
-	static const uint8_t lengths[10] = {255,1,4,2,3,3,2,4,4,0};
-	unsigned command = control[1] & 15, length = (control[2] >> 1) & 7;
-	unsigned ttl = (control[1] >> 4) | (control[2] & 1) << 4;
-	if (command > 9 || (lengths[command] != 255 && length != lengths[command]) ||
-	    (command == 8 && (control[6] & 12))) { sync_info.rejected++; return; }
-	sync_info.accepted++; memcpy(sync_info.last_control, control, 7);
+	/* Runtime provisioning currently admits only mode0 and local position0.
+	 * Broader mode3/retransmission state ownership remains unintegrated. */
+	struct ar_phy_receive receive = {.slot=receiver.assigned_slot,.dev_state=receiver.dev_state};
+	memcpy(receive.mac,dev_config.local,4);
+	phy_control.role = 1; phy_control.mode = dev_config.mode;
+	phy_control.frame_us = receiver.search_frame_us; phy_control.callbacks = 0x17e;
+	if (ar_phy_receive_process(&phy_control,&receive,&sync_ops,(void *)control)) {
+		sync_info.rejected++; return;
+	}
+	unsigned command = control[1] & 15;
+	sync_info.accepted++; memcpy(sync_info.last_control,phy_control.rx,7);
 	if (receive_operation >= 71) {
 		struct ar_rf_command_observation *item = &traffic_info.commands[command];
 		uint32_t elapsed = elapsed_us();
@@ -303,31 +356,12 @@ static void sync_receive(const uint8_t control[7])
 		item->accepted++; item->last_us = elapsed; memcpy(item->last, control, 7);
 	}
 	if (command == 6 && !sync_info.identity_commands++) { memcpy(sync_info.first_identity, control, 7); }
-	/* Command7 consumes header bits as time, not a TTL countdown. It does
-	 * not cancel an existing shared timer; its cache replacement prevents
-	 * the previous command from being dispatched when that timer expires. */
-	if (command == 7) {
-		ar_ap_time_receive(&ap_time, control, (uint32_t)(timer_ticks() / 40000));
-		return;
-	}
-	if (!command) { return; }
-	if (ttl == 1 || ttl == 31) {
-		if (ttl == 1) { sync_info.pending = 0; }
-		sync_info.immediate++; sync_apply();
-	} else if (ttl > 1) {
-		sync_info.deadline_ms = elapsed_ms() +
-			((ttl - 1) * receiver.search_frame_us) / 1000 + 4;
-		sync_info.pending = 1; sync_info.armed++;
-	}
 }
 static void sync_poll(uint32_t ms)
 {
 	if (!sync_info.pending || (int32_t)(ms - sync_info.deadline_ms) < 0) { return; }
 	sync_info.pending = 0; sync_info.timer_fired++;
-	unsigned ttl = (sync_info.last_control[1] >> 4) | (sync_info.last_control[2] & 1) << 4;
-	unsigned command = sync_info.last_control[1] & 15;
-	/* Command7 has no timer callback in the original descriptor table. */
-	if (ttl && command && command != 7) { sync_apply(); }
+	(void)ar_phy_control_expire(&phy_control,&sync_expire_ops,NULL);
 }
 static void read_control_words(uint32_t *words)
 {
@@ -1259,22 +1293,13 @@ static uint32_t dev_frame_microseconds(void)
 
 uint8_t ar_rf_control_checksum(const uint8_t control[7])
 {
-	/* Independently derived bit basis of the original 0x253668 lookup.
-	 * The last eight entries are zero in this exact release. Preserve this
-	 * exception rather than assuming a standard CRC polynomial. Exhaustive
-	 * table and message comparisons are recorded in the private evidence. */
-	uint8_t check = 0;
-	for (unsigned byte = 1; byte < 7; byte++) {
-		uint8_t value = control[byte];
-		if (byte == 6) { value |= 0xf0; }
-		check = ar_mac_crc8_step(check ^ value);
-	}
-	return check;
+	return ar_phy_control_checksum(control);
 }
 
 uint32_t ar_rf_host_ap_time(void)
 {
-	return ar_ap_time_get(&ap_time, (uint32_t)(timer_ticks() / 40000));
+	const struct ar_ap_time time = {phy_control.time_value,phy_control.time_valid};
+	return ar_ap_time_get(&time, (uint32_t)(timer_ticks() / 40000));
 }
 
 int ar_rf_host_status(uint16_t users, uint8_t output[300])
@@ -1590,6 +1615,7 @@ static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t 
 	memset(&phy, 0, sizeof phy);
 	memset(&phy_trace, 0, sizeof phy_trace); phy_poll_tick = 0;
 	memset(&sync_info, 0, sizeof sync_info);
+	memset(phy_control.rx,0,sizeof phy_control.rx);
 	memset(&traffic_info, 0, sizeof traffic_info); traffic_info.version = 1;
 	memset(&tx_mcs_info, 0, sizeof tx_mcs_info); tx_mcs_info.current = 1;
 	memset(&mcs_info, 0, sizeof mcs_info); mcs_info.first_observed_mcs = 25;
@@ -2432,7 +2458,7 @@ int ar_rf_host_control(unsigned operation, size_t payload_length)
 		/* Original sync-object creation in 0x22de32 clears time validity.
 		 * Stop/start and link loss retain the offset; deinit/init recreates it.
 		 * Do not bind AP time to receive_started, which changes on restart. */
-		ar_ap_time_reset(&ap_time);
+		phy_control.time_value = 0; phy_control.time_valid = 0;
 		host_initialized = 1; host_start_required = 1; lifecycle.initializations++;
 		return 0;
 	}

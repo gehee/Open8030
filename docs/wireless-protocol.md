@@ -343,7 +343,7 @@ The receiver validates these command lengths before updating its cached message:
 | 6 | 2 | Update selected RX/TX identity fields |
 | 7 | 4 | Update DEV's AP-time offset; exposed through host getter `0x0100000c` |
 | 8 | 4 | Effect unsupported; message byte 6 bits 2–3 must be clear |
-| 9 | 0 | Effect unsupported |
+| 9 | 0 | Cache/timer handling; original descriptor has no callback |
 
 Commands above 9 are rejected. Accepted format does not imply an implemented
 effect. For nonzero commands other than 7, TTL 1 or 31 applies immediately; TTL
@@ -355,17 +355,18 @@ not an independent timer queue for every received command.
 The original sender also has one pending command slot. A normal countdown sends
 the current TTL before decrementing it; a later tick at zero invokes its local
 callback and clears the command. TTL 31 persists until cancellation. A compared
-source-only helper now covers that sender, cancellation and receive-timer
-dispatch, including retained payload tails and mode-3 checksum handling. It is
-not yet connected to Open8030's runtime channel-policy path. See
+helper covers that sender, cancellation and receive-timer dispatch, including
+retained payload tails and mode-3 checksum handling. Receive-timer dispatch is
+now integrated; the sender and runtime channel-policy path remain separate work. See
 [transport coverage and boundaries](parity.md#pending-phy-command-transport).
 
-The separately compared receive helper covers the original mode-3 header
+The receive helper now handles normal mode-0 validation, caching and timer
+decisions in the runtime. It also compares the original mode-3 header
 behavior: only the checksum's low nibble is checked, while the high nibble
 provides per-slot retransmission bits. The high nibble of byte 2 supplies a
 per-slot disable mask. A matching command-0 record can synthesize an admission
-request for an unconnected DEV. These effects remain outside the runtime build;
-the table above describes current runtime effects. A cached command 0 or 7 does
+request for an unconnected DEV. Mode-3 side effects and admission remain unintegrated; the runtime reports
+synthesized admission as unsupported. The table above describes runtime effects. A cached command 0 or 7 does
 not cancel an earlier timer, but its eventual expiry has no registered command
 callback. See [receive comparison and limits](parity.md#phy-control-receive-and-cache-replacement).
 

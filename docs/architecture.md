@@ -110,8 +110,8 @@ are implementation limits, not CLI tuning parameters.
 | `src/channel_transaction.c` | Offline-tested queued channel requests, completion and rollback; pending PHY transport and runtime integration |
 | `src/channel_link.c` | Offline-tested PHY channel-change callback and monitor preparation; pending link-tuning/transport/runtime integration |
 | `src/channel_monitor.c` | Offline-tested monitor completion, loss and hopping decisions; pending timer/PHY/worker integration |
-| `src/phy_control.c` | Offline-tested pending PHY command, TX countdown, cancellation and receive-timer dispatch; pending receive-path/runtime integration |
-| `src/phy_receive.c` | Offline-tested control validation/cache, mode-3 flags, admission records and timer decisions; pending physical I/O, callback and runtime integration |
+| `src/phy_control.c` | Compared pending PHY transport; receive-timer dispatch integrated, sender/cancellation integration pending |
+| `src/phy_receive.c` | Compared receive/cache/timer decisions integrated for normal mode0; broader callbacks, mode3 flags and admission remain pending |
 | `src/tune.c` | Compared channel resolution and per-user tuning; runtime use limited to measurement RX11 |
 | `src/scan.c`, `scan_scores.c` | Independent measurement scheduling and base-channel averaging; full automatic selection remains unintegrated |
 | `src/main.c`, `frame.c`, `dispatch.c` | Polling loop, framing, request dispatch and diagnostics |

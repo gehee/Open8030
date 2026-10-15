@@ -232,6 +232,22 @@ close runtime command effects or physical timer/IRQ integration. A fresh
 dark scene, 23 linked/AP-time samples and zero sampled socket drops; that image
 remains running. See [receive coverage](parity.md#phy-control-receive-and-cache-replacement).
 
+The latest runtime now uses the compared receive/cache and expiry helpers for
+normal mode-0 operation. Command 9 follows the original descriptor's absent
+callback, and command-0 cache replacement safely handles declared lengths above
+four. The prior receive/expiry traces still match; RF integration and both PHY
+sanitizer suites pass, along with 18 packaging/tool tests. Broader command effects,
+PHY sender/channel-policy integration and mode-3 admission remain open. See
+[runtime receive integration](parity.md#runtime-phy-receive-integration).
+
+Hardware startup, stop/start and stop/deinit/init/start captures total 60 seconds,
+with 69 linked/AP-time samples and zero sampled socket drops. The dark textured
+camera scene matches a fresh 10-second stock HDMI-to-USB reference. Calibration
+registers remain stable across both lifecycle sequences, and deinit/init clears
+AP-time validity before fresh reception restores it. The new image is retained
+in RAM. This does not establish controlled freshness, latency, mode-3 operation
+or hardware execution of every command/cache boundary.
+
 A separate configuration-only test reproduced acquisition failure at initial
 power level 11 using the accepted AP-time image. No video was delivered;
 restoring the original level-25 configuration restored the stream. This failure

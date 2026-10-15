@@ -1280,6 +1280,20 @@ int main(void)
 		assert(ar_rf_host_ap_time() - time_before <= 21);
 		clock[2] = 6; receive_sync(clock, 1); /* Correct check, wrong length. */
 		assert(ar_rf_host_ap_time() - time_before <= 21);
+		/* The original has no command9 callback, including shared expiry.
+		 * A command0 wildcard length7 also safely replaces an armed cache. */
+		unsigned dispatched_before = ar_rf_traffic_information()->commands[9].dispatched;
+		uint8_t no_callback[7] = {0,0x29,0,0,0,0,0};
+		receive_sync(no_callback,1); assert(sync->pending);
+		ticks += 10 * 40000; ar_rf_poll();
+		assert(!sync->pending && sync->unsupported == unsupported_before);
+		no_callback[1] = 0xf9; no_callback[2] = 1; receive_sync(no_callback,1);
+		assert(sync->unsupported == unsupported_before);
+		assert(ar_rf_traffic_information()->commands[9].dispatched == dispatched_before);
+		receive_sync(identity,1); assert(sync->pending);
+		no_callback[1] = 0x10; no_callback[2] = 14; receive_sync(no_callback,1);
+		ticks += 10 * 40000; ar_rf_poll();
+		assert(!sync->pending && sync->rx_writes == 3 && sync->unsupported == unsupported_before);
 	}
 	if (operation >= 72) {
 		assert(sizeof(struct ar_rf_tx_mcs_info) == 64);

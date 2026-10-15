@@ -192,7 +192,7 @@ commands. Equal command numbers across those layers have no implied relationship
 
 | PHY command | Current effect | Remaining coverage |
 | --- | --- | --- |
-| 0 | Cache/observe | Original no-op/cache semantics |
+| 0 | Compared cache semantics; synthesized admission reports unsupported | Mode-3 reconfiguration/admission and broader local-position state |
 | 1 | Unsupported | Original callback and hardware effects |
 | 2 | Unsupported | Original callback and hardware effects |
 | 3 | Limited TX-MCS update; outgoing RX-MCS request | Decrease/drain and full timing/acknowledgement behavior |
@@ -201,7 +201,7 @@ commands. Equal command numbers across those layers have no implied relationship
 | 6 | Selected RX/TX identity fields | All user/state combinations and shared-field effects |
 | 7 | DEV AP-time offset and host getter | Physical peer-loss/stale time, long-run hardware wrap and other roles/modes |
 | 8 | Validated format only | Original callback and hardware effects |
-| 9 | Validated format only | Original callback and hardware effects |
+| 9 | Compared format/cache/timer handling; original descriptor has no callback | Hardware-triggered timing and cache-replacement scenarios |
 
 See [wireless protocol](wireless-protocol.md#phy-control-messages) for existing
 length, checksum and TTL handling. Format acceptance is not execution coverage.
@@ -975,9 +975,9 @@ open; the three host catalog commands remain unsupported.
 ### Pending PHY command transport
 
 [The PHY control helper](../src/phy_control.c) implements the original single-slot
-enqueue, periodic transmitter, cancellation and receive-timer callback. It remains
-outside the runtime build. It does not yet replace the existing receiver cache,
-command validation or restricted command execution in `rf_device.c`.
+enqueue, periodic transmitter, cancellation and receive-timer callback. Its receive-timer entry is now integrated as described below; enqueue, periodic
+transmit and cancellation remain outside runtime use. Command callback effects
+in `rf_device.c` remain restricted.
 
 Enqueue locks the control state and returns `-1` when its command nibble is busy.
 An accepted request preserves the header's high status nibble and unused payload
@@ -1036,8 +1036,9 @@ and runtime integration before they can support normal channel-policy traffic.
 
 [The receive helper](../src/phy_receive.c) now compares the original seven-byte
 read, checksum/length validation, shared cache, mode-3 side effects, command-0
-admission construction and timer decisions. It is outside the runtime build;
-the existing restricted runtime command effects remain unchanged.
+admission construction and timer decisions. The initial comparison was
+source-only. Normal mode-0 runtime integration is described below; broader
+command effects and mode-3 behavior remain open.
 
 Read failure or invalid format leaves the previous cache intact. Mode 3 checks
 only the checksum's low nibble. For DEV role 1 it prepares retransmission state
@@ -1079,6 +1080,40 @@ A fresh 20-second HDMI-to-USB capture checks the unchanged accepted image:
 the reference dark textured scene, 23 linked/AP-time samples and zero sampled
 socket drops. No new stock capture or controlled freshness/latency test was
 performed. Physical callback effects and runtime integration remain open.
+
+### Runtime PHY receive integration
+
+The normal mode-0 receiver now calls the compared receive and expiry helpers.
+This replaces duplicated length validation, shared-cache scheduling and AP-time
+storage. The physical header extraction still uses the existing register-bank
+reader. The original callback-presence mask prevents command 9 from being
+incorrectly counted as an unsupported dispatch at immediate or timer expiry.
+A long declared command-0 length can replace an armed cache without triggering
+an unsafe dispatch. Stop/start retains the AP-time offset; deinit/init clears
+validity until a fresh time message arrives.
+
+The runtime remains a serialized polling loop with interrupt delivery masked.
+The helper lock callbacks therefore have no runtime locking work; a future
+thread/interrupt port must implement synchronization. Runtime configuration
+still supports mode 0 and local position 0 only. Synthesized command-0 records
+request mode-3 admission, which is explicitly rejected as unsupported rather
+than interpreted as a wire MAC message. Mode-3 retransmission state, actual
+admission/reconfiguration, sender integration and the unimplemented command
+callbacks remain open.
+
+Replay of the prior original traces passes all 26,120 receive cases and 6,455
+receive-then-expire sequences. This reuses the recorded original execution;
+it is not a new execution of the original oracle. RF peripheral integration,
+PHY receive and PHY transport sanitizer suites pass, including new command-9
+and long-command-0 cache regressions. Packaging/tool tests pass separately.
+
+Hardware startup, stop/start and stop/deinit/init/start captures total 60 seconds,
+with 69 linked/AP-time samples and zero sampled socket drops. The dark textured
+camera scene matches a fresh 10-second stock HDMI-to-USB reference. Calibration
+registers remain stable across both lifecycle sequences, and deinit/init clears
+AP-time validity before fresh reception restores it. The new image is retained
+in RAM. This does not establish controlled freshness, latency, mode-3 operation
+or hardware execution of every command/cache boundary.
 
 Next, extend the core inventory through the transport dispatchers and indirect
 callbacks, and bind each command's behavior to its comparison tests. Then cover
