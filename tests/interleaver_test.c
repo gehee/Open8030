@@ -43,7 +43,7 @@ static void apply(unsigned user,unsigned mcs,void *context)
 	struct capture *c=context; c->events++;c->applications++;c->user=user;c->mcs=mcs;
 	if (c->mutate) { c->state.users[user].active=0; }
 }
-static void retry(void *context) { struct capture *c=context;c->events++;c->retries++; }
+static void retry(unsigned user,void *context) { struct capture *c=context;assert(user==5);c->events++;c->retries++; }
 static void post(const uint8_t payload[8],void *context)
 {
 	struct capture *c=context;c->events++;c->posts++;memcpy(c->payload,payload,8);

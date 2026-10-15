@@ -5,8 +5,8 @@
 /* Source-only interleaver service. These are native analysis interfaces;
  * runtime ownership, callbacks and IRQ timing still require integration. */
 struct ar_interleaver_user {
-	uint8_t mcs, reserved1, active, reserved3;
-	uint32_t reserved4;
+	uint8_t mcs, previous_mcs, active, reserved3;
+	uint32_t history;
 	uint8_t retries, limit, drain, reserved11;
 };
 struct ar_interleaver {
@@ -29,7 +29,7 @@ struct ar_interleaver_ops {
 	void (*reset)(void *context);
 	void (*control)(unsigned user, unsigned direction, unsigned value, void *context);
 	void (*apply)(unsigned user, unsigned mcs, void *context);
-	void (*retry_reset)(void *context);
+	void (*retry_reset)(unsigned user, void *context);
 	/* Original queue 1/message 0x202, length 8, flags 0; errors ignored.
 	 * Bytes 6/7 are deliberately zeroed instead of exposing stack contents. */
 	void (*post)(const uint8_t payload[8], void *context);

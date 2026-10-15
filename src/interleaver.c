@@ -58,7 +58,7 @@ int ar_interleaver_service(struct ar_interleaver *state,
 		}
 	}
 	if (u->active && !suppress && u->retries && u->limit) {
-		if ((uint8_t)(u->retries - 1) >= u->limit) { ops->retry_reset(context); }
+		if ((uint8_t)(u->retries - 1) >= u->limit) { ops->retry_reset(input->second_user,context); }
 		else { u->retries++; }
 	}
 	ops->post(payload,context); ops->notify(source,payload,context);

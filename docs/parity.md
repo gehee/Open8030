@@ -1407,8 +1407,64 @@ OSD. This verifies the retained runtime, not hardware execution of the new helpe
 or controlled scene freshness/latency. Detailed comparison and capture records
 remain in ignored `.local/`.
 
-Next, complete the interleaver producers and callback contracts, and isolate
-low-power acquisition before retrying host power integration. Extend the core
+### TX MCS producer and application callbacks
+
+Source-only `tx_mcs.c` now implements the MCS request producer, register
+application, deferred-drain application, per-user initialization and retry-failure
+callback. Requests preserve an outstanding target; an increase applies immediately,
+while a decrease saves the previous index and starts the six-event drain.
+Initialization clears the user's bookkeeping and derives its MCS from register
+fields using the first matching entry in the supplied 25-key loader table.
+Programming preserves the original mode transition, code-length calculation and
+chip-specific 24-block coding adjustment, including the dedicated user-10 mode
+register and user-11 mode-write exclusion.
+
+Retry failure clears the selected user's active flag before event 9, which
+contains the role-dependent user byte, requested/previous MCS, history and retry
+count minus one. Retry count and history clear after event delivery; unrelated
+callback mutations survive. Following the actual callback exposed a stage-191
+interface omission: retry reset needs the affected user argument. The interface
+now passes the second sampled user, and fresh original comparison checks it.
+The omission was confined to the source-only helper; the runtime never used it.
+
+Fresh execution compares **23,670 nonfatal scenarios** and separately checks
+the effects/state prefix of **846 original assertion cases**, where native
+returns `-95`. These are intentional failure-behavior differences, not original
+error parity. Coverage includes all valid MCS indices, both roles, all twelve
+users across the callback/request cases, four representative users across the
+programming sweep, normal/special keys, bandwidth/interleave combinations, chip
+selection, pending requests and event-callback mutation. Native rejects unsafe
+users, indices and malformed key encodings. An error can follow a mode write or
+request-cache update; this helper does not promise atomic failure.
+
+The comparison includes **324 composed sequences**, each executing an original
+request followed by eight original interleaver services with the actual MCS
+application and retry-reset bodies. Ordered comparisons cover 72,719 field
+writes, 82,890 field reads, 2,814 direct word reads, 516 event deliveries and
+2,592 queue/observer pairs in the nonfatal cases. All 680 executed instruction
+locations are checked against the matched payload/container/analysis ELF.
+A separate fresh replay of the 9,760 stage-191 scenarios validates the corrected
+callback argument and retains its 48 deliberate reserved-byte differences.
+
+MMIO helpers, event delivery, queue/observer endpoints and diagnostics remain
+intercepted. One multiply-subtract instruction absent from the installed partial
+ISA model is modeled explicitly in the private runner from a pinned
+[vendor specification](https://github.com/XUANTIE-RV/thead-extension-spec/blob/5a75db2696881a812a04e6e00347d3920dae03f2/xtheadmac/muls.adoc).
+Its encoding is byte-checked; this is analysis metadata, not hardware proof of
+the processor's complete ISA. The original assertion is a comparison boundary;
+its fatal handler is not executed. Composed sequences use the disabled distance
+gate and do not establish concurrent IRQ, buffer-ownership or physical RF timing.
+
+Two sanitizer suites verify the combined request/drain/application sequence,
+selected-user retry events, callback mutation, coding adjustment and validation
+bounds. Eighteen Python tests pass. Stage 192 leaves the runtime unchanged; the
+standard build reproduces accepted stage 189 exactly. A fresh 30-second direct
+HDMI-to-USB capture shows the camera scene with 33 linked/AP-time samples and zero
+sampled socket drops. This verifies the retained image, not hardware execution
+of the new callbacks or controlled scene freshness/latency.
+
+Next, connect TX completion history and runtime ownership to the compared MCS
+service, and isolate low-power acquisition before retrying host power integration. Extend the core
 inventory through transport dispatchers
 and indirect callbacks, binding each contract to its comparison tests. Then cover
 radio messages, timers and state transitions in the same way. Dynamic power still

@@ -344,6 +344,15 @@ a fresh 30-second HDMI-to-USB capture shows the camera scene with 33 linked
 samples and zero sampled socket drops. See [interleaver coverage](parity.md#interleaver-service-and-low-power-investigation)
 for intercepted callbacks and intentional validation differences.
 
+Stage 192 adds source-only TX-MCS producers and application/reset callbacks, with
+23,670 nonfatal original scenarios, 846 explicitly different assertion outcomes,
+and 324 composed request/interleaver sequences. It fixes the source-only
+retry-reset interface to pass the affected user. Two sanitizer suites and 18
+Python tests pass. Accepted stage 189 still builds identically and remains
+running; a fresh 30-second capture shows camera video with 33 linked samples.
+Runtime ownership and TX-completion history remain integration dependencies;
+low-power acquisition is unresolved. See [TX MCS coverage](parity.md#tx-mcs-producer-and-application-callbacks).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host
