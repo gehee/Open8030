@@ -16,6 +16,10 @@ typedef void (*ar_power_field)(uint32_t field, uint32_t value, void *context);
  * Native validation/planning errors leave state and hardware untouched. */
 int ar_power_control_apply(struct ar_power_control *state, unsigned user,
 	unsigned level, ar_power_field field, void *context);
+/* Initialize all twelve users in order. Native preflight rejects unavailable
+ * rows before any effects; the original loop's unlock return hid errors. */
+int ar_power_control_initialize(struct ar_power_control *state, unsigned level,
+	ar_power_field field, void *context);
 /* Band-offset nibbles for TX users0..10; user11 has no fields. Offsets outside
  * -6..6 have no effects. Both closed paths use the paired gain policy; otherwise
  * the first nibble is12 and the second is12+clamp(offset,-3,3).

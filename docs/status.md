@@ -326,6 +326,16 @@ restoring the original level-25 configuration restored the stream. This failure
 does not depend on the later, unaccepted dynamic-power code. Low-power operation
 remains unresolved; see [configuration](configuration.md#power-and-factory-data).
 
+Stage 190 adds source-only power-command helpers backed by 16,646 original
+instruction comparison scenarios and fresh stock wire/register checks. Runtime
+integration failed acquisition after the backend selected level 11; the
+30-second capture showed the disconnected UI. That candidate was rejected and
+its runtime changes removed. Accepted stage 189 was restored after a receiver
+reboot, with 30 seconds of directly inspected HDMI-to-USB camera video, 33 linked
+samples, advancing AP time and zero sampled socket drops. It remains running in
+RAM, and the standard build reproduces its exact image. The power commands remain
+unsupported at runtime; see [the comparison and failed trial](parity.md#manual-power-commands-compared-helpers-failed-integration).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host

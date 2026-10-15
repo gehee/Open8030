@@ -33,6 +33,7 @@ TESTS = {
     'config': ('config json power_config power dev_mcs', [], []),
     'power': ('power', [], []),
     'power_control': ('power_control power', [], []),
+    'power_host': ('power_host power_control power', [], []),
     'power_config': ('power_config power json', [], []),
     'flash': ('flash', [], ['-lz']),
     'flash_spi': ('flash_spi sfdp', [], []),

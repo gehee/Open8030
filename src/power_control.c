@@ -1,6 +1,21 @@
 /* SPDX-License-Identifier: MIT */
 #include "ar_power_control.h"
 
+int ar_power_control_initialize(struct ar_power_control *state, unsigned level,
+	ar_power_field field, void *context)
+{
+	if (!state || !field) { return -22; }
+	struct ar_power_plan plan;
+	for (unsigned user = 0; user < AR_POWER_USERS; user++) {
+		int result = ar_power_plan(&state->config,user,level,&plan);
+		if (result) { return result; }
+	}
+	for (unsigned user = 0; user < AR_POWER_USERS; user++) {
+		(void)ar_power_control_apply(state,user,level,field,context);
+	}
+	return 0;
+}
+
 int ar_power_control_apply(struct ar_power_control *state, unsigned user,
 	unsigned level, ar_power_field field, void *context)
 {

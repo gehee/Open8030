@@ -1301,7 +1301,63 @@ records six MCS requests/acknowledgements, five advertisements/cancellations and
 RAM. Host-driven candidate recovery does not establish physical peer-loss
 parity; controlled video freshness, latency and RF power remain unmeasured.
 
-Next, close the observed host power-setter gap and integrate the remaining
+### Manual power commands: compared helpers, failed integration
+
+Source-only `power_host.c` models mode getter `0x01000007`, cached level getter
+`0x01000008` and direct setter `0x02000008`. Replies are respectively one byte,
+two bytes (user and level), and empty. Invalid getter users return level `0xff`.
+The setter locks, applies calibration and cache updates, then unlocks; invalid
+levels return `-3`. Native malformed requests and unsafe setter users return
+`-22` before effects. These commands remain unsupported in the runtime.
+
+Fresh original-instruction comparison covers **12,550 host-command scenarios**
+and **4,096 all-user initialization scenarios**. Setters cover all byte-sized
+levels for each valid user and all four closed/open path combinations, with
+varied clocks and roles. Each setter is followed by original/native getters for
+user 0 and the addressed user. Getter cases cover every byte-sized user and mode
+truncation boundaries. Comparison checks 4,464 manual field writes and 17,856
+initialization writes, lock/effect order, output bytes, status, cache snapshots,
+final state and collateral memory preservation.
+
+The source-only all-user initializer preflights every user's calibration before
+effects. The original loop returns its mutex-release status even after a failed
+application; native initialization returns the validation error. The comparison
+records 3,600 such deliberate differences. It does not count these as original
+error parity. Sanitizer tests cover framing, aliasing, lock/error ordering and
+atomic rejection when the last user's required calibration row is absent.
+
+The original core dispatcher, getter bodies, setter at `0x246b3e`, mutex wrapper
+at `0x228f58`, calibration application and all-user loop at `0x248ffc` execute.
+All 308 executed instruction locations and relevant routing tables are checked
+against the matched payload, container and analysis ELF. Field MMIO, mutex
+internals and diagnostic time/logging are intercepted; calibration and object
+state are synthetic. This does not cover transport framing, malformed original
+pointers, unsafe original setter users, concurrency or emitted RF power.
+
+Fresh stock hardware checks confirm the mode/getter replies, levels 25 and 14,
+four invalid levels, and the reporting-cache alias: setting user 5 changes user
+0's reported level without changing user 0's gain fields. Stock is restored to
+level 14 and its camera scene is inspected in a 10-second HDMI-to-USB capture.
+
+Stage 190 integrated these commands and all-user initialization experimentally.
+The normal backend selected level 11 before acquisition; user-0 fields read
+`(37,30)` on both paths. Acquisition failed, all 33 samples in a 30-second capture
+were disconnected/searching, and direct frame inspection showed the disconnected
+UI. The candidate was rejected. The low-power failure is also reproduced by the
+earlier configuration-only test; this experiment does not isolate its cause.
+
+A full receiver reboot and reload restored accepted stage 189. Its 30-second
+capture has 33 linked samples, advancing AP time and zero sampled socket drops;
+inspected frames restore the dark textured camera scene and OSD. It is retained
+in RAM. Runtime integration was removed, and the standard build again produces
+the accepted runtime and container hashes exactly. Only the compared helpers,
+tests and coverage records are retained from this trial. Private stage-190
+evidence includes the failed source/image, comparison receipts, stock checks,
+device settings, captures and rollback provenance. Controlled scene freshness,
+latency and physical transmit power remain unmeasured.
+
+Next, isolate low-power acquisition before retrying host power integration and
+the remaining
 channel-tuning callbacks. Extend the core inventory through transport dispatchers
 and indirect callbacks, binding each contract to its comparison tests. Then cover
 radio messages, timers and state transitions in the same way. Dynamic power still
