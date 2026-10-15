@@ -434,6 +434,11 @@ Additional preparation effects include conditional buffer-control writes and
 look-ahead bandwidth programming. Calibration selection, board switching and
 TX-buffer ownership are distinct parts of this process.
 
+Open8030 now builds the normal DEV frame from three descriptors and retains the
+associated command metadata. Channel retuning and native profile writes update
+that metadata. Construction and first-match updates have original-instruction
+comparison coverage; this is distinct from consuming the metadata on each IRQ.
+
 Open8030 currently implements the fixed frame, the observed 5–6 GHz TX controls
 and a single calibrated context. Loaded compensation survives normal stop/start,
 deinit/init/start and native recovery. Probe, default loading, calibration and

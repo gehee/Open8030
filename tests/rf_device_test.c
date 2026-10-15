@@ -135,6 +135,15 @@ void ar_rf_test_start_dma(uint8_t *buffer, unsigned length)
 }
 static void assert_channel_plls(uint32_t frequency)
 {
+	const struct ar_command_program *commands = ar_rf_command_information();
+	assert(commands->count == 3 && commands->cursor == -1);
+	const unsigned users[] = {8,11,0};
+	for (unsigned i = 0; i < 3; i++) {
+		assert(commands->entries[i].frequency == frequency);
+		assert((commands->entries[i].bits >> 13 & 3) == 2);
+		uint32_t profile = *reg(0x0a110000 + (i == 2 ? 0xb00 : 0x9a0 + users[i] * 8));
+		assert((commands->entries[i].bits >> 10 & 7) == (i == 2 ? profile & 7 : profile >> 8 & 7));
+	}
 	uint64_t expected; assert(!ar_rf_pll_word(frequency, &expected));
 	const unsigned offsets[] = {0x900,0x905,0x90a,0x910,0x915,0x91a,0x920,0x925,
 		0x92a,0x930,0x935,0x93a,0x940,0x945,0x94a,0x950,0x955,0x95a,0x960,0x965,0x96a};
@@ -1466,6 +1475,9 @@ int main(void)
 	uint8_t search_plan[sizeof mcs_plan + 4]; memcpy(search_plan,mcs_plan,sizeof mcs_plan);
 	put32(search_plan + sizeof mcs_plan,5805000);
 	assert(ar_rf_prepare_config(5770000,4,search_plan,sizeof search_plan,1)==0);
+	assert(*reg(0x0a110810) == 0x183a113a && *reg(0x0a110814) == 0x00802309);
+	assert(*reg(0x0a110870) == 0x0f00dd88 && *reg(0x0a1108a4) == 0xe000);
+	assert_channel_plls(5770000);
 	uint8_t candidates[402]={0,0};
 	assert(ar_rf_host_candidates(candidates,sizeof candidates)==0);
 	assert(ar_rf_receive_information()->channel_count==2 && ar_rf_receive_information()->frequency_khz==5770000);

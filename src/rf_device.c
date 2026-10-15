@@ -9,6 +9,7 @@
 #include "ar_dev_mcs.h"
 #include "ar_fch_monitor.h"
 #include "ar_ap_time.h"
+#include "ar_command.h"
 #include <string.h>
 #ifndef AR_RF_SIMULATED
 #include "ar_sdio_device.h"
@@ -60,6 +61,11 @@ static unsigned normal_search, search_candidate_seen;
 static uint32_t search_candidate_started;
 static uint64_t search_pll;
 static uint64_t channel_plls[AR_RF_MAX_CHANNELS];
+static struct ar_command_program command_program;
+static unsigned commands_ready;
+#ifdef AR_RF_SIMULATED
+const struct ar_command_program *ar_rf_command_information(void) { return &command_program; }
+#endif
 static struct ar_dev_idle_config dev_config;
 static uint8_t dev_candidates[AR_DEV_MAX_CANDIDATES][4], dev_status_a, dev_status_b;
 static unsigned host_prepared;
@@ -183,8 +189,26 @@ static uint32_t le32(const uint8_t *data)
 }
 static void update(uint32_t address, uint32_t clear, uint32_t set)
 {
-	write32(address, (read32(address) & ~clear) | set);
+	uint32_t value = (read32(address) & ~clear) | set;
+	write32(address, value);
 	barrier();
+	if (!commands_ready) { return; }
+	/* Mirror the profile fields consumed by the original metadata getters.
+	 * Updates preserve first-match behavior and unrelated entry fields. */
+	unsigned offset = address - BB;
+	if (offset >= 0x9a0 && offset <= 0x9f8 && !(offset & 7)) {
+		unsigned user = (offset - 0x9a0) / 8;
+		if (clear & 0x700) { (void)ar_command_update(&command_program,1,user,1,0,value >> 8,0); }
+		if (clear & 0xc7) {
+			unsigned type = value & 7, mode = value >> 6 & 3;
+			unsigned flag = (type == 1 && mode < 2) || (type == 2 && mode >= 2);
+			(void)ar_command_update(&command_program,1,user,1,4,0,flag);
+		}
+	} else if (offset >= 0xb00 && offset <= 0xb2c && !(offset & 3) && offset != 0xb28 && (clear & 7)) {
+		(void)ar_command_update(&command_program,1,(offset - 0xb00) / 4,0,0,value,0);
+	} else if (offset == 0xb60 && (clear & 0x07000000)) {
+		(void)ar_command_update(&command_program,1,10,0,0,value >> 24,0);
+	}
 }
 static void field(uint32_t encoded, uint32_t value)
 {
@@ -361,6 +385,7 @@ static int otp_word(unsigned offset, uint32_t *word)
 int ar_rf_probe(void)
 {
 	memset(&information, 0, sizeof information);
+	commands_ready = 0;
 	receive_operation = 0; host_prepared = 0;
 	dev_compensation_loaded = 0;
 	pins_configured = 0;
@@ -1369,6 +1394,32 @@ int ar_rf_host_candidates(const uint8_t *data, size_t length)
 	return start_prepared_receive();
 }
 
+static void command_write(uint32_t encoded, uint32_t value, void *context)
+{
+	(void)context;
+	field(encoded, value);
+}
+static int build_commands(void)
+{
+	/* Mode-0 DEV frame from 0x22c774: RX8, independent measurement RX11,
+	 * TX0 with pre-command mode6. All three currently share one frequency.
+	 * Metadata construction does not implement its preparation IRQ consumer. */
+	static const struct ar_command_descriptor frame[] = {{0x3621,0},{0x358,0},{0x3413,0}};
+	struct ar_command_profile profiles[AR_COMMAND_USERS];
+	for (unsigned user = 0; user < AR_COMMAND_USERS; user++) {
+		uint32_t rx = read32(BB + 0x9a0 + user * 8);
+		uint32_t tx = read32(BB + (user == 10 ? 0xb60 : 0xb00 + user * 4));
+		unsigned type = rx & 7, mode = rx >> 6 & 3;
+		profiles[user] = (struct ar_command_profile){
+			.frequency = {receiver.frequency_khz,receiver.frequency_khz},
+			.bandwidth = {tx >> (user == 10 ? 24 : 0) & 7,rx >> 8 & 7},
+			.rx_flag = (type == 1 && mode < 2) || (type == 2 && mode >= 2)};
+	}
+	int result = ar_command_build(&command_program,frame,3,1,profiles,command_write,NULL);
+	commands_ready = !result;
+	return result;
+}
+
 static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t identity_hash,
 	unsigned operation, const uint8_t *channels, size_t length, unsigned deferred)
 {
@@ -1446,6 +1497,7 @@ static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t 
 			}
 		}
 	} else if (length) { return failure(-22); }
+	commands_ready = 0;
 	memset(&receiver, 0, sizeof receiver);
 	memset(&tx_payload_info, 0, sizeof tx_payload_info);
 	ar_dev_stream_init(&dev_stream);
@@ -1739,6 +1791,10 @@ static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t 
 		if (operation == 40) { receiver.search_dwell_ms = 10; }
 	}
 	field(0x8080f01, 1); /* Unused special-user TX disabled, as in stock DEV. */
+	if (operation == 76) {
+		int result = build_commands();
+		if (result) { return failure(result); }
+	}
 	if (deferred) {
 		host_prepared = 1; information.error = 0;
 		return 0;
@@ -2113,6 +2169,15 @@ void ar_rf_poll(void)
 					if (receive_operation >= 54) { dev_config.receive_channel = next; }
 					receiver.channel_wraps += wrap;
 					receiver.frequency_khz = receiver.channels[next].frequency_khz;
+					if (commands_ready) {
+						const unsigned users[] = {8,11,0};
+						for (unsigned i = 0; i < 3; i++) {
+							unsigned direction = i != 2;
+							(void)ar_command_update(&command_program,1,users[i],direction,3,receiver.frequency_khz,0);
+							/* Normal search validates every channel as band 2. */
+							(void)ar_command_update(&command_program,1,users[i],direction,1,2,0);
+						}
+					}
 					receiver.channels[next].visits++;
 				}
 				search_candidate_seen = 0;

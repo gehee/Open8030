@@ -1,6 +1,10 @@
 /* SPDX-License-Identifier: MIT */
 #ifndef AR_RF_DEVICE_H
 #define AR_RF_DEVICE_H
+#ifdef AR_RF_SIMULATED
+#include "ar_command.h"
+const struct ar_command_program *ar_rf_command_information(void);
+#endif
 #include <stddef.h>
 #include <stdint.h>
 

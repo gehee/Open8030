@@ -73,7 +73,7 @@ and scenario; they must be repeated after relevant changes.
 | AP full/compact controls | Selected mode-0/slot-0 admission and connected control | All extensions, remote synchronization effects, changed channels, slots, stale/duplicate controls and unsupported modes. |
 | Internal port-0 commands | Stream parsing; login checksum ACK transmission | Receiving a command currently mainly records it. Inventory and implement each original command's effects, responses and retries. |
 | PHY commands | See command table below | Exact callbacks, TTL/replacement ordering and side effects for every command. |
-| Hardware command preparation | Fixed frame, selected TX preparation effects and normal-session calibration retention | Original command-ring selection, per-direction board callbacks, calibration-bank/cache transitions, look-ahead programming and buffer-ownership effects. The original routine has an offline contract trace; the native handler does not yet implement that complete contract. |
+| Hardware command preparation | Command builder and metadata updates; fixed DEV frame, selected TX preparation effects and normal-session calibration retention | Original command-ring selection, per-direction board callbacks, calibration-bank/cache transitions, look-ahead programming and buffer-ownership effects. The original routine has an offline contract trace; the native handler does not yet implement that complete contract. |
 | MCS adaptation | RX adaptation and limited TX increase | TX decrease/interleaver drain, all PHY keys, retry/expiry, loss interactions and sustained adaptation. |
 | Power and calibration | Initial user-0 setup at level 25 | Level 11 also fails acquisition in the accepted image with only its loader setting changed. Resolve the low-power transmit path, then normal backend power writes, all users, peer policy and calibration effects. |
 | Channel/band selection | Configured search and matched channel | Independent uplink changes, subchannels, hopping, scan scoring, automatic policies, rollback and cross-band operation. |
@@ -367,6 +367,37 @@ linked again. Startup and post-recovery HDMI captures total 35 seconds, with 41
 linked/AP-time samples and zero sampled socket drops. Both show the dark textured
 camera scene also seen on fresh stock. Physical peer loss, pending DMA, repeated
 recovery stress and controlled scene freshness remain open.
+
+### Command construction and retained metadata
+
+Normal DEV initialization now installs its three-descriptor frame through a
+command builder: broadcast RX, independent measurement and local TX. Expansion
+writes prepare/body slots, user nibbles, the terminator and displaced pre-command
+fields while execution is held. It retains up to 20 metadata entries, preserving
+fields the original leaves untouched. Search retuning updates their frequency
+and bank, and native profile writes update the first matching entry's bandwidth
+or RX flag. The preparation IRQ consumer remains incomplete; storing metadata
+does not by itself implement cursor selection, board callbacks or scan actions.
+
+A fresh execution of original builder `0x21dfea` and updater `0x2212f6` supplies
+568 construction cases and 6,720 updates. Native comparison matches all retained
+metadata and 179,867 ordered field writes. Six supporting original instruction
+ranges, including raw-user mapping, profile getters and frame composition, are
+revalidated against the matched payload bytes. Cases cover 0–47 descriptors,
+roles, signed displacements, retained fields and first-match update behavior.
+Allocation, interrupt locks, profile getters and MMIO helpers are intercepted;
+these synthetic comparisons do not execute the command engine or establish
+original allocation-failure behavior.
+
+Native sanitizer tests cover invalid-input rejection before writes, reserved
+bits, empty programs, the normal frame, channel retuning and lifecycle rebuilds.
+Hardware reads compare the active command bytes, user nibbles and all pre-command
+slots with freshly booted stock. Startup, stop/start and deinit/init/start video
+captures total 50 seconds with 59 linked/AP-time samples and zero sampled socket
+drops; all show the same dark camera scene as stock. Only the existing fixed
+DEV frame and shared frequency have hardware coverage. Broader frame composition,
+preparation IRQ effects, controlled freshness and low-power acquisition remain
+open.
 
 Next, extend the core inventory through the transport dispatchers and indirect
 callbacks, and bind each command's behavior to its comparison tests. Then cover

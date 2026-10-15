@@ -66,7 +66,7 @@ RAM. Its planned candidate-removal check stopped before mutation when the large
 RX diagnostic returned an unexpected backend response. See [calibration lifetime](parity.md#calibration-lifetime-across-normal-restart)
 for the original-comparison assumptions and remaining preparation gaps.
 
-The current image adds bounded RX diagnostic reads through the original daemon,
+The previous image added bounded RX diagnostic reads through the original daemon,
 whose encoder cannot forward the former complete record. Ten complete records
 read in ranges and eleven invalid requests pass on hardware. Candidate removal
 and readmission now also confirm calibration retention: the receiver reconnects
@@ -76,6 +76,15 @@ dark textured camera scene as freshly rebooted stock. All 41 samples remain
 linked with valid advancing AP time and zero sampled socket drops. The image
 was retained in RAM after inspection. These checks do not establish physical
 peer-loss recovery, controlled freshness or full protocol parity.
+
+The current image installs the normal DEV frame through a source-built command
+builder, with retained metadata updated during retuning and profile changes.
+It matches 568 original construction cases and 6,720 updates. All 22 native C
+suites and 18 Python tests pass. Live command registers match stock, and 50 seconds
+of startup/restart/reinit HDMI captures retain the dark stock-matching camera
+scene, with 59 linked/AP-time samples and zero sampled socket drops. The image
+was retained in RAM after inspection. The remaining preparation IRQ actions and
+broader frame modes are still open; see [command construction](parity.md#command-construction-and-retained-metadata).
 
 A separate configuration-only test reproduced acquisition failure at initial
 power level 11 using the accepted AP-time image. No video was delivered;

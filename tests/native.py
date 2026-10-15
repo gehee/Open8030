@@ -8,6 +8,7 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 TESTS = {
     'frame': ('frame dispatch', [], []),
+    'command': ('command', [], []),
     'socket_rx': ('socket_rx', [], []),
     'sdio_device': ('sdio_device', ['AR_SDIO_SIMULATED', 'AR_SDIO_STOCK_MEMORY_ATTRIBUTES=1'], []),
     'mac': ('mac', [], []),
@@ -26,7 +27,7 @@ TESTS = {
     'sfdp': ('sfdp', [], []),
     'factory_storage': ('flash flash_spi sfdp factory power_config power json', [], ['-lz']),
     'boot': ('boot config json power_config power dev_mcs factory flash_spi sfdp flash', [], []),
-    'rf_device': ('rf_device mac dev dev_tx dev_mcs fch_monitor power ap_time', ['AR_RF_SIMULATED'], []),
+    'rf_device': ('rf_device mac dev dev_tx dev_mcs fch_monitor power ap_time command', ['AR_RF_SIMULATED'], []),
     'bootstrap': ('', ['AR_BOOTSTRAP_SIMULATED'], []),
 }
 
