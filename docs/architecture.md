@@ -109,7 +109,7 @@ are implementation limits, not CLI tuning parameters.
 | `src/channel_policy.c` | Offline-tested selector-1 manual/hopping policy and send/timer decisions; pending runtime integration |
 | `src/channel_transaction.c` | Offline-tested queued channel requests, completion and rollback; pending PHY transport and runtime integration |
 | `src/channel_link.c` | Offline-tested PHY channel-change callback and monitor preparation; pending link-tuning/transport/runtime integration |
-| `src/channel_monitor.c` | Offline-tested monitor completion, loss and hopping decisions; pending timer/PHY/worker integration |
+| `src/channel_monitor.c` | Compared monitor decisions; normal mode0 RX8 loss/recovery integrated; channel completion and hopping workers pending |
 | `src/phy_control.c` | Compared PHY transport; normal mode0 MCS enqueue/TX/cancel and receive-timer dispatch integrated; channel-policy callbacks pending |
 | `src/phy_receive.c` | Compared receive/cache/timer decisions integrated for normal mode0; broader callbacks, mode3 flags and admission remain pending |
 | `src/tune.c` | Compared channel resolution and per-user tuning; runtime use limited to measurement RX11 |
@@ -119,7 +119,7 @@ are implementation limits, not CLI tuning parameters.
 | `src/boot.c`, `json.c`, `config.c` | Startup and loader configuration |
 | `src/rf_device.c` | Hardware register access and integration of RF state machines |
 | `src/mac.c`, `dev.c`, `dev_tx.c` | Radio framing, receiver link/login and transmit handling |
-| `src/dev_mcs.c`, `fch_monitor.c` | Modulation/coding policy and frame-control-header monitoring |
+| `src/dev_mcs.c`, `fch_monitor.c` | Modulation/coding policy and monitor timing/threshold calculation |
 | `src/socket_rx.c`, `event.c` | Host socket streams, completions and events |
 | `src/power*.c`, `flash*.c`, `sfdp.c`, `factory*.c` | Calibration planning and read-only factory-data lookup |
 | `tools/`, `tests/` | Build/loading tools and offline validation |

@@ -31,7 +31,8 @@ struct ar_channel_monitor_ops {
  * unlock counters are shared by all users. first[] supplies each group's first
  * channel for blind hopping. Native storage errors return -22 before effects.
  * Hardware callbacks, timer scheduling and diagnostic history collection are
- * caller responsibilities; these helpers are not yet integrated into runtime. */
+ * caller responsibilities. Runtime mode0 user8 uses observation/loss handling;
+ * channel-change completion and hopping integration remain pending. */
 int ar_channel_monitor_observe(struct ar_channel_monitor *state, unsigned user,
 	uint32_t locked, const uint16_t *first, size_t count,
 	const struct ar_channel_monitor_ops *ops, void *context);

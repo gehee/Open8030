@@ -907,9 +907,9 @@ unsupported.
 ### Channel-change monitor completion and hopping
 
 [The monitor helper](../src/channel_monitor.c) implements the original observation
-and periodic channel-monitor state transitions. It remains outside the runtime
-build. It complements the compared channel-change callback and transaction
-completion handler; the existing runtime loss monitor has not been replaced.
+and periodic channel-monitor state transitions. Normal mode-0 loss monitoring
+now uses it as described below. Channel-change callback/completion and hopping
+worker integration remain open.
 
 The ten users retain enabled/locked, forced-loss, two-bit acquisition streak,
 band-hold and pending-completion flags. Success and automatic-unlock counters
@@ -1151,6 +1151,46 @@ finite-TTL outgoing command callbacks, AP time broadcasts and mode-3 idle packet
 construction still need integration and hardware validation. Timer/IRQ cadence,
 RF acknowledgement timing and competition between actual policy producers are
 not established by the isolated helper comparisons.
+
+### Runtime channel monitor integration
+
+Normal mode-0 user-8 observation and periodic loss handling now use the compared
+channel monitor. The runtime keeps its established threshold/interval calculation,
+enables the locked monitor on admission, disables it on stop and rebuilds it on
+start. Recovery diagnostics read the authoritative monitor flags and counters.
+The periodic adapter advances once per elapsed interval; delayed polls do not
+manufacture catch-up ticks.
+
+Reset callbacks set the existing deferred-reset request. The radio waits until
+an owned DMA view is released before resetting RX. A loss callback stages the
+existing host recovery path; candidate removal still stages immediate recovery
+and forces the monitor when enabled/locked. This preserves native bounded waits
+and ownership handling, rather than reproducing unbounded original waits.
+
+The RF recovery suite, complete monitor suite and threshold/timing suite pass
+with address/undefined-behavior sanitizers. Replay of the recorded original
+execution passes 5,784 observation and 7,200 periodic cases with 567 bound
+instruction locations. No new original oracle execution was performed for this
+integration. The RF suite exercises loss, unrelated-user filtering, delayed DMA,
+candidate removal/readmission, changed-peer-token recovery and timeout failure.
+
+Hardware startup, stop/start, stop/deinit/init/start and candidate
+removal/readmission captures total 80 seconds, with 92 linked/AP-time samples
+and zero sampled socket drops. Inspected frames match the dark textured camera
+scene in a fresh 10-second stock reference, captured directly from `/dev/video0`
+through the HDMI-to-USB adapter. Calibration remains stable through each
+transition; recovery diagnostics show an enabled, locked monitor with positive
+threshold and interval. Each session exercises MCS advertisements, cancellation
+and control-register writes without reset errors. The image is retained in RAM.
+Candidate removal is host-driven recovery; it does not establish physical
+peer-silence parity, controlled video freshness or latency.
+
+Only normal mode-0 logical user 8 is enabled. Channel-policy hopping is not
+enabled, and no producer arms the channel-completion flag. Completion queue
+delivery remains explicitly unsupported until its worker is connected. Other
+users/modes, original diagnostic history, physical peer silence and precise
+IRQ/timer timing remain open. The compared monitor's wider behavior alone does
+not establish those runtime capabilities.
 
 Next, extend the core inventory through the transport dispatchers and indirect
 callbacks, and bind each command's behavior to its comparison tests. Then cover

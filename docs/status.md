@@ -204,17 +204,17 @@ unresolved; these captures do not establish controlled freshness or latency.
 The active-catalog mismatch and ambiguous polling events also remain. See
 [channel resolution and tuning](parity.md#channel-resolution-and-generic-tuning).
 
-A new source-only monitor helper matches 5,784 original observation cases and
+The initial source-only monitor comparison matched 5,784 original observation cases and
 7,200 periodic cases. It covers channel-change success/timeout posts, shared
 counters, band-hold release, AP/DEV reset thresholds, loss-callback cleanup and
-automatic-hop decisions. Its dedicated sanitizer suite passes. It is not yet
-connected to the runtime loss monitor, PHY transport or workers. A fresh
+automatic-hop decisions. Its dedicated sanitizer suite passed. At that point it was not
+connected to runtime; the later integration is described below. A fresh
 20-second HDMI-to-USB capture of the unchanged accepted image shows the reference
 dark camera scene, with 23 linked/AP-time samples and zero sampled socket drops.
 The accepted image remains in RAM. See
 [monitor completion and its boundaries](parity.md#channel-change-monitor-completion-and-hopping).
 
-A source-only PHY transport helper now matches 17,912 original-instruction cases
+The initial source-only PHY transport helper matched 17,912 original-instruction cases
 covering enqueue, transmit countdown, cancellation, AP time generation and shared
 receive-timer dispatch. Its sanitizer suite passes. Callback bodies and runtime
 integration remain open. A fresh
@@ -222,7 +222,7 @@ integration remain open. A fresh
 reference dark scene, 23 linked/AP-time samples and zero sampled socket drops.
 See [pending PHY command transport](parity.md#pending-phy-command-transport).
 
-The source-only receive helper now matches 26,120 original-instruction cases for
+The initial source-only receive helper matched 26,120 original-instruction cases for
 validation, cache replacement, mode-3 flags, command-0 admission records and
 timer decisions. Another 6,455 receive-then-expire sequences confirm that cached
 command 0 or 7 does not dispatch through the original callback table. Both PHY
@@ -262,6 +262,24 @@ Each candidate session records six MCS requests/acknowledgements, five
 advertisements/cancellations and 25 control-register writes, with no reset
 errors. Calibration survives both lifecycle sequences. The image is retained in
 RAM; controlled freshness, latency and multi-producer behavior remain unverified.
+
+The normal mode-0 loss/recovery path now uses the compared channel monitor for
+logical RX8. Its flags and counters also supply recovery diagnostics. Reset and
+loss callbacks retain bounded waits, DMA ownership protection and deferred host
+recovery. All 12,984 original monitor trace comparisons and three sanitizer suites
+pass. Hopping and channel-completion workers remain unintegrated; see
+[runtime monitor coverage](parity.md#runtime-channel-monitor-integration).
+
+Hardware startup, stop/start, stop/deinit/init/start and candidate
+removal/readmission captures total 80 seconds, with 92 linked/AP-time samples
+and zero sampled socket drops. Inspected frames match the dark textured camera
+scene in a fresh 10-second stock reference, captured directly from `/dev/video0`
+through the HDMI-to-USB adapter. Calibration remains stable through each
+transition; recovery diagnostics show an enabled, locked monitor with positive
+threshold and interval. Each session exercises MCS advertisements, cancellation
+and control-register writes without reset errors. The image is retained in RAM.
+Candidate removal is host-driven recovery; it does not establish physical
+peer-silence parity, controlled video freshness or latency.
 
 A separate configuration-only test reproduced acquisition failure at initial
 power level 11 using the accepted AP-time image. No video was delivered;

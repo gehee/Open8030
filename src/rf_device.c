@@ -8,6 +8,7 @@
 #include "ar_dev_tx.h"
 #include "ar_dev_mcs.h"
 #include "ar_fch_monitor.h"
+#include "ar_channel_monitor.h"
 #include "ar_ap_time.h"
 #include "ar_phy_receive.h"
 #include "ar_command.h"
@@ -90,7 +91,9 @@ static struct {
 	unsigned deferred, valid;
 } host_config;
 static struct ar_rf_lifecycle_info lifecycle = {.version = 1};
-static struct ar_fch_monitor fch_monitor;
+static struct ar_channel_monitor channel_monitor;
+static uint64_t monitor_last_ms;
+static uint8_t monitor_interval_ms;
 static struct ar_rf_recovery_info recovery = {.version = 2};
 static unsigned recovery_reset_pending;
 static void recover_host(void);
@@ -860,7 +863,9 @@ static void dev_admit(const struct ar_dev_control *control)
 		return; /* TX remains held; no retry can falsely claim activation. */
 	}
 	dev_active = 1;
-	if (automatic_recovery()) { ar_fch_monitor_enable(&fch_monitor, 1); }
+	if (automatic_recovery() && !(channel_monitor.users[8].flags & 1)) {
+		channel_monitor.users[8].flags = 3; channel_monitor.users[8].missed = 0;
+	}
 	field(0x8000201, 0);
 	receiver.transition_status = 1;
 }
@@ -994,6 +999,35 @@ static void request_recovery(unsigned reason)
 	field(0x8000201, 1);
 }
 
+static void monitor_reset(unsigned per_user, unsigned user, void *context)
+{
+	/* Normal mode0 enables logical RX8 only. Defer its global RX reset until
+	 * the current DMA view is released, as in the existing recovery path. */
+	(void)per_user; (void)user; (void)context; recovery_reset_pending = 1;
+}
+static void monitor_lost(unsigned user, struct ar_channel_monitor_user *entry, void *context)
+{
+	(void)user; (void)entry; (void)context;
+	if (!recovery.pending) { recovery.fch_losses++; request_recovery(1); }
+}
+static int monitor_post(unsigned destination, unsigned message, const uint8_t *data,
+	size_t length, uint32_t timeout, void *context)
+{
+	/* No channel-change producer arms a completion yet. Its worker delivery
+	 * must be connected before enabling PHY command4/channel policy. */
+	(void)destination; (void)message; (void)data; (void)length; (void)timeout; (void)context;
+	return -95;
+}
+static const struct ar_channel_monitor_ops monitor_ops = {
+	.reset=monitor_reset,.field=sync_field,.post=monitor_post,.lost=monitor_lost
+};
+static void monitor_poll(uint64_t now_ms)
+{
+	if (!monitor_interval_ms || now_ms-monitor_last_ms < monitor_interval_ms) { return; }
+	/* Match one timer rearm per processed callback; no catch-up bursts. */
+	monitor_last_ms = now_ms;
+	(void)ar_channel_monitor_tick(&channel_monitor,&monitor_ops,NULL);
+}
 static void dev_invalidate(void)
 {
 	if (automatic_recovery()) {
@@ -1455,7 +1489,8 @@ int ar_rf_host_candidates(const uint8_t *data, size_t length)
 	memcpy(dev_candidates, data + 2, data[1] * 4);
 	dev_config.candidate_count = data[1];
 	if (remove_peer) {
-		recovery.candidate_removals++; ar_fch_monitor_force(&fch_monitor);
+		recovery.candidate_removals++;
+		if ((channel_monitor.users[8].flags & 3) == 3) { channel_monitor.users[8].flags |= 4; }
 		/* No old-peer TX while waiting for the next monitor interval. */
 		request_recovery(3);
 	}
@@ -1662,7 +1697,8 @@ static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t 
 	 * may reuse this single supported band; diagnostics can replace fields
 	 * independently and must not share their cached state with normal use. */
 	if (operation != 76 || receive_operation != 76) { command_state.cached_bank = 3; command_state.board_band = -1; }
-	memset(&fch_monitor, 0, sizeof fch_monitor); recovery_reset_pending = 0;
+	memset(&channel_monitor,0,sizeof channel_monitor);
+	monitor_last_ms = 0; monitor_interval_ms = 0; recovery_reset_pending = 0;
 	receiver.before_monitor_header = read_header_status();
 	read_control_header(receiver.before_monitor_control);
 	if (operation >= 39) {
@@ -1951,8 +1987,15 @@ static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t 
 
 static int start_prepared_receive(void)
 {
-	if (automatic_recovery() && ar_fch_monitor_init(&fch_monitor, receiver.search_frame_us, timer_ticks() / 40000)) {
-		return failure(-95);
+	if (automatic_recovery()) {
+		/* Retain the compared threshold/interval calculation; observation and
+		 * periodic state now belong to the complete channel monitor. */
+		struct ar_fch_monitor timing;
+		if (ar_fch_monitor_init(&timing,receiver.search_frame_us,timer_ticks()/40000)) { return failure(-95); }
+		memset(&channel_monitor,0,sizeof channel_monitor);
+		channel_monitor.role = 1; channel_monitor.mode = dev_config.mode; channel_monitor.band = 2;
+		channel_monitor.users[8].threshold = timing.threshold;
+		monitor_last_ms = timing.last_ms; monitor_interval_ms = timing.interval_ms;
 	}
 	/* Stock interrupt-context critical sections use the high byte of CLIC's
 	 * threshold register. Mask delivery while preserving pending-bit polling. */
@@ -2134,7 +2177,8 @@ void ar_rf_poll(void)
 				field(0xbb00701, (old >> 7) & 1);
 				unsigned user = (receiver.fch_last >> 9) & 15;
 				if (automatic_recovery() && (user == 8 || user == 9)) {
-					recovery_reset_pending |= ar_fch_monitor_observe(&fch_monitor, !!(receiver.fch_last & 0x80));
+					(void)ar_channel_monitor_observe(&channel_monitor,8,!!(receiver.fch_last & 0x80),
+						NULL,0,&monitor_ops,NULL);
 				}
 				if (receive_operation >= 64 && (user == 8 || user == 9)) {
 					/* 0x227b96 -> 0x21acb2 aliases both raw users to logical8. */
@@ -2359,11 +2403,7 @@ void ar_rf_poll(void)
 	}
 	if (expired) { stop_receive(); }
 	else if (automatic_recovery()) {
-		unsigned action = ar_fch_monitor_poll(&fch_monitor, timer_ticks() / 40000);
-		if (action & AR_FCH_LOST) {
-			if (!recovery.pending) { recovery.fch_losses++; request_recovery(1); }
-		}
-		recovery_reset_pending |= action & AR_FCH_RESET_RX;
+		monitor_poll(timer_ticks()/40000);
 		if (recovery.pending) { recover_host(); return; }
 		if (recovery_reset_pending) {
 			if (receive_pending) { recovery.reset_deferred++; }
@@ -2432,7 +2472,7 @@ int ar_rf_stop_host(void)
 		lifecycle.stops++;
 	}
 	host_prepared = 0; host_start_required = 1;
-	fch_monitor.enabled = 0; recovery.pending = 0; recovery_reset_pending = 0;
+	channel_monitor.users[8].flags &= (uint8_t)~1; recovery.pending = 0; recovery_reset_pending = 0;
 	return 0;
 }
 
@@ -2466,9 +2506,10 @@ static void recover_host(void)
 }
 const struct ar_rf_recovery_info *ar_rf_recovery_information(void)
 {
-	recovery.monitor_state = fch_monitor.enabled | fch_monitor.locked << 1 | fch_monitor.forced << 2;
-	recovery.monitor_missed = fch_monitor.missed; recovery.monitor_threshold = fch_monitor.threshold;
-	recovery.monitor_interval_ms = fch_monitor.interval_ms;
+	recovery.monitor_state = channel_monitor.users[8].flags & 7;
+	recovery.monitor_missed = channel_monitor.users[8].missed;
+	recovery.monitor_threshold = channel_monitor.users[8].threshold;
+	recovery.monitor_interval_ms = monitor_interval_ms;
 	return &recovery;
 }
 int ar_rf_host_control(unsigned operation, size_t payload_length)
