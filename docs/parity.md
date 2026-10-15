@@ -972,6 +972,66 @@ controlled freshness/latency test was performed. PHY transport, worker and
 policy integration, diagnostic history and physical channel-change timing remain
 open; the three host catalog commands remain unsupported.
 
+### Pending PHY command transport
+
+[The PHY control helper](../src/phy_control.c) implements the original single-slot
+enqueue, periodic transmitter, cancellation and receive-timer callback. It remains
+outside the runtime build. It does not yet replace the existing receiver cache,
+command validation or restricted command execution in `rf_device.c`.
+
+Enqueue locks the control state and returns `-1` when its command nibble is busy.
+An accepted request preserves the header's high status nibble and unused payload
+tail, writes command/TTL/length and optionally sets the wake field. It does not
+immediately transmit. Native validation returns `-22` before effects for unsafe
+storage, commands above 9, TTL above 31 or payloads over four bytes; the original
+enqueue has no equivalent bounds checks.
+
+The transmitter sends each nonzero TTL before decrementing it. On a subsequent
+tick at zero, it invokes the outgoing callback, clears the pending command and
+wake field, and writes the idle packet. That zero-TTL branch retains the existing
+checksum unless the AP mode-3 idle-refresh callback replaces it. Normal countdown,
+TTL-31 retransmission, command-7 clearing and explicit cancellation recompute the
+checksum. TTL 31 remains pending until cancellation; command 7 clears on its next
+tick without a local command callback. The tick counter wraps as a byte even
+when no packet is emitted.
+
+An idle AP can emit time synchronization after more than 60,000 milliseconds,
+or when its validity flag requests it. The first broadcast derives its cached
+lead byte from the wrapping frame-duration calculation. The timestamp uses the
+low 32 clock bits plus that lead and carries its high nibble in the header.
+Checksum generation processes the six bytes after the checksum, forcing the
+last byte's high nibble to `0xf`. Mode 3 preserves the checksum byte's high nibble.
+
+The receive timer dispatches the currently cached command when its TTL is
+nonzero, its command is below 10 and a callback is registered. It does not clear
+the cache or prove that the command which armed the timer is still cached.
+Callback bodies run under the control lock. This helper compares dispatch at
+that boundary; receive validation, cache replacement and timer arming are still
+separate work, including mode-3 receive side effects.
+
+Fresh comparison covers **6,400 enqueue, 6,200 transmitter, 192 cancellation and
+5,120 receive-timer cases**. All 363 executed instruction locations and all 256
+CRC table entries are bound to the matched original payload/container/analysis
+ELF bytes. Cases cover busy/empty slots, all five-bit TTL values, payload lengths,
+mode-3 checksum preservation, absent/mutating callbacks, invalid timer command
+indices, time thresholds and 32/64-bit wrap. Complete state and ordered effects
+match: 17,912 paired lock/unlock calls, 3,128 field writes, 6,004 packet writes,
+1,614 callback dispatches and 32 AP idle refreshes.
+
+Locks, memory copying, MMIO output, callback bodies, AP mode-3 idle construction
+and clock/logging helpers are intercepted. Every clock call receives the same
+fixed millisecond fixture; elapsed time between calls is not compared. Synthetic
+callback registrations and layouts are analysis inputs, not original firmware
+declarations. Packet-write arguments do not establish physical transmission,
+receiver acknowledgement or runtime scheduling.
+
+The dedicated sanitizer suite passes. A fresh 20-second HDMI-to-USB capture
+rechecks the unchanged accepted image: the reference dark camera scene, 23
+linked/AP-time samples and zero sampled socket drops. The accepted image remains
+in RAM. No fresh stock capture or controlled freshness/latency measurement was
+performed. The new transport helpers still need receive-path, callback, worker
+and runtime integration before they can support normal channel-policy traffic.
+
 Next, extend the core inventory through the transport dispatchers and indirect
 callbacks, and bind each command's behavior to its comparison tests. Then cover
 radio messages, timers and state transitions in the same way. Dynamic power still

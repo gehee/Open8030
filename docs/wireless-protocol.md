@@ -352,6 +352,14 @@ TTL 0 does not schedule a new application. These are frame-relative synchronizat
 semantics, not an IP hop count. Processing uses a shared cached control message,
 not an independent timer queue for every received command.
 
+The original sender also has one pending command slot. A normal countdown sends
+the current TTL before decrementing it; a later tick at zero invokes its local
+callback and clears the command. TTL 31 persists until cancellation. A compared
+source-only helper now covers that sender, cancellation and receive-timer
+dispatch, including retained payload tails and mode-3 checksum handling. It is
+not yet connected to Open8030's runtime channel-policy path. See
+[transport coverage and boundaries](parity.md#pending-phy-command-transport).
+
 ### AP-time synchronization
 
 Command 7 uses the header's usual TTL bits differently. Timestamp bits 0–27

@@ -214,6 +214,14 @@ dark camera scene, with 23 linked/AP-time samples and zero sampled socket drops.
 The accepted image remains in RAM. See
 [monitor completion and its boundaries](parity.md#channel-change-monitor-completion-and-hopping).
 
+A source-only PHY transport helper now matches 17,912 original-instruction cases
+covering enqueue, transmit countdown, cancellation, AP time generation and shared
+receive-timer dispatch. Its sanitizer suite passes. Receive validation/cache
+replacement, callback bodies and runtime integration remain open. A fresh
+20-second HDMI-to-USB capture rechecks the unchanged accepted image, with the
+reference dark scene, 23 linked/AP-time samples and zero sampled socket drops.
+See [pending PHY command transport](parity.md#pending-phy-command-transport).
+
 A separate configuration-only test reproduced acquisition failure at initial
 power level 11 using the accepted AP-time image. No video was delivered;
 restoring the original level-25 configuration restored the stream. This failure
