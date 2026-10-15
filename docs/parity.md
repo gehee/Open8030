@@ -67,7 +67,7 @@ and scenario; they must be repeated after relevant changes.
 | Host getters | Main status, DEV AP time and baseband register read | Complete field semantics, all remaining getters, unavailable states and original error responses. |
 | Host setters and configuration | Candidate list and restricted loader configuration | Full dispatcher inventory, dynamic power, channel/band policies, reset/default behavior and runtime configuration changes. |
 | Host lifecycle | Explicit stop/start and stop/deinit/init/start tested historically | Every wrong-state/repeated operation, cancellation, pending DMA, failure recovery and complete reset semantics. |
-| Events | Subscription and delivery for IDs 0 and 1 | Other original IDs, payload layouts, ordering, cancellation and overflow behavior. |
+| Events | All twelve original host subscriptions and declared payload sizes; copied FIFO transport; producers for IDs 0 and 1 | Integrate other producers and internal routes; compare their payload meaning, scheduling, overflow and lifecycle behavior. Subscription success alone does not establish a working producer. |
 | Host sockets | Slot-0 copy-mode data path, deferred close and active-write cancellation; normal backend video/control; stream/handle admission and queue factories compared offline | Stock host ports 0/1 reject opens because their streams already exist; native admission differs. Heap/RTOS internals, table initialization, worker startup, runtime ownership, other modes/slots, retained-descriptor TX, saturation, teardown races and complete capacity/error behavior remain open. |
 | Internal data interfaces | Stock stream occupancy observed; mode-3 graph, source-only event forwarding and socket-port-1 framing compared offline | Integrate UART/SBUS, parsers, event subscriptions, shared stream ownership and payload routing; compare other framing profiles, modes, timing, teardown and failure recovery. A reserved-port rejection alone does not implement these services. |
 | MAC framing | Header/descriptor parser and DEV encoder | Other formats/flags, receive ordering, duplicate handling and all original rejection rules. |
@@ -2611,8 +2611,8 @@ container and analysis ELF. Copy/clear instructions execute; event emission,
 allocation and diagnostic endpoints are intercepted. Synthetic ELF, pointers,
 ABI and partial ISA remain analysis metadata.
 
-The helper is source-only. Runtime host event subscriptions still support only
-IDs 0 and 1; this change does not enable event 8 or internal MAC ports 1/2.
+The helper is source-only. At stage 211, runtime host event subscriptions support
+only IDs 0 and 1; that stage does not enable event 8 or internal MAC ports 1/2.
 Integration requires the original stream packet parser, UART/SBUS service,
 event ownership/queueing, host-to-radio path and lifecycle behavior. Other work
 modes and full firmware parity remain open.
@@ -2695,3 +2695,77 @@ is a video regression check, not hardware validation of the source-only parser
 or a controlled freshness/latency measurement. Other parsers, route/packet
 ownership, event subscriptions, reverse traffic and service teardown remain
 required before closing the internal-data coverage item.
+
+### Host event subscriptions and copied transport
+
+Stage 213 integrates the original host event ID/size table into the running
+firmware. Subscribe `0x03010000 | id` and unsubscribe `0x03000000 | id` now
+accept all twelve declared IDs. A duplicate subscribe succeeds without creating
+a duplicate subscription. Unsubscribing an absent event, or requesting an ID
+outside the table, returns `-2`. The native API retains its extra `-22` guard
+for nonzero request status or a nonempty subscription body.
+
+| Event ID | Declared payload bytes |
+| --- | --- |
+| 0 | 3 |
+| 1, 2, 7, 12 | 4 |
+| 3 | 322 |
+| 6 | 256 |
+| 8, 10, 11 | 1,024 |
+| 9 | 12 |
+| 13 | 136 |
+
+Notifications use `0x03020000 | id`, zero chip message ID/status and the declared
+payload size. Publication copies bytes into a FIFO owned by the transport;
+changing or reusing producer storage cannot change a pending notification.
+Unsubscribe prevents new publications, but **does not discard already queued
+notifications**, matching the original worker's callback removal. The previous
+native implementation removed those queued copies.
+
+The cooperative implementation has 16 descriptors sharing 4,096 payload bytes.
+Either exhausted limit rejects a publication with `-11` and increments its
+drop counter. This is an explicit bounded adaptation of the original heap and
+RTOS queue, not their resource or scheduling parity. Peek requires enough caller
+storage and copies without consuming; commit occurs only after SDIO accepts
+that copy. Insufficient scratch leaves the event pending.
+
+**19 original sequences / 157 actions / 24 notifications** match the native
+implementation. They cover every declared ID, unknown IDs, repeated
+subscribe/unsubscribe, simultaneous subscriptions and queued delivery after
+unsubscribe. All 65,536 host ID values are checked against the original size
+table. Original host-worker linked-list operations, size lookup, notification
+construction, and inline/heap payload copying execute. **419 executed
+instruction locations** match the payload, container and analysis ELF.
+Allocation/free, generic registration dispatch, RTOS queues, message release,
+logging and time are intercepted. A matching subscription fixture invokes the
+original notification callback; the generic hub's registration and concurrent
+callback lifetime are outside this comparison.
+
+Another **24 original fault fixtures** exercise notification allocation and queue
+failures. They establish original failure paths, not equivalence to the native
+fixed-storage drop policy. Native ASan/UBSan tests additionally cover mixed
+payload sizes, descriptor/byte limits, ring wrap, copied ownership, insufficient
+scratch and unsubscribe while queued. Eighteen Python tests pass.
+
+On matched hardware, **56 stock/native daemon responses** match opcode, status
+and payload across ten additional valid IDs and four invalid IDs. Message IDs
+are translated by the daemon and differ between sessions; they are excluded
+from that comparison. The probe receives no notifications for these additional
+IDs, so it does not prove their producers or live payload delivery. IDs 0/1 are
+already used by the backend and remain covered by offline comparison and video
+operation, rather than the additional-ID mutation probe.
+
+A fresh stock 20-second capture and candidate 45-second `/dev/video0`
+HDMI-to-USB capture at MJPEG 1920×1080/nominal 30 fps show the dark textured
+camera scene and right-side features. All 48 native samples remain linked,
+AP time advances and sampled socket drops remain zero. The candidate is retained
+in RAM. Runtime size is 73,496 bytes; RAM use is 682,240 of 704,512 bytes.
+The baseline manifest and loading helper now identify the accepted stage-213
+image. Captures, exact reference hashes and comparison receipts remain in
+ignored `.local/stage213-host-events/`.
+
+Only event producers 0 and 1 are integrated. The source-only stream parser and
+event bridge still need real internal ownership, routing and lifecycle work.
+This change closes the selected subscription/transport gap, not complete event,
+internal-service or original-firmware parity. Controlled scene freshness,
+latency, long-run behavior and wider board/mode coverage remain open.

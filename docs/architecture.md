@@ -159,6 +159,14 @@ are implementation limits, not CLI tuning parameters.
 | `src/power_control.c` | Compared power-cache ordering and band-offset fields; initial loader user0 application integrated; tuning/host-policy callbacks pending |
 | `tools/`, `tests/` | Build/loading tools and offline validation |
 
+The host event transport supports all twelve original subscription IDs and
+declared payload sizes up to 1,024 bytes. Sixteen descriptors share a 4,096-byte
+FIFO; publications copy their input, and queued copies survive unsubscribe.
+The polling loop commits an event only after SDIO accepts its immutable copy.
+Only link/MCS producers (IDs 0/1) are integrated. Other subscriptions do not yet
+provide their original event sources or internal data routes. See
+[host event coverage](parity.md#host-event-subscriptions-and-copied-transport).
+
 ## Host protocol
 
 The frame parser in [frame.c](../src/frame.c) accepts fragmented byte streams and

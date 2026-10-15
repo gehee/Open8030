@@ -293,8 +293,10 @@ The event bridge wraps supplied data in a 1,024-byte event body: a two-byte
 little-endian payload length, the payload, and a cleared tail. Bridge port 0
 uses event ID 8. This event representation is distinct from the radio stream's
 packet framing, whose parser and routing still need runtime implementation.
-Open8030 currently lacks these internal owners and supports host event
-subscriptions only for IDs 0 and 1. A source-only forwarding helper and original
+Open8030 currently lacks these internal owners. Its host transport accepts all
+twelve original event subscriptions, including ID 8, but only producers 0 and 1
+are integrated. Subscription success does not establish the internal data path.
+A source-only forwarding helper and original
 mode-3 graph comparisons are described in
 [internal data coverage](parity.md#mode-3-internal-data-graph-and-event-forwarding).
 
@@ -309,6 +311,13 @@ This is a recovered internal stream profile, not a new MAC envelope or a claim
 of full compatibility with an external protocol. Its source-only implementation
 and comparison limits are documented in
 [framing coverage](parity.md#internal-socket-port-1-framing).
+
+Host notifications copy the declared event payload into transport-owned storage.
+Unsubscribe stops new publication while preserving queued notifications. The
+current cooperative transport holds at most 16 events and 4,096 payload bytes;
+it records and rejects overflow. See
+[host event coverage](parity.md#host-event-subscriptions-and-copied-transport)
+for the original ID/size table, wire comparison and remaining producer gaps.
 
 ## Internal command stream
 

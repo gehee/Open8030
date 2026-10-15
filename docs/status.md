@@ -572,6 +572,16 @@ HDMI-to-USB capture shows the camera scene with 33 linked samples and zero
 sampled socket drops. The accepted image remains running in RAM. See
 [framing coverage](parity.md#internal-socket-port-1-framing).
 
+Stage 213 integrates all twelve original host event subscriptions and declared
+sizes, with a shared 4 KiB copied FIFO. Unsubscribe now preserves queued
+notifications. Nineteen original sequences (157 actions and 24 notifications)
+match, and 56 selected hardware responses match stock status/payloads. One
+sanitizer suite and 18 Python tests pass. Fresh stock 20-second and native
+45-second HDMI-to-USB captures show the camera scene; all 48 native samples
+stay linked with zero sampled socket drops. Stage 213 is retained in RAM and
+recorded as the accepted build. Event producers beyond 0/1 and internal routing
+remain pending. See [host event coverage](parity.md#host-event-subscriptions-and-copied-transport).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host

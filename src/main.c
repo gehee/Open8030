@@ -405,7 +405,7 @@ int main(void)
 			/* Copy directly to the final frame payload. Its contents remain
 			 * owned here while RF appends to the independent endpoint queue. */
 			uint8_t *payload = reply + AR_HEADER_SIZE;
-			unsigned event = ar_event_peek(&events, payload, &frame);
+			unsigned event = ar_event_peek(&events, payload, AR_MAX_PAYLOAD, &frame);
 			unsigned close = !event && ar_socket_close_peek(&sockets, &frame);
 			if (event || close) { ready = 1; }
 			else if (completion_first) {

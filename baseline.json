@@ -2,12 +2,12 @@
   "baseline": "working-video",
   "target": "VRX/GND Ascent VRX; matched 18.21.10 inputs",
   "runtime": {
-    "bytes": 72944,
-    "sha256": "2ee2d0d9787080cc676108709cd577028ba14b93d2b2608ce034b541bdd7a200",
+    "bytes": 73496,
+    "sha256": "88e5afcacf4e5b6f91d6ca4e02e203da6309b8d4ee25036a24c3547a5f8dffc2",
     "load_address": "0x204000"
   },
   "ram": {
-    "used_bytes": 677648,
+    "used_bytes": 682240,
     "capacity_bytes": 704512
   },
   "private_board_profile": {
@@ -19,20 +19,20 @@
     "sha256": "c69e46c57bbb3e5fc7fe0c5581e59fb5735dcf8a97bf0e05ae7aaa0273657768"
   },
   "container": {
-    "bytes": 91136,
-    "sha256": "0bfb3fe921b41b57515185ec16d70999df147486e1040e96061b2ff9eaf3b233",
+    "bytes": 91648,
+    "sha256": "394780b2a79075f89051de57220205bd66621ebfd1d978a3bfb5356ab50eb930",
     "payload_alignment": 512
   },
   "original_stock_sha256": "dc58247910af564376350404383c5c411cbec21663873fba24e70c61a3584e3c",
   "external_config_sha256": "5cf0cd31645d4786c6b04399c6c609386d427ffc4c6d7f6e42d81e3e770c2a74",
   "scope": "Experimental Ascent VRX 18.21.10 native video baseline; private inputs not distributed",
   "generated_container": {
-    "bytes": 91136,
-    "sha256": "0bfb3fe921b41b57515185ec16d70999df147486e1040e96061b2ff9eaf3b233",
+    "bytes": 91648,
+    "sha256": "394780b2a79075f89051de57220205bd66621ebfd1d978a3bfb5356ab50eb930",
     "payload_alignment": 512,
     "configuration": "zero-filled 16 KiB; external loader JSON required",
     "hardware_verified": true,
-    "verification_scope": "Ascent VRX 18.21.10 stage206: cooperative copy-mode socket close, active-write cancellation, reply retry and metadata-only endpoint reset; 180 original completion comparisons, 24 hardware open/close cycles including four cancelled active writes and four discarded queued writes. Startup, close stress, stop/start, deinit/init/start and candidate removal/readmission: 120 seconds inspected direct HDMI-to-USB capture matching fresh stock dark scene; 138 linked/AP-time samples and zero sampled socket drops. Original spare-port admission, retained TX, pending-DMA ownership, RTOS scheduling, low-power acquisition and full firmware parity remain open",
+    "verification_scope": "Ascent VRX 18.21.10 stage213: runtime subscription support for all 12 original host event IDs, declared payload sizes through 1024 bytes, copied FIFO ownership and queued notification retention after unsubscribe. 19 original sequences (157 actions, 24 notifications) compare; 24 original fault fixtures are boundary evidence. 56 stock/native daemon responses match opcode/status/payload, excluding translated message IDs. Fresh stock20s and native45s direct HDMI-to-USB captures show the dark camera scene; all48 native samples linked with zero sampled socket drops. Only event0/1 producers are integrated; internal routes and other event producers, retained TX, DMA/RTOS behavior and full firmware parity remain open.",
     "verified_utc_date": "2026-10-15"
   }
 }
