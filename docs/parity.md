@@ -69,7 +69,7 @@ and scenario; they must be repeated after relevant changes.
 | Host lifecycle | Explicit stop/start and stop/deinit/init/start tested historically | Every wrong-state/repeated operation, cancellation, pending DMA, failure recovery and complete reset semantics. |
 | Events | All twelve original host subscriptions and declared payload sizes; copied FIFO transport; producers for IDs 0 and 1 | Integrate other producers and internal routes; compare their payload meaning, scheduling, overflow and lifecycle behavior. Subscription success alone does not establish a working producer. |
 | Host sockets | Slot-0 copy-mode data path, deferred close and active-write cancellation; normal backend video/control; stream/handle admission and queue factories compared offline | Stock host ports 0/1 reject opens because their streams already exist; native admission differs. Heap/RTOS internals, table initialization, worker startup, runtime ownership, other modes/slots, retained-descriptor TX, saturation, teardown races and complete capacity/error behavior remain open. |
-| Internal data interfaces | Stock stream occupancy observed; mode-3 graph, event forwarding, framing, route delivery, queued writer, ingress and socket write gate compared offline; constructed parser-to-route composition, native predicates, route-list submission and worker transformations compared; submission-to-worker composition executes original pool allocation/recycling; worker discard, age, errors and route construction/merging compared | Integrate UART/SBUS, parsers, event producers, shared stream ownership and payload routing; connect route construction to preflight and production pool/queue ownership; integrate the full parser and transformed delivery at runtime; establish copying-action reachability and cleanup, other framing profiles, scheduling, modes, timing, teardown and failure recovery. A reserved-port rejection alone does not implement these services. |
+| Internal data interfaces | Stock stream occupancy observed; mode-3 graph, event forwarding, framing, route delivery, queued writer, ingress and socket write gate compared offline; constructed parser-to-route composition, native predicates, route-list submission and worker transformations compared; submission-to-worker composition executes original pool allocation/recycling; worker discard, age, errors, route construction/merging and configuration preflight compared; five built-in mode tables inventoried | Integrate UART/SBUS, parsers, event producers, shared stream ownership and payload routing; integrate the compared preflight and route builder with real interface provisioning and production pool/queue ownership; integrate the full parser and transformed delivery at runtime; establish copying-action reachability and cleanup, other framing profiles, scheduling, modes, timing, teardown and failure recovery. A reserved-port rejection alone does not implement these services. |
 | MAC framing | Header/descriptor parser and DEV encoder | Other formats/flags, receive ordering, duplicate handling and all original rejection rules. |
 | AP full/compact controls | Selected mode-0/slot-0 admission and connected control | All extensions, remote synchronization effects, changed channels, slots, stale/duplicate controls and unsupported modes. |
 | Internal port-0 commands | Stream parsing; login checksum ACK transmission | Receiving a command currently mainly records it. Inventory and implement each original command's effects, responses and retries. |
@@ -3691,3 +3691,82 @@ delivered bytes over 59.01 seconds. Image, configuration and boot identity match
 the retained baseline. Open8030 remains running. This unchanged-runtime check
 does not establish fresh stock parity, controlled freshness/latency or a fix for
 the earlier intermittent receive loss.
+
+
+### Interface preflight and built-in mode inventory
+
+Stage 227 adds source-only [configuration preflight](../src/data_preflight.c),
+which mutates caller-owned interface and route views before role admission and
+construction. It reproduces the tested original ordering:
+
+- UART interfaces set their console flag when their port equals the configured
+  console port, and set their AT flag from UART settings for ports 1–3. Existing
+  flags are not cleared when a later call disables those settings.
+- Every route is examined, including disabled records and records for another
+  role. Matching uses the first interface with equal type, port and selector.
+  The interface selector is 32 bits and must not be truncated to the route's
+  16-bit selector.
+- Source AT or console disables the route. Destination AT also disables it, but
+  destination console alone does not: the original rechecks the **source** console
+  flag at that point. The native helper preserves this asymmetric behavior.
+- Otherwise, a found source gains a reference and a found destination gains
+  another. A missing destination still permits the source increment; a self-route
+  increments twice. Counts accumulate modulo 65,536 and are not reset on entry.
+- After traversal, interfaces without references, AT or console are disabled.
+  Existing interface and route disable flags are never cleared by preflight.
+
+**393 cases / 631 completed calls match the original**, including repeated calls,
+all eight AT masks, console settings, disabled/role-ineligible records, duplicate
+identities, selector width, missing endpoints, sticky flags and counter wrap.
+Six additional cases stop before the original's unsafe missing-source access:
+when a non-AT destination exists but the source does not, native preflight returns
+`-22`. Its partial state matches the original at that boundary; these cases are
+explicit safety differences, not matching original error behavior. Previous
+mutations remain and the final interface-disabling pass is skipped. Native
+pointer/count guards reject invalid initial inputs without mutation.
+
+The original preflight slice executes UART configuration conversion and table
+scans without helper interception. Its **181 executed instruction locations**
+are bound to the matched original payload/container/analysis-ELF bytes. Synthetic
+table pointers, stack, ABI, ELF and partial ISA remain analysis metadata. The
+native helper consumes only the AT enable bytes; it does not implement physical
+UART setup or the converter's baud/parity/data-bit output. Detailed evidence is
+kept in ignored `.local/stage227-data-preflight/`.
+
+The inventory also binds ten original interface/route table regions, containing
+29 interface entries and 49 route records across five built-in modes:
+
+| Mode | Interfaces | Route records | Action flags |
+| --- | ---: | ---: | --- |
+| 0 | 6 | 7 | `0x08` |
+| 1 | 7 | 9 | `0x08` |
+| 2 | 7 | 22 | Fifteen `0x08`, seven `0x09` |
+| 3 | 5 | 6 | `0x08` |
+| 4 | 4 | 5 | `0x08` |
+
+None of these 49 records requests the copying action bits `0x02`/`0x04` investigated
+in stages 223–224. That narrows the default-table ownership question; it does not
+exclude custom/dynamic routes or prove all records are admitted and reachable.
+Preflight probes start after table selection and use logical fields from these
+tables. They do not execute mode selection or mode-2 auxiliary service startup.
+The wider modes still require constructor, service and runtime comparisons.
+
+Four ASan/UBSan suites and 18 Python tests pass. New native tests compose preflight
+and route construction across **120 console/AT/role combinations**, checking
+physical source/destination pairs through an enabled-interface registry adapter.
+Fixture IDs are table indices, not original runtime assignments. The existing
+**1,698 split/wrap pipeline cases** now run preflight before construction, parsing,
+dispatch and worker delivery. These are native composition checks, not additional
+executions of the entire original system. Real interface construction, shared
+stream ownership, UART/SBUS profiles, queues/pools, scheduling, teardown and
+runtime integration remain open. The helper stays outside the firmware build,
+which reproduces the retained stage-215 image.
+
+A fresh 30-second `/dev/video0` HDMI-to-USB capture shows the dark textured camera
+scene and right-side objects. All 33 samples remain linked with advancing AP time
+and zero socket drops; video delivery increases by 13,118,660 bytes. A separate
+60-sample flow check records zero socket drops or SDIO errors and 24,540,582
+delivered bytes over 59.01 seconds. Image, configuration and boot identity
+match the retained baseline. Open8030 remains running. This unchanged-runtime
+check does not establish fresh stock parity, controlled freshness/latency or a
+fix for the earlier intermittent receive loss.

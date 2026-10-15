@@ -717,6 +717,17 @@ build reproduces stage 215. See
 Fresh HDMI-to-USB video shows the camera scene with 33 linked samples; 60 flow
 samples show no socket drops or SDIO errors. Stage 215 remains running.
 
+Stage 227 adds native interface preflight and inventories five built-in mode
+configurations. There are 393 matching original cases / 631 completed calls and
+six explicit native safety-guard differences. The 49 built-in route records use
+only actions `0x08`/`0x09`; custom-route reachability and wider mode behavior remain
+open. Four sanitizer suites and 18 Python tests pass, including preflight-to-builder
+composition and the existing parser-to-delivery pipeline. The helper remains
+source-only; the build reproduces stage 215. See
+[preflight coverage](parity.md#interface-preflight-and-built-in-mode-inventory).
+Fresh HDMI-to-USB video shows the camera scene with 33 linked samples; 60 flow
+samples show no socket drops or SDIO errors. Stage 215 remains running.
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host

@@ -1,12 +1,13 @@
 /* SPDX-License-Identifier: MIT */
 #include "ar_data_framing.h"
+#include "ar_data_preflight.h"
 #include "data_mode3_fixture.h"
 #include "ar_data_route.h"
 #include "ar_data_event.h"
 #include <assert.h>
 #include <string.h>
 
-/* Native construction, parsing, filtering, dispatch and worker delivery are
+/* Native preflight, construction, parsing, filtering, dispatch and worker delivery are
  * composed here. Registry, packet/queue storage and scheduling are adapters. */
 struct fixture {
 	unsigned source, role, writes, emissions, allocations, segments;
@@ -200,7 +201,14 @@ int main(void)
 					uint8_t ring[1043] = {0}, frame[257] = {0xc8};
 					struct fixture f = {.source = type ? 4 : 2, .role = role, .destination = -1};
 					const struct ar_data_builder_ops build = {{identity, framed}, node, action};
-					assert(ar_data_routes_build(&f.head, mode3_routes, 6, (uint8_t)role, &build, &f) == 0);
+					struct ar_data_route_spec routes[6];
+					memcpy(routes, mode3_routes, sizeof routes);
+					struct ar_data_preflight_interface interfaces[5] = {
+						{.port = 2}, {.port = 1}, {.type = 3}, {.type = 2}, {.type = 2, .port = 1}};
+					const uint8_t uart_at[3] = {0};
+					assert(!ar_data_preflight(interfaces, 5, routes, 6, 0, uart_at));
+					for (unsigned i = 0; i < 5; ++i) { assert(!interfaces[i].disabled); }
+					assert(ar_data_routes_build(&f.head, routes, 6, (uint8_t)role, &build, &f) == 0);
 					assert(f.node_count == (role < 2 ? 4u : 2u));
 					for (unsigned w = 0; w < 2; ++w) {
 						f.queues[w] = (struct ar_data_dispatch_worker){128, 128};
