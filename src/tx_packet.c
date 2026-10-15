@@ -13,6 +13,50 @@ static void put(uint8_t *p, uint32_t value)
 	for (unsigned i = 0; i < 4; ++i)
 		p[i] = (uint8_t)(value >> (8 * i));
 }
+
+int ar_tx_packet_finish(struct ar_tx_packet_state *state,
+	struct ar_tx_stream_registry *registry, struct ar_tx_packet_statistics *statistics,
+	uint32_t submitted, uint32_t header,
+	const struct ar_tx_stream_acquire_ops *ops, void *context)
+{
+	if (!state || !registry || !ops || !ops->lock || !ops->unlock || !ops->clock_us)
+		return -22;
+	unsigned selector = (state->configuration >> 24) & 15;
+	if (selector < 8 && state->present[selector] && state->reset_masks[selector]) {
+		(void)ops->lock(registry->mutex, UINT32_MAX, context);
+		for (unsigned port = 1; port < 5; ++port) {
+			if (!(state->reset_masks[selector] & (1u << port)))
+				continue;
+			struct ar_tx_stream *stream = registry->streams[selector][port][0];
+			if (!stream || !stream->queue)
+				break;
+			struct ar_tx_stream_queue *queue = stream->queue;
+			(void)ops->lock(queue->mutex, UINT32_MAX, context);
+			queue->acquired_bytes = 0;
+			ops->unlock(queue->mutex, context);
+		}
+		state->reset_masks[selector] = 0;
+		ops->unlock(registry->mutex, context);
+	}
+	if (!statistics || !statistics->samples || !statistics->capacity ||
+	    statistics->head >= statistics->capacity || statistics->head >= statistics->sample_count)
+		return -22;
+	struct ar_tx_packet_sample *sample = &statistics->samples[statistics->head];
+	uint16_t budget16 = (uint16_t)state->budget, submitted16 = (uint16_t)submitted;
+	uint16_t payload16 = (uint16_t)(submitted16 - header);
+	sample->budget = budget16;
+	sample->submitted = submitted16;
+	uint32_t ms = (uint32_t)(ops->clock_us(context) / 1000);
+	if (statistics->head >= statistics->capacity || statistics->head >= statistics->sample_count)
+		return -22;
+	statistics->samples[statistics->head].ms = ms;
+	statistics->head = (statistics->head + 1) % statistics->capacity;
+	statistics->budget_total += budget16;
+	statistics->submitted_total += submitted16;
+	statistics->payload_total += payload16;
+	return 0;
+}
+
 int ar_tx_packet_prepare(struct ar_tx_packet_state *state,
 	struct ar_tx_stream_registry *registry,
 	const struct ar_tx_stream_acquire_ops *stream_ops,

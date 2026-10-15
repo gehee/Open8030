@@ -116,6 +116,12 @@ int main(void)
 {
 	struct fixture f;
 	init(&f);
+	struct ar_tx_retire_ring ring = {.configuration = f.state.configuration,
+		.head = 9, .tail = 9};
+	ring.packets[9] = (struct ar_tx_retire_packet){f.state.packet, sizeof f.state.packet};
+	struct ar_tx_retire_packet *selected = NULL;
+	assert(!ar_tx_reserve(&ring, &selected) && selected == &ring.packets[9]);
+	assert(!ring.head && ring.owned == 1 && ring.tail == 9);
 	assert(!prepare(&f) && f.state.packet[7] == 1 && f.state.packet[8] == 1);
 	assert(f.state.configuration == 0x01120700 && f.state.packet[4] == 255);
 	assert(f.state.packet[28] == 7 && f.state.packet[6] == 0x85);
@@ -127,11 +133,19 @@ int main(void)
 	assert(f.addresses[0] == 0x283000 && f.lengths[0] == 12);
 	assert(f.addresses[1] == 0x285000 && f.lengths[1] == 16);
 	assert(f.addresses[2] == 0x400000 && f.lengths[2] == 8 && f.lengths[3] == 8);
-	struct ar_tx_retire_ring ring = {.configuration = f.state.configuration,
-		.head = 1, .owned = 1};
-	ring.packets[0] = (struct ar_tx_retire_packet){f.state.packet, sizeof f.state.packet};
+	struct ar_tx_packet_sample samples[4] = {{0}};
+	struct ar_tx_packet_statistics statistics = {.capacity = 4, .head = 3,
+		.budget_total = UINT64_MAX - 7, .submitted_total = UINT64_MAX - 7,
+		.payload_total = UINT64_MAX - 7, .samples = samples, .sample_count = 4};
+	f.state.reset_masks[1] = 31;
+	f.queue.acquired_bytes = 999;
+	assert(!ar_tx_packet_finish(&f.state, &f.registry, &statistics, 44, 12, &stream_ops, &f));
+	assert(!f.state.reset_masks[1] && !f.queue.acquired_bytes && f.stream.references == 3);
+	assert(!statistics.head && samples[3].budget == 64 && samples[3].submitted == 44);
+	assert(samples[3].ms == 100 && statistics.budget_total == 56);
+	assert(statistics.submitted_total == 36 && statistics.payload_total == 24);
 	assert(!ar_tx_retire(&ring, 0, release, &f));
-	assert(!ring.owned && ring.tail == 1 && f.stream.references == 2);
+	assert(!ring.owned && !ring.tail && f.stream.references == 2);
 	assert(f.buffers == 2 && f.wakes == 1 && !f.queue.used && !f.queue.pending);
 
 	init(&f);
@@ -166,5 +180,25 @@ int main(void)
 	f.queue.entry_count = 1;
 	assert(prepare(&f) == -22 && f.stream.references == 2 && f.locks == f.unlocks);
 	assert(!f.submits);
-	puts("TX packet acquisition/retirement, segment order, policy gates and partial assertion outcomes passed");
+
+	ring.owned = 10;
+	assert(ar_tx_reserve(&ring, &selected) == -95 && !ring.head && ring.owned == 10);
+	ring.owned = 0;
+	assert(ar_tx_reserve(&ring, &selected) == -95 && ring.head == 1 && ring.owned == 1);
+	ring.head = 10;
+	assert(ar_tx_reserve(&ring, &selected) == -22 && ring.owned == 1);
+	init(&f);
+	f.state.reset_masks[1] = 1; /* Port 0 is not reset. */
+	f.queue.acquired_bytes = 123;
+	f.registry.streams[1][0][0] = &f.stream;
+	f.state.budget = 65537;
+	assert(!ar_tx_packet_finish(&f.state, &f.registry, &statistics, 65536, 1, &stream_ops, &f));
+	assert(!f.state.reset_masks[1] && f.queue.acquired_bytes == 123);
+	assert(samples[0].budget == 1 && !samples[0].submitted && statistics.payload_total == 65559);
+	init(&f);
+	f.state.reset_masks[1] = 6;
+	f.queue.acquired_bytes = 123;
+	assert(ar_tx_packet_finish(&f.state, &f.registry, NULL, 44, 12, &stream_ops, &f) == -22);
+	assert(!f.state.reset_masks[1] && !f.queue.acquired_bytes && f.locks == f.unlocks);
+	puts("TX reservation, packet acquisition/retirement, accounting wrap, segment order and partial failures passed");
 }

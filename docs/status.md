@@ -415,6 +415,16 @@ reproduces stage 189; a fresh 30-second HDMI-to-USB capture shows the camera sce
 with 33 linked samples and zero sampled socket drops. See
 [packet preparation coverage](parity.md#prepared-tx-packet-assembly-and-retirement).
 
+Stage 199 extends the comparison through TX slot reservation and post-submission
+accounting: 537 original scenarios, including 27 reserve/prepare/account/retire
+sequences. It checks ring wrap, full/null-slot failures, selected stream-counter
+resets, and timestamped statistics with truncated fields and wrapping totals.
+These are accounting effects, not host notifications. Four sanitizer suites and
+18 Python tests pass. The helpers remain source-only; the build reproduces stage
+189. A fresh 30-second HDMI-to-USB capture shows the camera scene with 33 linked
+samples and zero sampled socket drops. See
+[reservation and accounting coverage](parity.md#tx-slot-reservation-and-post-submission-accounting).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host

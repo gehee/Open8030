@@ -1746,7 +1746,7 @@ the actual original lookup/drop, traversal, acquisition, arithmetic, memory and
 header-checksum routines. Eighteen successful cases then execute original
 descriptor retirement, stream release and queue consumption. This joins the
 previously separate ownership comparisons; it does not execute the full
-pre-encode handler, prior reservation, or subsequent notification processing.
+pre-encode handler, prior reservation, or subsequent accounting.
 
 Availability scans all five ports before selecting descriptors. Retained queues
 sum `length - produced` modulo 2^32 across their entries; byte queues expose their
@@ -1790,7 +1790,7 @@ assertion handling is not executed after the mismatch boundary. The comparison
 uses synthetic queue/registry/ring storage and an analysis ABI, with no concurrent
 mutation. Native `-22` guards and `-95` returns are deliberate errors rather than
 copies of original unsafe accesses or fatal handling. Ring reservation, policy
-producers, allocation/teardown, notifications, interrupt ordering and actual DMA
+producers, allocation/teardown, post-submission accounting, interrupt ordering and actual DMA
 ownership remain open, as does integration with the runtime's current copy queues.
 
 Four sanitizer suites cover the assembled packet through native retirement,
@@ -1802,6 +1802,66 @@ standard build is byte-identical to accepted stage 189. A fresh 30-second direct
 sampled socket drops. Inspected frames show the textured camera scene, right-side
 features and camera OSD. The accepted firmware remains running; no hardware
 execution of this new helper or controlled freshness/latency is claimed.
+
+### TX slot reservation and post-submission accounting
+
+Stage 199 extends fresh original execution from `0x2387b6` through prepared
+packet assembly, counter resets and the statistics body at `0x22fd9c`. Selected
+cases then retire the packet through the original release consumer. Entry
+registers still represent a prepared context after earlier outband selection;
+this is not full pre-encode-handler execution.
+
+Reservation selects the current head slot, advances head modulo ten and increments
+the owned count. A full ring reaches the original assertion path without those
+changes. A null selected packet reaches it **after** both counters change. Native
+`ar_tx_reserve` returns `-95` at those boundaries. It neither validates the entire
+packet storage nor unwinds reservation when later preparation fails. Additional
+native argument/head guards return `-22` before accessing unsafe storage.
+
+The code after successful submission performs accounting, not a host notification.
+For a present selector 0..7 with a nonzero reset mask, it holds the registry mutex
+and examines ports 1..4 in order. Each selected queue's 64-bit acquisition counter
+is cleared under its queue mutex. A missing selected stream or queue stops the
+loop, preserving resets already performed. The entire mask is then cleared,
+including bits outside ports 1..4. No lookup references are added or dropped.
+Selectors outside that range and absent user tables skip resets but still record
+statistics. Lock return values remain ignored in the compared original path.
+
+The statistics ring records 16-bit budget and submitted lengths plus a 32-bit
+millisecond timestamp. Its head advances modulo its configured capacity. Three
+64-bit totals accumulate the truncated budget, submitted length, and
+`submitted - header` modulo 16 bits, respectively. That final value includes
+outband bytes; it is not necessarily host payload alone. Counter overflow is
+preserved. Original storage allocation and valid capacity producers remain open;
+the native view supplies explicit storage bounds and rejects invalid metadata.
+Such rejection occurs after any stream resets already performed.
+
+Fresh comparison covers **537 scenarios**: **487 nonfatal outcomes** and **50
+assertion prefixes** comprising 44 length mismatches, three full rings and three
+null slots. There are **27 reserve/prepare/account/retire sequences**, including
+empty and populated packets. Cases include last-slot reservation, near-full
+rings, missing streams/queues, reset-mask combinations, field truncation, timestamp
+wrap and 64-bit counter wrap. State comparisons cover 799 descriptors, 9,162
+lock/unlock pairs, 1,987 cache calls, 2,474 submissions, 974 clock calls, 24 policy
+value calls, 12 policy word calls, 68 wakes and 60 buffer callbacks. All **1,123
+executed instruction locations** match the reference payload/container/analysis
+ELF. Eighteen missing-stream/queue diagnostic clock calls are recorded separately
+and excluded from native effects; diagnostic formatting remains intercepted.
+
+RTOS/clock, policy inputs, cache maintenance and segment submission remain
+intercepted. The tests use synthetic registry, queue, ring and statistics storage;
+the ABI and pointer mappings remain analysis metadata. They do not establish
+concurrency, cache effectiveness, actual DMA or original allocation/lifetime rules.
+Native error returns replace unsafe access or fatal continuation, preserving the
+documented prior effects. Recovery and integration with the current copy queues
+remain separate requirements.
+
+Four sanitizer suites and 18 Python tests pass. The standard build reproduces
+accepted stage 189 exactly. A fresh 30-second direct `/dev/video0` HDMI-to-USB
+capture has 33 linked samples, advancing AP time and zero sampled socket drops.
+Inspected frames show the textured camera scene, right-side features and camera
+OSD. The accepted firmware remains running. This validates the retained image,
+not hardware execution of these source-only helpers or controlled scene freshness.
 
 Next, compare the remaining ownership and retry-limit producers, connect the
 compared TX helpers to the runtime, and isolate low-power acquisition

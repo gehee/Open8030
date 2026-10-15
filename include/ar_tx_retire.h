@@ -34,4 +34,9 @@ typedef void (*ar_tx_retire_release)(unsigned selector, unsigned stream,
  * retry after partial release. Native bounds guards are not original errors. */
 int ar_tx_retire(struct ar_tx_retire_ring *ring, unsigned retain,
 	ar_tx_retire_release release, void *context);
+/* Reserve the head slot before packet preparation. Full ring returns -95 with
+ * no change. A null selected packet returns -95 AFTER head/owned advance, as at
+ * the original assertion boundary. Bad native arguments/head return -22.
+ * This does not validate packet storage size or undo a later preparation error. */
+int ar_tx_reserve(struct ar_tx_retire_ring *ring, struct ar_tx_retire_packet **packet);
 #endif

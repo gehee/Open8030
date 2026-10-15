@@ -1,6 +1,18 @@
 /* SPDX-License-Identifier: MIT */
 #include "ar_tx_retire.h"
 
+int ar_tx_reserve(struct ar_tx_retire_ring *ring, struct ar_tx_retire_packet **packet)
+{
+	if (!ring || !packet || ring->head >= 10)
+		return -22;
+	if (ring->owned >= 10)
+		return -95;
+	*packet = &ring->packets[ring->head];
+	ring->head = (ring->head + 1) % 10;
+	ring->owned++;
+	return (*packet)->data ? 0 : -95;
+}
+
 static uint32_t get32(const uint8_t *p)
 {
 	return (uint32_t)p[0] | (uint32_t)p[1] << 8 |
