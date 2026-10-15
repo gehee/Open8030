@@ -2,6 +2,54 @@
 #include "ar_tx_stream.h"
 #include <string.h>
 
+int ar_tx_stream_open(struct ar_tx_stream_registry *registry,
+	unsigned selector, unsigned port, unsigned flags,
+	uint32_t tx_capacity, uint32_t rx_capacity,
+	const struct ar_tx_stream_open_ops *ops, void *context)
+{
+	if (!registry || !ops || !ops->lock || !ops->unlock ||
+	    !ops->create || !ops->destroy || port >= 5)
+		return -22;
+	if (selector >= 8 || !(flags & 3) ||
+	    ((flags & 2) && !tx_capacity) || ((flags & 1) && !rx_capacity))
+		return -6;
+	(void)ops->lock(registry->mutex, UINT32_MAX, context);
+	int result = -2;
+	if (!(registry->present_mask & (1u << selector)))
+		goto done;
+	struct ar_tx_stream **streams = registry->streams[selector][port];
+	result = -9;
+	if (((flags & 2) && streams[0]) || ((flags & 1) && streams[1]))
+		goto done;
+	struct ar_tx_stream *tx = NULL, *rx = NULL;
+	result = -3;
+	if (flags & 2) {
+		tx = ops->create(tx_capacity, flags & 32, context);
+		if (!tx)
+			goto done;
+		if (flags & 4)
+			tx->flags |= 1;
+		if (flags & 16)
+			tx->flags |= 2;
+	}
+	if (flags & 1) {
+		rx = ops->create(rx_capacity, 0, context);
+		if (!rx) {
+			if (tx)
+				ops->destroy(tx, context);
+			goto done;
+		}
+	}
+	if (tx)
+		streams[0] = tx;
+	if (rx)
+		streams[1] = rx;
+	result = 0;
+done:
+	ops->unlock(registry->mutex, context);
+	return result;
+}
+
 int ar_tx_queue_disable(struct ar_tx_stream_queue *queue,
 	const struct ar_tx_stream_close_ops *ops, void *context)
 {

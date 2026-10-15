@@ -505,6 +505,16 @@ Original spare-port admission differs and remains unresolved; retained TX and
 actual RTOS/DMA ownership are still incomplete. See
 [cooperative close coverage](parity.md#cooperative-socket-close).
 
+Stage 207 compares low-level stream admission and publication in 1,206 original
+scenarios. It covers duplicate-direction rejection, selected capacity checks,
+TX-before-RX allocation, partial-allocation cleanup and publication ordering.
+All 47 native sanitizer suites and 18 Python tests pass. Factory internals and
+host handle/worker creation remain outside this comparison, and the stock
+spare-port rejection is still unresolved. This is source-only work: the standard
+build reproduces stage 206. A fresh 30-second HDMI-to-USB capture shows the camera
+scene, with 33 linked samples and zero sampled socket drops. Stage 206 remains
+running in RAM. See [stream admission coverage](parity.md#stream-admission-and-publication).
+
 ## Remaining work
 
 [Original firmware parity](parity.md) tracks the comparison scope, known host

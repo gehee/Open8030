@@ -31,7 +31,7 @@ struct ar_tx_stream {
 struct ar_tx_stream_registry {
 	uint32_t mutex;
 	struct ar_tx_stream *streams[8][5][2];
-	uint8_t present_mask; /* Selector allocation, needed to distinguish close -2. */
+	uint8_t present_mask; /* Selector allocation, separate from an empty stream table. */
 };
 struct ar_tx_stream_ops {
 	int (*lock)(uint32_t mutex, uint32_t timeout, void *context);
@@ -61,6 +61,30 @@ struct ar_tx_stream_close_ops {
 	void (*free_stream)(struct ar_tx_stream *stream, void *context);
 	void (*delay)(uint32_t units, void *context);
 };
+struct ar_tx_stream_open_ops {
+	int (*lock)(uint32_t mutex, uint32_t timeout, void *context);
+	void (*unlock)(uint32_t mutex, void *context);
+	struct ar_tx_stream *(*create)(uint32_t capacity, unsigned retained,
+		void *context);
+	void (*destroy)(struct ar_tx_stream *stream, void *context);
+};
+/* Source-only stream admission/publication. Flag bit 1 selects TX, bit 0 RX;
+ * selected capacities must be nonzero. Invalid selector/directions/capacities
+ * return -6; absent selector -2, selected stream already present -9, allocation
+ * failure -3. TX is created first, with retained argument flags & 32; RX always
+ * uses byte mode. TX flag bits 2/4 add stream flag bits 0/1. Neither direction
+ * is published until both selected allocations succeed. RX failure destroys
+ * the unpublished TX stream. All callbacks after admission run under the
+ * registry mutex; lock return is ignored and unlock reloads the mutex token.
+ * Factory internals, host-port mapping, handle allocation and worker creation
+ * are separate contracts. Callbacks must return distinct live objects and keep
+ * registry storage stable. Native port >= 5 or missing adapters returns -22;
+ * the original internal helper has no port bound (its caller checks it).
+ * This does not establish allocator, RTOS concurrency or runtime parity. */
+int ar_tx_stream_open(struct ar_tx_stream_registry *registry,
+	unsigned selector, unsigned port, unsigned flags,
+	uint32_t tx_capacity, uint32_t rx_capacity,
+	const struct ar_tx_stream_open_ops *ops, void *context);
 /* Source-only queue disable and stream close. Disable clears queue flag bit 1
  * and increments disables only on the enabled-to-disabled transition; no wake.
  * Close mask bit 1 selects direction 0 (TX), bit 0 direction 1 (RX), in that

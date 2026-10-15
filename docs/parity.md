@@ -68,7 +68,7 @@ and scenario; they must be repeated after relevant changes.
 | Host setters and configuration | Candidate list and restricted loader configuration | Full dispatcher inventory, dynamic power, channel/band policies, reset/default behavior and runtime configuration changes. |
 | Host lifecycle | Explicit stop/start and stop/deinit/init/start tested historically | Every wrong-state/repeated operation, cancellation, pending DMA, failure recovery and complete reset semantics. |
 | Events | Subscription and delivery for IDs 0 and 1 | Other original IDs, payload layouts, ordering, cancellation and overflow behavior. |
-| Host sockets | Slot-0 copy-mode data path, deferred close and active-write cancellation; normal backend video/control | Original admission/allocation, other modes/slots, retained-descriptor TX, saturation, teardown races and complete capacity/error behavior. |
+| Host sockets | Slot-0 copy-mode data path, deferred close and active-write cancellation; normal backend video/control; low-level stream admission compared offline | Allocation internals, handle/worker publication, unresolved stock spare-port rejection, other modes/slots, retained-descriptor TX, saturation, teardown races and complete capacity/error behavior. |
 | MAC framing | Header/descriptor parser and DEV encoder | Other formats/flags, receive ordering, duplicate handling and all original rejection rules. |
 | AP full/compact controls | Selected mode-0/slot-0 admission and connected control | All extensions, remote synchronization effects, changed channels, slots, stale/duplicate controls and unsupported modes. |
 | Internal port-0 commands | Stream parsing; login checksum ACK transmission | Receiving a command currently mainly records it. Inventory and implement each original command's effects, responses and retries. |
@@ -2316,3 +2316,49 @@ underlying stock allocation/admission cause remains unresolved. Native spare-por
 close tests must therefore not be presented as matched stock open/close parity.
 Complete socket allocation, capacity/error behavior, original worker scheduling,
 retained-buffer TX and pending-DMA teardown remain open.
+
+### Stream admission and publication
+
+Stage 207 compares the original low-level stream-create path at `0x2422d0` with
+the source-only `ar_tx_stream_open` helper. Flags select TX with bit 1 and RX
+with bit 0. Invalid selector, no selected direction or zero capacity for a
+selected direction returns `-6`. Under the registry lock, an absent selector
+returns `-2`; an existing stream in either requested direction returns `-9`
+before any allocation. An existing unrequested direction is preserved.
+
+TX allocation precedes RX allocation. TX receives the retained-mode flag and
+the requested capacity; RX always requests byte mode. Input flag bits 2 and 4
+set TX stream flag bits 0 and 1 without clearing other bits. Neither newly
+created stream is published before all requested allocations succeed. A failed
+RX allocation destroys the unpublished TX stream and returns `-3`; a failed
+TX allocation also returns `-3`. Unlock reloads the registry mutex token.
+
+Fresh original-instruction execution matches **1,206 scenarios** and all **202
+executed instruction locations** are checked against the matched payload,
+container and analysis ELF. Comparisons check results, registry/object state
+and callback order, including state at each callback. Cases cover all 256
+low-byte flags, high-bit flags, selector and capacity boundaries, selected and
+unselected occupied directions, first/second allocation failure and callback
+mutations. The matrix includes 11 partial-allocation cleanup calls.
+
+Stream factory/destructor internals, locks and diagnostic endpoints are
+intercepted. This does not validate heap allocation, queue creation, real
+scheduling or DMA. Original diagnostic arithmetic executes; its logging/clock
+effects are excluded from native parity. The original internal helper lacks a
+port bound; the native adapter returns `-22` for ports outside 0..4 or missing
+adapters. Those extra guards are explicit differences. Synthetic ELF, ABI,
+pointers and partial ISA remain analysis metadata.
+
+All **47 native ASan/UBSan suites** and **18 Python tests** pass, including new
+real-allocation cleanup tests. The helper is not linked into the device image;
+the standard build reproduces accepted stage 206 byte-for-byte. A fresh
+30-second direct `/dev/video0` HDMI-to-USB capture shows the camera scene, with
+33 linked samples, advancing AP time and zero sampled socket drops. The accepted
+image remains running in RAM. This is a regression check, not a new stock/native
+admission comparison or a controlled freshness/latency measurement.
+
+The host wrapper's role checks, host-port-to-stream-port mapping, handle-table
+allocation/publication, full-table cleanup and socket-worker startup still need
+their own comparisons. The live stock spare-port rejection remains unresolved;
+the possible `-2`, `-3` and `-9` paths above do not identify its cause. Full socket
+or firmware parity cannot be inferred from these helper results.
