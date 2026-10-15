@@ -1500,7 +1500,35 @@ int main(void)
 	 * index synchronized with hardware retuning before admission. */
 	uint8_t search_plan[sizeof mcs_plan + 4]; memcpy(search_plan,mcs_plan,sizeof mcs_plan);
 	put32(search_plan + sizeof mcs_plan,5805000);
-	assert(ar_rf_prepare_config(5770000,4,search_plan,sizeof search_plan,1)==0);
+	struct ar_power_config loader_power = {.valid=0x7fffffff,.closed={1,1},
+		.high_clock=1,.dev_role=1,.path_offset={-1,1},.csma_offset=8};
+	for (unsigned i = 0; i < AR_POWER_LEVELS; i++) {
+		loader_power.calibration[i][0] = 12+i;
+		loader_power.calibration[i][1] = 2*i;
+		loader_power.calibration[i][2] = 45-i;
+		loader_power.calibration[i][3] = 3*i;
+	}
+	memcpy(loader_power.calibration[15],search_plan+24,2);
+	memcpy(loader_power.calibration[17]+2,search_plan+26,2);
+	struct ar_power_config saved_power = loader_power;
+	before_writes = writes;
+	assert(ar_rf_prepare_config(5770000,4,search_plan,sizeof search_plan,1,NULL)==-22);
+	loader_power.valid &= ~(1u<<15);
+	assert(ar_rf_prepare_config(5770000,4,search_plan,sizeof search_plan,1,&loader_power)==-95);
+	loader_power = saved_power; loader_power.calibration[15][1] ^= 1;
+	assert(ar_rf_prepare_config(5770000,4,search_plan,sizeof search_plan,1,&loader_power)==-22);
+	loader_power = saved_power; loader_power.closed[1] = 0;
+	assert(ar_rf_prepare_config(5770000,4,search_plan,sizeof search_plan,1,&loader_power)==-22);
+	assert(writes==before_writes);
+	loader_power = saved_power;
+	assert(ar_rf_prepare_config(5770000,4,search_plan,sizeof search_plan,1,&loader_power)==0);
+	/* The caller can reuse its storage; runtime owns calibration and cache. */
+	memset(&loader_power,0,sizeof loader_power);
+	assert(!memcmp(&ar_rf_power_information()->config,&saved_power,sizeof saved_power));
+	assert(ar_rf_power_information()->level[0]==25 && !ar_rf_power_information()->level[11]);
+	assert((*reg(0x0a1109a4)&0x3fff)==((unsigned)search_plan[24]<<8|search_plan[25]));
+	assert((*reg(0x0a110da4)&63)==search_plan[26] && (*reg(0x0a110da0)>>24)==search_plan[27]);
+
 	assert(*reg(0x0a110810) == 0x183a113a && *reg(0x0a110814) == 0x00802309);
 	assert(*reg(0x0a110870) == 0x0f00dd88 && *reg(0x0a1108a4) == 0xe000);
 	assert_channel_plls(5770000);
@@ -1709,13 +1737,17 @@ int main(void)
 		}
 	}
 	assert(compensation_writes == loaded_writes);
+	assert(!memcmp(&ar_rf_power_information()->config,&saved_power,sizeof saved_power));
+	assert(ar_rf_power_information()->level[0]==25);
 	/* Bounded diagnostics own their field setup independently. Returning to
 	 * normal operation must await a fresh preparation, not reuse stale cache. */
 	assert(!ar_rf_stop_host());
 	assert(!ar_rf_monitor_plan(5770000,100,4,64,connected_plan,sizeof connected_plan));
 	assert(!(*reg(0x0a110480)&2) && compensation_writes > loaded_writes);
 	ticks += 100*40000; ar_rf_poll();
-	assert(!ar_rf_prepare_config(5770000,4,search_plan,sizeof search_plan,1));
+	assert(!ar_rf_power_information()->config.valid && !ar_rf_power_information()->level[0]);
+	assert(!ar_rf_prepare_config(5770000,4,search_plan,sizeof search_plan,1,&saved_power));
+	assert(!memcmp(&ar_rf_power_information()->config,&saved_power,sizeof saved_power));
 	assert(!ar_rf_host_candidates(candidates,sizeof candidates));
 	assert(!(*reg(0x0a110480)&2));
 	/* Recovery failure cannot reuse an outstanding DMA slot or resume TX. */

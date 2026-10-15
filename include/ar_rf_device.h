@@ -3,6 +3,8 @@
 #define AR_RF_DEVICE_H
 #ifdef AR_RF_SIMULATED
 #include "ar_command.h"
+#include "ar_power_control.h"
+const struct ar_power_control *ar_rf_power_information(void);
 const struct ar_command_program *ar_rf_command_information(void);
 #endif
 #include <stddef.h>
@@ -278,8 +280,10 @@ int ar_rf_prepare_host(uint32_t frequency, uint32_t milliseconds, uint8_t identi
  * invalid in ar_rf_prepare_host and all wire diagnostic monitor operations. */
 int ar_rf_prepare_host_continuous(uint32_t frequency, uint8_t identity_hash,
 	const uint8_t *channels, size_t length);
+/* Loader preparation retains resolved calibration for power/tuning callbacks. */
+struct ar_power_config;
 int ar_rf_prepare_config(uint32_t frequency, uint8_t identity_hash,
-	const uint8_t *channels, size_t length, unsigned search);
+	const uint8_t *channels, size_t length, unsigned search, const struct ar_power_config *power);
 /* Read-only OTP identity; -2 means blank identity, permitting the JSON fallback. */
 int ar_rf_board_identity(uint8_t mac[4]);
 /* Hold RX/TX and cancel pending sync work; a new prepare is required to restart. */

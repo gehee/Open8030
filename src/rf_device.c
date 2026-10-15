@@ -15,6 +15,7 @@
 #include "ar_scan.h"
 #include "ar_scan_scores.h"
 #include "ar_tune.h"
+#include "ar_power_control.h"
 #include <string.h>
 #ifndef AR_RF_SIMULATED
 #include "ar_sdio_device.h"
@@ -69,6 +70,10 @@ static uint64_t channel_plls[AR_RF_MAX_CHANNELS];
 static struct ar_command_program command_program;
 static struct ar_command_state command_state = {.cached_bank = 3, .board_band = -1};
 static unsigned commands_ready;
+static struct ar_power_control tx_power;
+#ifdef AR_RF_SIMULATED
+const struct ar_power_control *ar_rf_power_information(void) { return &tx_power; }
+#endif
 static struct ar_rf_scan_info scan_info;
 static uint32_t scan_rows[AR_RF_MAX_CHANNELS];
 static struct ar_scan_scores scan_scores;
@@ -88,7 +93,8 @@ static struct {
 	size_t length;
 	uint32_t frequency, milliseconds;
 	uint8_t identity;
-	unsigned deferred, valid;
+	unsigned deferred, valid, has_power;
+	struct ar_power_config power;
 } host_config;
 static struct ar_rf_lifecycle_info lifecycle = {.version = 1};
 static struct ar_channel_monitor channel_monitor;
@@ -101,7 +107,8 @@ static int automatic_recovery(void) { return receive_operation == 76 && !receive
 static int start_prepared_receive(void);
 static void stop_receive(void);
 static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t identity_hash,
-	unsigned operation, const uint8_t *channels, size_t length, unsigned deferred);
+	unsigned operation, const uint8_t *channels, size_t length, unsigned deferred,
+	const struct ar_power_config *power);
 static uint8_t dev_power_index, dev_sync_ack[5];
 static struct ar_dev_tx_context dev_tx;
 static struct ar_dev_retx dev_retx;
@@ -1433,25 +1440,27 @@ int ar_rf_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t identity_ha
 int ar_rf_monitor_plan(uint32_t frequency, uint32_t milliseconds, uint8_t identity_hash,
 	unsigned operation, const uint8_t *channels, size_t length)
 {
-	return configure_monitor(frequency, milliseconds, identity_hash, operation, channels, length, 0);
+	return configure_monitor(frequency, milliseconds, identity_hash, operation, channels, length, 0, NULL);
 }
 
 static int prepare_host(uint32_t frequency, uint32_t milliseconds, uint8_t identity_hash,
-	const uint8_t *channels, size_t length, unsigned deferred)
+	const uint8_t *channels, size_t length, unsigned deferred, const struct ar_power_config *power)
 {
-	int result = configure_monitor(frequency, milliseconds, identity_hash, 76, channels, length, deferred);
+	int result = configure_monitor(frequency, milliseconds, identity_hash, 76, channels, length, deferred, power);
 	if (result) { return result; }
 	memmove(host_config.channels, channels, length);
 	host_config.length = length; host_config.frequency = frequency;
 	host_config.milliseconds = milliseconds; host_config.identity = identity_hash;
 	host_config.deferred = deferred; host_config.valid = host_initialized = 1;
+	host_config.has_power = power != NULL;
+	if (power) { host_config.power = *power; }
 	host_start_required = 0;
 	return 0;
 }
 int ar_rf_prepare_host(uint32_t frequency, uint32_t milliseconds, uint8_t identity_hash,
 	const uint8_t *channels, size_t length)
 {
-	return prepare_host(frequency, milliseconds, identity_hash, channels, length, 1);
+	return prepare_host(frequency, milliseconds, identity_hash, channels, length, 1, NULL);
 }
 
 /* Firmware-owned continuous mode is not exposed by the bounded diagnostic
@@ -1459,14 +1468,14 @@ int ar_rf_prepare_host(uint32_t frequency, uint32_t milliseconds, uint8_t identi
 int ar_rf_prepare_host_continuous(uint32_t frequency, uint8_t identity_hash,
 	const uint8_t *channels, size_t length)
 {
-	return prepare_host(frequency, 0, identity_hash, channels, length, 2);
+	return prepare_host(frequency, 0, identity_hash, channels, length, 2, NULL);
 }
 
 int ar_rf_prepare_config(uint32_t frequency, uint8_t identity_hash,
-	const uint8_t *channels, size_t length, unsigned search)
+	const uint8_t *channels, size_t length, unsigned search, const struct ar_power_config *power)
 {
-	if (search > 1) { return -22; }
-	return prepare_host(frequency, 0, identity_hash, channels, length, search ? 3 : 2);
+	if (search > 1 || !power) { return -22; }
+	return prepare_host(frequency, 0, identity_hash, channels, length, search ? 3 : 2, power);
 }
 
 int ar_rf_host_candidates(const uint8_t *data, size_t length)
@@ -1589,13 +1598,29 @@ static int build_commands(void)
 }
 
 static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t identity_hash,
-	unsigned operation, const uint8_t *channels, size_t length, unsigned deferred)
+	unsigned operation, const uint8_t *channels, size_t length, unsigned deferred,
+	const struct ar_power_config *power)
 {
 	progress(0xa000, frequency, milliseconds, operation);
 	uint64_t pll;
 	unsigned maximum_ms = deferred ? 60000 : operation >= 70 ? 15000 : operation >= 53 ? 10000 : 1500;
 	if (information.phase != AR_RF_PSRAM || !pins_configured || operation > (deferred ? 76u : 75u) || milliseconds > maximum_ms || (!milliseconds && deferred < 2) || ar_rf_pll_word(frequency, &pll)) {
 		return failure(-22);
+	}
+	struct ar_power_control prepared_power = {0};
+	if (power) {
+		/* Only the loader carries complete resolved calibration. Validate it
+		 * against the legacy DEV4 gains before any register or state change. */
+		if (operation != 76 || !channels || length < AR_RF_DEV4_PREFIX+4 ||
+			power->closed[0] != 1 || power->closed[1] != 1 ||
+			power->high_clock != 1 || power->dev_role != 1) { return -22; }
+		struct ar_power_plan initial;
+		int result = ar_power_plan(power,0,channels[28],&initial);
+		if (result) { return result; }
+		for (unsigned i = 0; i < 4; i++) {
+			if (initial.writes[i].value != channels[24+i]) { return -22; }
+		}
+		prepared_power.config = *power;
 	}
 	uint8_t fixed_channel[4], tx_gain[4] = {0};
 	const uint8_t *scan_channels = NULL; unsigned scan_count = 0;
@@ -1721,7 +1746,13 @@ static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t 
 	 * the working stock receiver; normal commands select per-user shadows. */
 	serial_word(0x4d0, UINT64_C(0x0113000000));
 	configure_receive_context(pll);
-	if (operation >= 58) {
+	tx_power = prepared_power;
+	if (power) {
+		/* Same ordered user0 writes as the plan; retain calibration and cached
+		 * level for subsequent tuning. Other users remain uninitialized. */
+		int result = ar_power_control_apply(&tx_power,0,dev_power_index,command_write,NULL);
+		if (result) { return failure(result); }
+	} else if (operation >= 58) {
 		/* 0x24528a..0x2452de, user0 with both per-path controls enabled.
 		 * The plan supplies effective calibration fields after any factory
 		 * offset/clock scaling. No proprietary gain table is embedded and
@@ -2484,7 +2515,8 @@ static int prepare_saved_host(void)
 	size_t count = dev_config.candidate_count;
 	memcpy(candidates, dev_candidates, count * 4);
 	int result = configure_monitor(host_config.frequency, host_config.milliseconds,
-		host_config.identity, 76, host_config.channels, host_config.length, host_config.deferred);
+		host_config.identity, 76, host_config.channels, host_config.length, host_config.deferred,
+		host_config.has_power ? &host_config.power : NULL);
 	if (!result) {
 		memcpy(dev_candidates, candidates, count * 4); dev_config.candidate_count = count;
 	}

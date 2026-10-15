@@ -2,12 +2,12 @@
   "baseline": "working-video",
   "target": "VRX/GND Ascent VRX; matched 18.21.10 inputs",
   "runtime": {
-    "bytes": 70424,
-    "sha256": "155a09833555e0daf33825de2e3fda2aca627b4d8635b220f63cb1bfe1219be9",
+    "bytes": 70880,
+    "sha256": "bff5242708d3404a671061d52ee617c95149cc676262c791af9462f6c82a93f7",
     "load_address": "0x204000"
   },
   "ram": {
-    "used_bytes": 674496,
+    "used_bytes": 675312,
     "capacity_bytes": 704512
   },
   "private_board_profile": {
@@ -19,20 +19,20 @@
     "sha256": "c69e46c57bbb3e5fc7fe0c5581e59fb5735dcf8a97bf0e05ae7aaa0273657768"
   },
   "container": {
-    "bytes": 88576,
-    "sha256": "3c36b42d193b6e221bba6c8bd764645d2028092da440b628034e63e1c7840d92",
+    "bytes": 89088,
+    "sha256": "7ca36a978d23f8b980057e96506cb33fc82350e7548ecc05f838a49b87ab697b",
     "payload_alignment": 512
   },
   "original_stock_sha256": "dc58247910af564376350404383c5c411cbec21663873fba24e70c61a3584e3c",
   "external_config_sha256": "5cf0cd31645d4786c6b04399c6c609386d427ffc4c6d7f6e42d81e3e770c2a74",
   "scope": "Experimental Ascent VRX 18.21.10 native video baseline; private inputs not distributed",
   "generated_container": {
-    "bytes": 88576,
-    "sha256": "3c36b42d193b6e221bba6c8bd764645d2028092da440b628034e63e1c7840d92",
+    "bytes": 89088,
+    "sha256": "7ca36a978d23f8b980057e96506cb33fc82350e7548ecc05f838a49b87ab697b",
     "payload_alignment": 512,
     "configuration": "zero-filled 16 KiB; external loader JSON required",
     "hardware_verified": true,
-    "verification_scope": "Ascent VRX 18.21.10: compared channel monitor integrated with normal mode0 RX8 loss/recovery; startup, stop/start, deinit/init/start and candidate removal/readmission; 80 seconds inspected direct HDMI-to-USB capture matching fresh stock dark scene, 92 linked/AP-time samples and zero sampled socket drops. Calibration remained stable and each session exercised MCS transport. Physical peer silence, channel completion/hopping, other modes and full protocol parity remain open",
+    "verification_scope": "Ascent VRX 18.21.10: retained loader calibration and compared initial user0 power application; startup, stop/start, deinit/init/start and candidate removal/readmission; 80 seconds inspected direct HDMI-to-USB capture matching fresh stock dark scene, 92 linked/AP-time samples and zero sampled socket drops. Calibration and user0 power fields remained stable; each session exercised MCS transport. Native user0 gain fields match earlier accepted firmware but differ from stock; host power policy, dynamic tuning, physical peer silence and full protocol parity remain open",
     "verified_utc_date": "2026-10-15"
   }
 }

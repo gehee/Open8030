@@ -71,12 +71,15 @@ int ar_factory_device_read(const struct ar_flash_part *parts, size_t count,
 	if (loader_scenario==26 || loader_scenario==30) { record[4]=1; record[6]=255; }
 	return 0;
 }
-int ar_rf_prepare_config(uint32_t f, uint8_t id, const uint8_t *p, size_t n, unsigned search)
+int ar_rf_prepare_config(uint32_t f, uint8_t id, const uint8_t *p, size_t n, unsigned search, const struct ar_power_config *power)
 {
 	assert(f == 4915000 && n == 280 && search == 1);
 	assert(id == (loader_scenario == 16 ? (0x12^0x34^0x56^0x78) : 5));
 	assert(!memcmp(p, "DEV4", 4) && p[28] == 25 && p[29] == 7);
-	assert(factory_calls==1);
+	assert(factory_calls==1 && power && power->closed[0] && power->closed[1] && power->high_clock && power->dev_role);
+	struct ar_power_plan initial;
+	assert(!ar_power_plan(power,0,p[28],&initial));
+	for (unsigned i = 0; i < 4; i++) { assert(initial.writes[i].value == p[24+i]); }
 	const uint8_t *expected = (loader_scenario==30 || loader_scenario==31 || loader_scenario==33) ?
 		(uint8_t[]){33,34,19,20} : (uint8_t[]){17,74,18,75};
 	assert(!memcmp(p+24,expected,4));

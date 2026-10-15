@@ -1196,8 +1196,9 @@ not establish those runtime capabilities.
 
 [The power-control helpers](../src/power_control.c) implement the per-user
 calibration application and band-offset field writes called by the original
-TX tuner. They are compared offline and are not linked into the runtime yet.
-The existing pure calibration planner supplies the ordered field writes.
+TX tuner. The initial comparison was offline; initial loader user-0 application
+is now integrated as described below. Dynamic tuning and band-offset callbacks
+remain pending. The existing pure calibration planner supplies ordered writes.
 
 Power application preserves an original cache alias: the shared current-level
 byte is also user 0's cached level. Open-loop field writes occur first, then
@@ -1226,8 +1227,8 @@ Fresh execution of the matched original instructions passes **50,772 power
 cases and 12,288 band-offset cases**, including every byte-sized power request
 for all 12 users, four closed/open combinations, both clock choices and both
 roles. Of the power cases, 7,572 apply valid levels and 43,200 reject invalid
-byte-sized levels. Additional cases exercise signed offset extremes, calibration clamps and
-CSMA reduction boundaries. Band comparison covers every signed byte offset for
+byte-sized levels. Additional cases exercise signed offset extremes, calibration
+clamps and CSMA reduction boundaries. Band comparison covers every signed byte offset for
 all users and closed/open combinations. It checks 24,336 power field writes and
 1,144 band field writes, their order, cached state at each write, final state and
 collateral memory preservation. The power and power-control sanitizer suites
@@ -1242,16 +1243,67 @@ synthetic; native state structures are independent of the recovered memory layou
 No emitted-power measurement, valid factory-record comparison, dynamic host
 setter, channel-switch integration or low-power acquisition fix is established.
 
-The rebuilt firmware remains byte-for-byte identical to the retained stage-187
-image. A fresh 30-second direct `/dev/video0` HDMI-to-USB capture shows the same
-dark textured camera scene and camera OSD; all 33 samples remain linked with
-advancing AP time and zero sampled socket drops. Boot identity and image,
-configuration, backend and daemon hashes remain matched. This is a regression
-check of the existing firmware, not hardware validation of these new helpers.
-No new stock capture or lifecycle transition was performed in this iteration.
+In that source-only iteration, the rebuilt firmware remained byte-for-byte
+identical to the retained stage-187 image. A 30-second direct `/dev/video0`
+HDMI-to-USB capture showed the same dark textured camera scene and camera OSD;
+all 33 samples remained linked with advancing AP time and zero sampled socket
+drops. Boot identity and image, configuration, backend and daemon hashes matched.
+That regression check did not validate the new helpers on hardware. No new stock
+capture or lifecycle transition was performed in that source-only iteration.
 
-Next, extend the core inventory through the transport dispatchers and indirect
-callbacks, and bind each command's behavior to its comparison tests. Then cover
+### Runtime calibration and initial power application
+
+The normal loader now passes resolved calibration into the RF runtime, including
+available rows, path offsets, clock/role settings and CSMA adjustment. Initial
+user-0 power is applied through the compared power-control helper, replacing the
+four direct gain-field writes at the same point in receiver preparation. The
+runtime retains its own calibration copy and the cached user-0 level. Other
+users' cached levels remain uninitialized; they are not inferred from register
+values or copied from user 0.
+
+Before RF writes, the runtime checks that the supplied calibration is valid for
+the requested initial level, uses the supported DEV/high-clock/closed-loop
+profile, and reproduces the DEV4 plan's four gain values. Missing rows, absent
+calibration or disagreement with the plan reject preparation. Saved host
+configuration retains its own calibration copy for stop/start, deinit/init and
+candidate/loss recovery. Bounded diagnostic plans carry only precomputed gains;
+they clear the current power context and cannot inherit calibration accidentally.
+A later normal preparation restores calibration from saved configuration.
+
+Boot and RF integration tests verify the handoff, caller-storage independence,
+initial register fields, rejection without RF writes, lifecycle/recovery
+retention and diagnostic isolation. These pass alongside the power planner and
+power-control sanitizer suites. Replay of the recorded original power traces
+still matches all 63,060 cases; this integration does not execute a new original
+oracle run. It establishes initial application only. Dynamic host setters,
+channel-tuning callbacks, other users' initialization, band-offset effects and
+the low-power acquisition failure remain open.
+
+The connected-state gain comparison exposes an existing policy gap. Stock user 0
+has gain/amplitude pairs `(34,39)` on both paths, matching calibration row 14.
+Open8030 has `(23,78)` and `(22,78)`, matching its configured initial row 25.
+The backend audit records request `0x02000008` with payload `00 0e` (user 0,
+level 14), which remains unsupported. This is consistent with the missing host
+setter leaving Open8030 at its startup level; implementing and testing the full
+setter/policy path is required to establish the cause and close parity. A
+hash-verified accepted stage-167 register capture has the same native values,
+so this difference predates the new power-helper integration. These register
+values are not calibrated emitted-power measurements.
+
+Hardware startup, stop/start, stop/deinit/init/start and candidate
+removal/readmission captures total 80 seconds, with 92 linked/AP-time samples
+and zero sampled socket drops. Inspected frames preserve the dark textured
+camera scene and OSD from a fresh 10-second stock reference captured directly
+through `/dev/video0` and the HDMI-to-USB adapter. Calibration compensation and
+native user-0 gain fields remain stable through all transitions; each session
+records six MCS requests/acknowledgements, five advertisements/cancellations and
+25 control-register writes without reset errors. The candidate is retained in
+RAM. Host-driven candidate recovery does not establish physical peer-loss
+parity; controlled video freshness, latency and RF power remain unmeasured.
+
+Next, close the observed host power-setter gap and integrate the remaining
+channel-tuning callbacks. Extend the core inventory through transport dispatchers
+and indirect callbacks, binding each contract to its comparison tests. Then cover
 radio messages, timers and state transitions in the same way. Dynamic power still
 needs a separately isolated acquisition fix. Neither a large synthetic test count
 nor a visible scene can close the remaining matrix by itself.

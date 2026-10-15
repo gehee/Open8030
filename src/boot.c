@@ -93,7 +93,7 @@ static int initialize(const struct ar_boot_profile *profile, unsigned loader)
 	boot.stage = AR_BOOT_PSRAM;
 	if ((result = ar_rf_setup_psram())) { goto fail; }
 	boot.stage = AR_BOOT_PREPARE;
-	result = loader ? ar_rf_prepare_config(le32(plan), plan[8], plan + 16, plan_length - 16, configured.search) :
+	result = loader ? ar_rf_prepare_config(le32(plan), plan[8], plan + 16, plan_length - 16, configured.search, &configured.power) :
 		boot.rf_bound_ms ? ar_rf_prepare_host(le32(plan), boot.rf_bound_ms, plan[8], plan + 16, plan_length - 16) :
 		ar_rf_prepare_host_continuous(le32(plan), plan[8], plan + 16, plan_length - 16);
 	if (result) { goto fail; }

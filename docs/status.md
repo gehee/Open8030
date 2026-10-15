@@ -285,14 +285,40 @@ Power application and band-offset helpers now match 63,060 fresh original
 instruction cases, including per-write cache state and effect order. The power
 cache has an original alias: applying another user also updates user 0's cached
 level, without implying a second hardware power change. Both sanitizer suites
-pass. These helpers remain outside the runtime; channel-tuning callbacks,
+pass. That initial comparison kept the helpers outside the runtime; channel-tuning callbacks,
 dynamic host policy and physical power validation remain open. See
 [tuning power callbacks](parity.md#tuning-power-callbacks).
 
-The rebuild matches the retained stage-187 image byte-for-byte. A fresh
+That source-only rebuild matches the retained stage-187 image byte-for-byte. A fresh
 30-second HDMI-to-USB capture preserves the camera scene, with 33 linked/AP-time
 samples and zero sampled socket drops. The new helpers have no hardware
 validation yet; no new stock capture or lifecycle test was performed.
+
+Initial loader user-0 power now uses the compared helper. Resolved calibration
+is copied into the RF runtime and saved host configuration, validated against
+the initial gain plan, and restored through lifecycle/recovery preparation.
+Bounded diagnostic plans clear the current calibration context. Four sanitizer
+suites pass, including calibration ownership, rejection without RF writes and
+retention checks; all 63,060 original power trace comparisons still match.
+Dynamic tuning, host setters and other users' initialization remain open. See
+[runtime power integration](parity.md#runtime-calibration-and-initial-power-application).
+
+A connected-state power difference from stock remains: the backend requests
+user-0 level 14 through an unsupported setter, while Open8030 keeps its configured
+level-25 gain fields. Earlier accepted-image register evidence has the same
+native values. The new integration preserves that baseline; it does not close
+host power-policy parity.
+
+Hardware startup, stop/start, stop/deinit/init/start and candidate
+removal/readmission captures total 80 seconds, with 92 linked/AP-time samples
+and zero sampled socket drops. Inspected frames preserve the dark textured
+camera scene and OSD from a fresh 10-second stock reference captured directly
+through `/dev/video0` and the HDMI-to-USB adapter. Calibration compensation and
+native user-0 gain fields remain stable through all transitions; each session
+records six MCS requests/acknowledgements, five advertisements/cancellations and
+25 control-register writes without reset errors. The candidate is retained in
+RAM. Host-driven candidate recovery does not establish physical peer-loss
+parity; controlled video freshness, latency and RF power remain unmeasured.
 
 A separate configuration-only test reproduced acquisition failure at initial
 power level 11 using the accepted AP-time image. No video was delivered;
