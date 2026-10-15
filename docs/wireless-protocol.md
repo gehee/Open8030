@@ -433,10 +433,10 @@ selects the peer. It saves the identity in its Linux-side JSON configuration.
 The radio command does not itself persist that file or establish encryption-key
 exchange.
 
-A physical receiver-button trace on the accepted stage-232 firmware reached
+A physical receiver-button trace on the earlier stage-232 firmware reached
 the Linux binding worker and sent `0x02000002` once, with enable and mask both 1.
 The backend stopped at its pairing-enable error path because that image did not
-implement the command. The current development implementation adds the three
+implement the command. The implementation adds the three
 missing commands, the report flag, pairing identity selection and result
 publication for DEV mode 0/slot 0. The stage-233 hardware trial completed physical
 button binding through the original host worker. The selected peer appeared in
@@ -452,12 +452,17 @@ restoring the configured-peer filter can strand a receiver whose active peer cam
 from that list. The stage-234 cancellation fix reacquires on hardware in about one
 second, and repeated disable leaves the recovered link intact.
 
-Final-revision button binding and video acceptance remain open: captures show
-video socket drops and image corruption, in addition to the previously observed
+Physical button binding also passes on the final stage-234 revision: the stock
+host reports success, selects the peer and clears pairing mode; the active radio
+peer matches the saved host selection. A post-binding HDMI-to-USB capture shows
+the camera scene with all 33 status samples linked. Rebooting the receiver and
+reloading the same image reconnects to the bound peer with unchanged saved host
+configuration. Video socket drops and
+intermittent image corruption remain, alongside the previously observed
 warm-load black-camera symptom. A fresh-boot control run with the exact accepted
 stage-232 image also reproduces socket drops, so that symptom is not specific to
-binding. This is not yet an accepted hardware baseline or
-support for AP, other frame modes or nonzero connected slots.
+binding. This evidence does not establish support for AP, other frame modes or
+nonzero connected slots.
 
 Sources: [binding.c](../src/binding.c), [dev.c](../src/dev.c),
 [dev_tx.c](../src/dev_tx.c), [rf_device.c](../src/rf_device.c), and

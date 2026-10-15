@@ -5,9 +5,11 @@ Hardware validation currently covers only the Ascent VRX with matched 18.21.10
 board inputs. Other AR8030 receiver variants and transmitter/AP operation remain
 unverified; the supplied loading helpers target the tested Ascent VRX configuration.
 
-## Binding development trial
+## Button binding
 
-The development worktree adds DEV mode-0/slot-0 binding commands and radio
+The stage-234 image is the current experimental baseline.
+
+Open8030 implements DEV mode-0/slot-0 binding commands and radio
 transitions. The stage-233 trial completed physical button binding through the
 original Linux backend: the host reported success, selected the discovered peer,
 and retained that identity in its saved configuration. A receiver reboot followed
@@ -17,14 +19,21 @@ peripheral tests, not a separate unpaired hardware set.
 
 The stage-234 revision fixes cancellation of unfinished pairing. Hardware checks
 show reconnection in approximately one second, an empty pairing result after
-cancellation and a stable link after repeating disable. All 66 native sanitizer
-suites and 18 Python tests passed before that fix; the affected RF suite was
-rerun and passes afterward. Physical button binding on this final revision is
-still pending.
+cancellation and a stable link after repeating disable. Physical button binding
+also passes on this final revision: the original host worker reports success,
+selects the discovered peer, and leaves pairing mode. The configured and active
+peer match the identity in the saved host list. A 30-second HDMI-to-USB capture
+after binding shows the camera scene; all 33 sampled status responses are linked.
+All 66 native sanitizer suites and 18 Python tests pass on this revision. A full
+receiver reboot and reload of the same image reconnects to the bound transmitter
+with the saved host configuration unchanged. The subsequent 20-second capture
+shows the camera scene with all 23 status samples linked; the image is retained
+in receiver RAM.
 
-This trial is **not the accepted baseline**. HDMI-to-USB captures show a visible
-camera scene after a fresh receiver boot, but also video socket drops and image
-corruption. Drops occur in the preceding stage-233 fresh-start capture as well as
+Binding does not resolve the existing video transport limitations. HDMI-to-USB
+captures show a visible camera scene, but also video socket drops and intermittent
+image corruption. The post-binding capture records 299,118 dropped video socket
+bytes over 32 seconds. Drops occur in the preceding stage-233 fresh-start capture as well as
 after stage-234 cancellation. A fresh-boot comparison with the exact accepted
 stage-232 image also drops 199,212 video socket bytes over 29 seconds, versus
 463,799 bytes in a 29-second post-cancellation stage-234 sample. Binding changes
