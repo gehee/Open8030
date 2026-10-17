@@ -43,6 +43,23 @@ int main(void)
 	assert(m.rows[1].mcs==2 && m.rows[1].snr_down==60 && m.rows[1].up_ms==902);
 	assert(!memcmp(c.plan+184,keys,100));
 	ar_config_identity(&c,(uint8_t[]){1,2,3,5}); assert(c.plan[8]==5 && !memcmp(c.plan+20,(uint8_t[]){1,2,3,5},4));
+	/* Open8030: dist_calc.offset (raw units, default 20) rides in the MCS
+	 * block's byte 12 next to the enable in byte 10; MCS rows reach 13. */
+	assert(m.distance_enabled == 1 && m.distance_offset == 20);
+	{
+		const char *before = "\"dist_calc\":{\"enable\":true}";
+		char text[sizeof config_fixture + 64]; const char *at = strstr(config_fixture, before); assert(at);
+		size_t prefix = at - config_fixture; memcpy(text, config_fixture, prefix);
+		const char *after = "\"dist_calc\":{\"enable\":true,\"offset\":59}";
+		strcpy(text + prefix, after); strcpy(text + prefix + strlen(after), at + strlen(before));
+		struct ar_config o; struct ar_dev_mcs_config om;
+		assert(!ar_config_parse(&o, text, strlen(text), keys, sizeof keys));
+		assert(!ar_dev_mcs_decode_config(&om, o.plan + 48, 136) && om.distance_offset == 59);
+	}
+	changed("\"dist_calc\":{\"enable\":true}", "\"dist_calc\":{\"enable\":true,\"offset\":100}", 0);
+	changed("\"dist_calc\":{\"enable\":true}", "\"dist_calc\":{\"enable\":true,\"offset\":101}", -22);
+	changed("\"dist_calc\":{\"enable\":true}", "\"dist_calc\":{\"enable\":true,\"offset\":-1}", -22);
+	changed("\"mcs\":0", "\"mcs\":13", 0);
 	changed("\"init_chan\":-1", "\"init_chan\":2", 0);
 	changed("\"init_chan\":-1", "\"init_chan\":3", -22);
 	changed("5220000", "4915000", -22);
@@ -54,7 +71,7 @@ int main(void)
 	changed("\"4A,\"", "\"4A,garbage\"", -22);
 	/* A malformed unused row cannot become a future unchecked power setting. */
 	changed("\"25dbm\":", "\"14dbm\":[\"40\",\"10\",\"10\",\"10\"],\"25dbm\":", -22);
-	changed("\"mcs\":0", "\"mcs\":11", -95);
+	changed("\"mcs\":0", "\"mcs\":14", -95);
 	changed("\"tintlv_len\":12", "\"tintlv_len\":24", -95);
 	changed("\"payload\":true", "\"payload\":false", -95);
 	changed("\"tx_mode\":\"2TX\"", "\"tx_mode\":\"1TX\"", -95);

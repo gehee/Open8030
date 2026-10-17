@@ -248,6 +248,8 @@ static void deferred_close(void)
 	}
 	assert(ar_socket_rx_peek(&sockets, scratch, sizeof scratch, &response));
 	assert(response.reqid == 0x04020000 && response.length == 3);
+	/* ar_libre delivers a pushed data frame only with stock's SOCK_DATA_STA. */
+	assert(response.status == 0x12345678);
 	ar_socket_close_service(&sockets);
 	for (unsigned port = 1; port < 4; port++) {
 		assert(ar_socket_close_peek(&sockets, &response));
@@ -273,7 +275,7 @@ int main(void)
 	assert(ar_socket_rx_feed(&sockets, 0, 4, input, 6) == 6);
 	struct ar_frame frame, retry;
 	assert(ar_socket_rx_peek(&sockets, scratch, 4, &frame));
-	assert(frame.reqid == 0x04020003 && frame.msgid == 0x1234 && frame.length == 4 && !frame.status);
+	assert(frame.reqid == 0x04020003 && frame.msgid == 0x1234 && frame.length == 4 && frame.status == 0x12345678);
 	assert(!memcmp(frame.payload, input, 4));
 	/* SDIO rejection keeps the same bytes and does not advance ownership. */
 	assert(ar_socket_rx_peek(&sockets, scratch, 4, &retry));

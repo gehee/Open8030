@@ -5,6 +5,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+void ar_main_loop_statistics(uint32_t out[6]) { for (unsigned i = 0; i < 6; i++) { out[i] = 0; } }
 
 static struct { uint32_t address, value; } registers[1024];
 static unsigned used, writes;
@@ -27,9 +28,18 @@ static size_t forwarded_length;
 static uint8_t forwarded[256];
 static unsigned event_count, event_ids[32];
 static uint8_t event_data[32][4];
+static unsigned last_event_id = 255, channel_events, bandwidth_events;
+static uint8_t last_event[4], channel_event[4], bandwidth_event[4];
 static void receive_event(unsigned id, const uint8_t *data, size_t length, void *context)
 {
-	assert(context == event_data && id < 2 && length == (id ? 4u : 3u) && event_count < 32);
+	/* Link (0, 3 bytes) and MCS (1); Open8030 also publishes channel (2) and
+	 * bandwidth (12) changes, 4 bytes each. */
+	assert(context == event_data && (id < 2 || id == 2 || id == 12) && length == (id ? 4u : 3u));
+	last_event_id = id; memset(last_event, 0, 4); memcpy(last_event, data, length);
+	if (id == 2) { channel_events++; memcpy(channel_event, data, 4); }
+	if (id == 12) { bandwidth_events++; memcpy(bandwidth_event, data, 4); }
+	if (id >= 2) { return; }
+	assert(event_count < 32);
 	event_ids[event_count] = id;
 	memcpy(event_data[event_count++], data, length);
 }
@@ -153,7 +163,9 @@ static void assert_channel_plls(uint32_t frequency)
 		uint32_t profile = *reg(0x0a110000 + (i == 2 ? 0xb00 : 0x9a0 + users[i] * 8));
 		assert((commands->entries[i].bits >> 10 & 7) == (i == 2 ? profile & 7 : profile >> 8 & 7));
 	}
-	uint64_t expected; assert(!ar_rf_pll_word(frequency, &expected));
+	/* Stock layout: the broadcast receive bank (0x905) and the uplink bank
+	 * (0x910) tune; 0x90a is the scan's; the rest park at 2100 MHz. */
+	uint64_t expected, parked; assert(!ar_rf_pll_word(frequency, &expected) && !ar_rf_pll_word(2100000, &parked));
 	const unsigned offsets[] = {0x900,0x905,0x90a,0x910,0x915,0x91a,0x920,0x925,
 		0x92a,0x930,0x935,0x93a,0x940,0x945,0x94a,0x950,0x955,0x95a,0x960,0x965,0x96a};
 	for (unsigned i = 0; i < sizeof offsets / sizeof offsets[0]; i++) {
@@ -165,7 +177,7 @@ static void assert_channel_plls(uint32_t frequency)
 		if (offsets[i] == 0x90a) {
 			uint64_t scan_pll; assert(!ar_rf_pll_word(ar_rf_scan_information()->frequency_khz,&scan_pll));
 			assert(actual == scan_pll);
-		} else { assert(actual == expected); }
+		} else { assert(actual == (offsets[i] == 0x905 || offsets[i] == 0x910 ? expected : parked)); }
 	}
 }
 static void receive_sync(uint8_t control[7], unsigned seal)
@@ -179,6 +191,184 @@ static void receive_sync(uint8_t control[7], unsigned seal)
 	}
 	for (unsigned i = 0; i < 3; i++) { *reg(0x0a110f04 + 4 * i) = words[i]; }
 	*reg(0x0a110f00) = 0x1096; *reg(0xe0801168) |= 1; ar_rf_poll();
+}
+
+
+/* ---- Host features on a linked DEV session ------------------------------ */
+uint32_t ar_rf_test_link_rate(unsigned index, unsigned width, uint32_t frame_us);
+static void irq(unsigned source)
+{
+	*reg(0xe0801000u + (source + (source < 4 ? 72 : 76)) * 4) |= 1; ar_rf_poll();
+}
+static void frame_header(void) { *reg(0x0a110f00) = 0x1096; irq(14); }
+/* One uplink frame: preencode (19), then user 0's interleaver event (18),
+ * which runs the PHY control slot's countdown. */
+static void uplink_frame(void)
+{
+	ticks += 6 * 40000ull; *reg(0x0a110f70) = 0; irq(19);
+	*reg(0x0a110f68) = 0; irq(18);
+}
+/* A PHY command from the AP: [checksum, ttl<<4|command, len<<1|ttl>>4, payload]. */
+static void ap_command(unsigned command, unsigned ttl, const uint8_t *payload, unsigned length)
+{
+	uint8_t control[7] = {0, (uint8_t)((ttl & 15) << 4 | command), (uint8_t)(length << 1 | ttl >> 4)};
+	memcpy(control + 3, payload, length);
+	receive_sync(control, 1);
+}
+/* A ranging result at entry index (IRQ 6): 24 bits packed at 0xfd0/0xfdc. */
+static void ranging(unsigned index, uint32_t entry)
+{
+	uint32_t base = index < 4 ? 0xfd0 : 0xfdc, at = base + 3 * (index & 3);
+	for (unsigned b = 0; b < 3; b++) {
+		uint32_t a = at + b, shift = (a & 3) * 8;
+		uint32_t *w = reg(0x0a110000 + (a & ~3u));
+		*w = (*w & ~(255u << shift)) | ((entry >> (8 * b)) & 255) << shift;
+	}
+	*reg(0x0a110fe8) = index; irq(6);
+}
+static int32_t distance_of(unsigned slots, unsigned slot)
+{
+	uint8_t in[1] = {(uint8_t)slots}, out[32];
+	assert(!ar_rf_host_distance(in, 1, out));
+	int32_t v = 0; memcpy(&v, out + slot * 4, 4);
+	return v;
+}
+static void open8030_linked_tests(void)
+{
+	const struct ar_rf_rx_info *rx = ar_rf_receive_information();
+	assert(rx->dev_state == 2 && rx->assigned_slot == 0);
+	ar_rf_set_event_callback(receive_event, event_data);   /* off in this part of main() */
+
+	/* GET 5: (raw - offset) x 1.5 m, offset 0 in this plan; DEV slot 0 only. */
+	uint8_t in[2] = {0}, out[32];
+	assert(ar_rf_host_distance(NULL, 1, out) == -22 && ar_rf_host_distance(in, 0, out) == -22);
+	assert(distance_of(1, 0) == -1);                 /* no sample yet */
+	ranging(0, 66); assert(distance_of(1, 0) == 99);
+	ranging(5, 70); assert(distance_of(1, 0) == 105); /* any index lands in slot 0 */
+	assert(distance_of(3, 1) == -1 && distance_of(1, 1) == 0); /* slot 1: -1 when asked, untouched if not */
+	ranging(0, 80 | 1u << 20); ranging(0, 80 | 1u << 22); ranging(0, 80 | 1u << 23);
+	assert(distance_of(1, 0) == 105);                /* invalid flags dropped */
+	ranging(0, 1u << 19 | 5); assert(distance_of(1, 0) == 0);   /* below zero: 0 m */
+	ranging(0, 60); ranging(0, 900);                 /* a jump over 500 is an outlier */
+	assert(distance_of(1, 0) == 90);
+	for (unsigned i = 0; i < 8; i++) { ranging(0, 900); }
+	assert(distance_of(1, 0) == 90);
+	ranging(0, 900); assert(distance_of(1, 0) == 1350);   /* the tenth in a row is taken */
+	ticks += 1100 * 40000ull; assert(distance_of(1, 0) == -1); /* stale after 1 s */
+
+	/* GET 10: the configured channels and the link's; SET 5 / SET 35. */
+	uint8_t info[1028];
+	assert(!ar_rf_host_channel_info(info));
+	assert(info[0] == rx->channel_count && info[3] == rx->channel_index);
+	for (unsigned i = 0; i < rx->channel_count; i++) {
+		uint32_t f; memcpy(&f, info + 4 + 4 * i, 4); assert(f == rx->channels[i].frequency_khz);
+	}
+	uint8_t automatic[1] = {0};
+	assert(!ar_rf_host_channel_set(5, automatic, 1));
+	assert(!ar_rf_host_channel_info(info) && info[1] == 0);
+	automatic[0] = 1; assert(!ar_rf_host_channel_set(5, automatic, 1));
+	assert(ar_rf_host_channel_set(5, automatic, 0) == -22);
+	uint8_t work[3] = {2, 0, 1};
+	assert(!ar_rf_host_channel_set(35, work, 3));
+	work[2] = (uint8_t)rx->channel_count; assert(ar_rf_host_channel_set(35, work, 3) == -22);
+	work[0] = 129; assert(ar_rf_host_channel_set(35, work, 3) == -22);
+	work[0] = 2; assert(ar_rf_host_channel_set(35, work, 2) == -22);
+	assert(ar_rf_host_channel_set(99, work, 3) == -95);
+
+	/* SET 6: a hop from the host - command 4 through the PHY control slot,
+	 * TTL 16, both ends retune when it expires (event 2). */
+	uint8_t hop[2] = {0, (uint8_t)rx->channel_count};
+	assert(ar_rf_host_channel_set(6, hop, 2) == -6);
+	hop[1] = (uint8_t)rx->channel_index; assert(!ar_rf_host_channel_set(6, hop, 2)); /* already there */
+	unsigned from = rx->channel_index, to = from ? 0 : 1;
+	hop[1] = (uint8_t)to;
+	assert(!ar_rf_host_channel_set(6, hop, 2));
+	assert(ar_rf_host_channel_set(6, hop, 2) == -16);   /* one at a time */
+	for (unsigned f = 0; f < 40 && rx->channel_index != to; f++) { uplink_frame(); }
+	assert(rx->channel_index == to && channel_events && channel_event[2] == to && channel_event[3] == from);
+	assert(rx->dev_state == 2);
+
+	/* AP command 4: the AP moves the link (index in bytes 1..2). */
+	uint8_t move[3] = {0xc0, (uint8_t)from, 0};
+	ap_command(4, 1, move, 3);
+	assert(rx->channel_index == from && channel_event[2] == from && rx->dev_state == 2);
+
+	/* AP command 5: the AP changes the broadcast width (code in bits 7:5). */
+	uint8_t width[3] = {0, 4 << 5, 0};
+	ap_command(5, 1, width, 3);
+	assert(((*reg(0x0a1109e0) >> 8) & 7) == 4 && bandwidth_events && bandwidth_event[2] == 4);
+
+	/* Frame mode: SET 16 validates, a mode-2 request goes out as command 8
+	 * and is applied at the frame header after it expires: the uplink slot
+	 * 2234 -> 1251 us (0xa00), interleave 2 -> 1 (0xb00 [20:18]). */
+	uint8_t mode[1] = {1};
+	assert(ar_rf_host_frame_mode(NULL, 1) == -22 && ar_rf_host_frame_mode(mode, 0) == -22);
+	assert(ar_rf_host_frame_mode(mode, 1) == -95);
+	mode[0] = 0; assert(!ar_rf_host_frame_mode(mode, 1));          /* already standard */
+	assert((*reg(0x0a110a00) & 0xffff) == 0x0da3);
+	mode[0] = 2; assert(!ar_rf_host_frame_mode(mode, 1));
+	for (unsigned f = 0; f < 20 && (*reg(0x0a110a00) & 0xffff) != 0x07a3; f++) {
+		uplink_frame(); frame_header();
+	}
+	assert((*reg(0x0a110a00) & 0xffff) == 0x07a3 && ((*reg(0x0a110b00) >> 18) & 7) == 1);
+	assert(!(*reg(0x0a110800) & 4));                 /* engines re-armed, not left held */
+	/* AP command 8 back to the standard frame: applied at the next header. */
+	uint8_t standard[4] = {0};
+	ap_command(8, 1, standard, 4); frame_header();
+	assert((*reg(0x0a110a00) & 0xffff) == 0x0da3 && ((*reg(0x0a110b00) >> 18) & 7) == 2);
+
+	/* SET 22: the receiver's bandwidth target (dir RX = 1, code <= 5). */
+	uint8_t bw[3] = {0, 1, 4};
+	assert(ar_rf_host_bandwidth(NULL, 3) == -22 && ar_rf_host_bandwidth(bw, 2) == -22);
+	assert(!ar_rf_host_bandwidth(bw, 3));
+	bw[1] = 0; assert(ar_rf_host_bandwidth(bw, 3) == -95);
+	bw[1] = 1; bw[2] = 6; assert(ar_rf_host_bandwidth(bw, 3) == -95);
+
+	/* SET 0x26: the retransmission mask, 8 bytes. */
+	uint8_t retx[8] = {3};
+	assert(ar_rf_host_retx_config(retx, 7) == -22 && !ar_rf_host_retx_config(retx, 8));
+
+	/* SET 36: one MCS policy row by internal index; unknown index answers 6. */
+	uint8_t row[16] = {0};
+	assert(ar_rf_host_mcs_row(NULL) == -22);
+	row[4] = 200; assert(ar_rf_host_mcs_row(row) == 6);
+	row[4] = 1; row[6] = 0x34; row[7] = 0x12; assert(!ar_rf_host_mcs_row(row));
+
+	/* Power: GET 7 closed-loop flags, SET/GET 8 a user's level, SET/GET 9
+	 * automatic range; unknown requests -95. */
+	uint8_t pin[3] = {0}, pout[8]; size_t plen = 9;
+	assert(ar_rf_host_power(0x01000007, pin, 0, pout, &plen) == 0 && plen == 1);
+	pin[0] = 0; assert(ar_rf_host_power(0x01000008, pin, 1, pout, &plen) == 0 && plen == 2 && pout[0] == 0);
+	pin[0] = 200; assert(ar_rf_host_power(0x02000008, pin, 2, pout, &plen) == -22);
+	assert(ar_rf_host_power(0x02000008, pin, 1, pout, &plen) == -22);
+	uint8_t range[3] = {1, 20, 30};                     /* max below min */
+	assert(ar_rf_host_power(0x02000009, range, 3, pout, &plen) == -22);
+	range[0] = 2; assert(ar_rf_host_power(0x02000009, range, 3, pout, &plen) == -22);
+	range[0] = 0; range[1] = 30; range[2] = 10;
+	assert(!ar_rf_host_power(0x02000009, range, 3, pout, &plen));
+	assert(!ar_rf_host_power(0x01000009, pin, 0, pout, &plen) && plen == 3 && !memcmp(pout, range, 3));
+	assert(ar_rf_host_power(0x01000099, pin, 0, pout, &plen) == -95 && plen == 0);
+
+	/* GET 6: MCS and stock's link-rate model. */
+	uint8_t mcs_in[2] = {2, 0}, mcs_out[8];
+	assert(ar_rf_host_mcs(NULL, 2, mcs_out) == -22 && ar_rf_host_mcs(mcs_in, 2, mcs_out) == -22);
+	mcs_in[0] = 1; mcs_in[1] = 1; assert(ar_rf_host_mcs(mcs_in, 2, mcs_out) == -6);
+	mcs_in[1] = 0; assert(!ar_rf_host_mcs(mcs_in, 2, mcs_out));
+	assert(ar_rf_test_link_rate(12, 4, 5634) == 25934 || ar_rf_test_link_rate(12, 4, 5634) == 25933);
+	uint32_t mcs11 = ar_rf_test_link_rate(13, 4, 4651);
+	assert(mcs11 > 35100 && mcs11 < 35800);              /* stock: 35.52 Mbps */
+	uint32_t at5 = ar_rf_test_link_rate(12, 2, 5634);   /* 5 MHz: stock about 6483 */
+	assert(at5 >= 6400 && at5 <= 6500);
+	assert(!ar_rf_test_link_rate(16, 4, 5634) && !ar_rf_test_link_rate(12, 1, 5634) && !ar_rf_test_link_rate(12, 4, 0));
+	assert(ar_rf_test_link_rate(12, 5, 5634) == ar_rf_test_link_rate(12, 4, 5634));   /* 40 codes as 20, as stock */
+
+	/* GET 107: link quality over the last frames (or -1 with none fresh). */
+	uint8_t link_out[216];
+	assert(ar_rf_host_link_info(NULL, 1, link_out) == -22);
+	int link = ar_rf_host_link_info(mcs_in, 1, link_out);
+	assert(link == 0 || link == -1);
+	if (!link) { assert(link_out[9] == rx->channel_index && link_out[16] == 4); }
+	ar_rf_set_event_callback(NULL, NULL);
 }
 
 int main(void)
@@ -269,7 +459,7 @@ int main(void)
 	assert(ar_rf_read_registers(0xcd0, 4, readback) == 0);
 	assert(readback[0] == (*reg(0x0a110cd0) & 255) && readback[4] == 0x5a);
 	assert(ar_rf_read_registers(0xcd1, 4, readback) == -22);
-	assert(ar_rf_read_registers(0xdfc, 8, readback) == -22);
+	assert(ar_rf_read_registers(0xffc, 8, readback) == -22);
 	assert(ar_rf_read_registers(0, 260, readback) == -22);
 	assert(ar_rf_read_registers(0, 0, readback) == -22);
 	assert(ar_rf_read_registers(0, 4, NULL) == -22);
@@ -291,17 +481,19 @@ int main(void)
 	assert(ar_rf_receive_information()->before_release_header == 0x1080);
 	assert(ar_rf_receive_information()->fch_locked == 0); /* Baselines never count as events. */
 	assert(ar_rf_information()->phase == AR_RF_RECEIVING);
-	assert(ar_rf_read_registers(0, 4, readback) == -22);
+	assert(ar_rf_read_registers(0, 4, readback) == 0); /* Readable while receiving (linked dumps). */
 	assert((*reg(0x0a110800) & 0x80000) != 0 && (*reg(0x0a110a60) & 16) == 0);
 	assert((*reg(0x0a1109e0) & 0xffe7) == 0xc4a5);
 	/* Slot-0 RX starts at byte 0x93a; slot-1 starts at 0x940. A uniform
 	 * five-byte stride or ignoring the field shift tunes the wrong words. */
-	assert((*reg(0x0a110938) & 0xffff0000) == 0x20010000);
-	assert((*reg(0x0a11093c) & 0x00ffffff) == 0x80);
-	assert(*reg(0x0a110940) == 0x00802001);
+	/* User 0's first bank is parked at 2100 MHz like stock (0x92 0xd2 0 0 0);
+	 * the uplink bank (0x910) and the broadcast receive bank (0x905) tune. */
+	assert((*reg(0x0a110938) & 0xffff0000) == 0xd2920000);
+	assert((*reg(0x0a11093c) & 0x00ffffff) == 0);
+	assert(*reg(0x0a110940) == 0x0000d292); /* User 1 parked at 2100 MHz. */
 	assert(*reg(0x0a110bac) == 0x1107 && *reg(0x0a110bd4) == 0xa5000042);
 	assert(*reg(0x0a110910) == 0x00802001);
-	assert((*reg(0x0a110914) & 0xffffff00) == 0x80200100);
+	assert((*reg(0x0a110914) & 0xffffff00) == 0x00d29200); /* User 1 other bank parked. */
 	assert((*reg(0x0a110b00) & 0xffffff) == 0x086021);
 	assert((*reg(0x0a110b20) & 0x40ffffff) == 0x40496032);
 	for (unsigned iteration = 0; iteration < 3000 && ar_rf_information()->phase == AR_RF_RECEIVING; iteration++) { ar_rf_poll(); }
@@ -1000,7 +1192,7 @@ int main(void)
 	assert(ar_rf_monitor_plan(5770000, 100, 4, 67, connected_plan, sizeof connected_plan) == -22);
 	mcs_plan[43] = 4;
 	assert(ar_rf_monitor_plan(5770000, 100, 4, 67, mcs_plan, sizeof mcs_plan) == -22);
-	mcs_plan[43] = 2; mcs_plan[44] = 1;
+	mcs_plan[43] = 2; mcs_plan[44] = 101;   /* ranging offset above 100 */
 	assert(ar_rf_monitor_plan(5770000, 100, 4, 67, mcs_plan, sizeof mcs_plan) == -22);
 	mcs_plan[44] = 0;
 	assert(writes == before_writes);
@@ -1311,7 +1503,7 @@ int main(void)
 		uint32_t applied = *reg(0x0a110b00);
 		receive_sync(request, 1); assert(txm->applied == 1 && txm->unchanged == 1);
 		request[3] = 1; receive_sync(request, 1); assert(txm->rejected == 1);
-		request[3] = 0; request[4] = 0x3f; receive_sync(request, 1); assert(txm->rejected == 2);
+		request[3] = 0; request[4] = 0xd4; receive_sync(request, 1); assert(txm->rejected == 2); /* MCS 20; 25+ announces a width. */
 		request[4] = 0xc1; receive_sync(request, 1); assert(txm->downgrades == 1 && txm->current == 2);
 		assert(*reg(0x0a110b00) == applied);
 		txm = ar_rf_tx_mcs_information(); assert(txm->pending == 0x10601);
@@ -1420,7 +1612,7 @@ int main(void)
 	}
 	if (operation >= 71) {
 		const struct ar_rf_traffic_info *traffic = ar_rf_traffic_information();
-		assert(sizeof *traffic == 768 && traffic->version == 1);
+		assert(sizeof *traffic == 800 && traffic->version == 1);
 		unsigned accepted = 0, dispatched = 0;
 		for (unsigned i = 0; i < 10; i++) {
 			const struct ar_rf_command_observation *command = &traffic->commands[i];
@@ -1831,12 +2023,13 @@ int main(void)
 	pairing_request[0]=0;
 	assert(!ar_rf_host_pairing(pairing_request,14));
 	assert(!ar_rf_host_pairing_result(pairing_result) && !pairing_result[0]);
+	/* SET 3 records the peer only - a host may name
+	 * its stored AP at every start, often not the unit linked, and retargeting
+	 * the identity to it stopped the link on the bench (ar_rf_host_peer). */
+	open8030_linked_tests();
 	assert(!ar_rf_host_peer(pair_advert+8,4));
-	assert((*reg(0x0a110de0)&255)==4 && (*reg(0x0a110df0)&255)==4);
-	assert(!ar_rf_host_status(0,host_status) && !memcmp(host_status+254,pair_advert+8,4));
 	assert(!ar_rf_stop_host());
 	assert(!ar_rf_host_control(0,0));
-	assert(!ar_rf_host_status(0,host_status) && !memcmp(host_status+254,pair_advert+8,4));
 	/* Restore the fixture's peer/candidates for subsequent failure tests. */
 	assert(!ar_rf_host_peer(search_plan+8,4));
 	candidates[1]=1;

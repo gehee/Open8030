@@ -11,7 +11,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-static uint8_t defaults[5632], pins[40], plan[288];
+static uint8_t defaults[5632], pins[120], plan[288];
+static size_t expected_pins = 40;
 static unsigned calls, fail_at, bad_chip, loader_scenario;
 static uint8_t keys[100];
 static struct ar_rf_info radio;
@@ -21,11 +22,12 @@ static int step(unsigned expected)
 	assert(++calls == expected);
 	return calls == fail_at ? -110 : 0;
 }
+void ar_rf_set_power_config(const struct ar_power_config *config) { (void)config; }
 int ar_rf_probe(void) { radio.chip_profile = bad_chip ? 2 : 1; return step(1); }
 const struct ar_rf_info *ar_rf_information(void) { return &radio; }
 int ar_rf_setup_pins(const uint8_t *data, size_t size)
 {
-	assert(data == pins && size == sizeof pins); return step(2);
+	assert(data == pins && size == expected_pins); return step(2);
 }
 int ar_rf_load_defaults(const uint8_t *data, size_t size)
 {
@@ -87,13 +89,33 @@ int ar_rf_prepare_config(uint32_t f, uint8_t id, const uint8_t *p, size_t n, uns
 }
 static void run(unsigned scenario)
 {
-	struct ar_boot_profile profile = {.defaults=defaults, .pins=pins, .plan=plan, .defaults_length=sizeof defaults, .pins_length=sizeof pins, .plan_length=sizeof plan};
+	struct ar_boot_profile profile = {.defaults=defaults, .pins=pins, .plan=plan, .defaults_length=sizeof defaults, .pins_length=40, .plan_length=sizeof plan};
 	for (unsigned i = 0; i < 10; i++) { pins[i*4] = i / 5; pins[i*4+1] = i % 5; }
 	const uint8_t prefix[16] = {0x10,0x0b,0x58,0, 0x60,0xea,0,0, 0xcb,0,0,0, 76,0,0,0};
 	memcpy(plan, prefix, 16); memcpy(plan + 16, "DEV4", 4);
 	fail_at = scenario <= 7 ? scenario : 0;
 	bad_chip = scenario == 8;
-	if (scenario == 9) { pins[36] = 2; }
+	if (scenario == 9) { pins[36] = 4; } /* Banks 0-3 exist. */
+	/* USB board: stock's full boot pinmux, banks 0-3 with 5, 5, 6
+	 * and 13 pins, any count up to 29 entries; banks 2-3 carry a pad byte. */
+	if (scenario >= 37) {
+		static const uint8_t counts[4] = {5, 5, 6, 13};
+		unsigned n = 0;
+		for (unsigned bank = 0; bank < 4; bank++)
+			for (unsigned pin = 0; pin < counts[bank]; pin++, n++) {
+				pins[n*4] = bank; pins[n*4+1] = pin; pins[n*4+2] = (bank + pin) & 15;
+				pins[n*4+3] = bank >= 2 ? 0x10 + pin : 0;
+			}
+		profile.pins_length = n * 4;   /* 29 entries */
+		if (scenario == 38) { profile.pins_length = 0; }
+		if (scenario == 39) { profile.pins_length = 30; }                 /* not whole entries */
+		if (scenario == 40) { pins[6*4+1] = 0; }                          /* bank 1 pin 0 twice */
+		if (scenario == 41) { pins[10*4+1] = 6; }                         /* bank 2 has pins 0-5 */
+		if (scenario == 42) { pins[0*4+3] = 1; }                          /* no pad byte on bank 0 */
+		if (scenario == 43) { profile.pins_length = 30 * 4; pins[29*4] = 3; pins[29*4+1] = 12; }  /* 30 entries */
+		if (scenario == 44) { pins[0*4+2] = 16; }                          /* function above 15 */
+	}
+	expected_pins = profile.pins_length;
 	if (scenario == 10) { defaults[5630] = 1; defaults[5626] = 1; }
 	if (scenario == 11) { plan[12] = 75; }
 	if (scenario == 12) { profile.plan_length--; }
@@ -128,7 +150,7 @@ static void run(unsigned scenario)
 		ar_boot_prepare(scenario == 13 ? NULL : &profile);
 	const struct ar_boot_info *info = ar_boot_information();
 	if (!scenario || scenario == 14 || scenario == 15 || scenario == 16 || scenario == 20 || scenario == 21 ||
-	    scenario==23 || scenario==24 || scenario==25 || scenario==35 || (scenario>=29 && scenario<=33)) {
+	    scenario==23 || scenario==24 || scenario==25 || scenario==35 || scenario==37 || (scenario>=29 && scenario<=33)) {
 		assert(!result && calls == 7 && info->stage == AR_BOOT_READY && info->default_bytes == 5632);
 	}
 	else if (scenario <= 7) {
@@ -150,7 +172,7 @@ static void run(unsigned scenario)
 	}
 	if (scenario>=15 && !result) {
 		assert(info->version==2 && factory_calls==1 && info->flash_capacity==0x400000 && info->flash_id[0]==0x3412ef);
-		unsigned source= scenario==23 || scenario==30 || scenario==32 || scenario==35 ? AR_POWER_OFFSET_FACTORY_V4 :
+		unsigned source= scenario==23 || scenario==30 || scenario==32 || scenario==35 || scenario==37 ? AR_POWER_OFFSET_FACTORY_V4 :
 			scenario==24 ? AR_POWER_OFFSET_FACTORY_V3 : scenario==31 || scenario==33 ? AR_POWER_OFFSET_JSON : AR_POWER_OFFSET_DEFAULT;
 		assert(info->power_source==source && info->config_bytes==json_bytes);
 		assert(info->factory_error==(scenario==29?-110:scenario<23 || scenario==31?-2:0));
@@ -163,7 +185,7 @@ int main(void)
 {
 	/* Separate boots have separate firmware storage. Child processes isolate that
 	 * storage while testing each failure boundary without a production reset hook. */
-	for (unsigned i = 0; i < 37; i++) {
+	for (unsigned i = 0; i < 45; i++) {
 		pid_t pid = fork(); assert(pid >= 0);
 		if (!pid) { run(i); _exit(0); }
 		int status; assert(waitpid(pid, &status, 0) == pid);
