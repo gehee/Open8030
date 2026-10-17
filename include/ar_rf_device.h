@@ -36,6 +36,20 @@ struct ar_rf_mcs_info {
 	uint32_t sync_mmio, reserved[4], observed_counts[25], unknown_headers, padding[6];
 };
 const struct ar_rf_mcs_info *ar_rf_mcs_information(void);
+/* Host requests for the DEV link: SET 36 MCS row, SET 22 bandwidth,
+ * SET 16 frame mode, GET 6 MCS/rate, GET 107 link quality, power (GET 7/8/9,
+ * SET 8/9), SET 0x26 retransmission mask, GET 10 channels, SET 5/6/35. */
+int ar_rf_host_mcs_row(const uint8_t row[16]);
+int ar_rf_host_bandwidth(const uint8_t *payload, size_t length);
+int ar_rf_host_frame_mode(const uint8_t *payload, size_t length);
+int ar_rf_host_mcs(const uint8_t *in, size_t length, uint8_t out[8]);
+int ar_rf_host_link_info(const uint8_t *in, size_t length, uint8_t out[216]);
+int ar_rf_host_power(uint32_t reqid, const uint8_t *in, size_t length, uint8_t *out, size_t *out_length);
+int ar_rf_host_retx_config(const uint8_t *payload, size_t length);
+int ar_rf_host_channel_info(uint8_t output[1028]);
+int ar_rf_host_channel_set(unsigned order, const uint8_t *payload, size_t length);
+/* GET 5: {u8 slot bitmap} -> int32 metres[8], -1 without a recent fix. */
+int ar_rf_host_distance(const uint8_t *payload, size_t length, uint8_t output[32]);
 /* Operation68 observational trace. First32 and a rolling last32 records;
  * register reads are sequential, not an atomic hardware snapshot. */
 struct ar_rf_phy_event {
@@ -78,6 +92,10 @@ struct ar_rf_traffic_info {
 	struct ar_rf_command_observation commands[10];
 	struct ar_rf_port_observation ports[5];
 	uint32_t port_bytes_by_second[16][5];
+	uint32_t socket_offered, socket_dropped; /* ar_socket_rx_totals, since boot */
+	/* Main loop: iterations, socket frames pushed, pushes refused by the bus,
+	 * longest iteration (us), bus transfers started, bus queue high water. */
+	uint32_t loop_iterations, loop_pushes, loop_refused, loop_max_us, bus_transfers, bus_high_water;
 };
 const struct ar_rf_traffic_info *ar_rf_traffic_information(void);
 struct ar_rf_tx_mcs_info {
@@ -325,4 +343,6 @@ typedef void (*ar_rf_event_callback)(unsigned id, const uint8_t *data, size_t le
 void ar_rf_set_event_callback(ar_rf_event_callback callback, void *context);
 void ar_rf_poll(void);
 int ar_rf_read_registers(unsigned offset, unsigned length, uint8_t *output);
+struct ar_power_config;
+void ar_rf_set_power_config(const struct ar_power_config *config);
 #endif

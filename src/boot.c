@@ -15,20 +15,20 @@ static uint32_t le32(const uint8_t *p)
 }
 static int validate_board(const struct ar_boot_profile *p)
 {
-	if (!p || !p->defaults || !p->pins || p->defaults_length != 704 * 8 || p->pins_length != 40 ||
+	if (!p || !p->defaults || !p->pins || p->defaults_length != 704 * 8 || !p->pins_length || p->pins_length % 4 || p->pins_length > 29 * 4 ||
 	    ar_flash_parts_validate(p->flash_parts, p->flash_part_count)) { return -22; }
 	/* Reject malformed data before touching hardware; retain write order. */
 	for (size_t i = 0; i < p->defaults_length; i += 8) {
 		unsigned offset = p->defaults[i] | (unsigned)p->defaults[i + 1] << 8;
 		if (offset > 0xdfc || offset % 4 || p->defaults[i + 2] || p->defaults[i + 3]) { return -22; }
 	}
-	unsigned seen = 0;
+	static const uint8_t pin_count[4] = {5, 5, 6, 13};
+	uint32_t seen[4] = {0};
 	for (size_t i = 0; i < p->pins_length; i += 4) {
 		unsigned bank = p->pins[i], pin = p->pins[i + 1];
-		if (bank > 1 || pin > 4 || p->pins[i + 2] > 15 || p->pins[i + 3]) { return -22; }
-		unsigned bit = 1u << (bank * 5 + pin);
-		if (seen & bit) { return -22; }
-		seen |= bit;
+		if (bank > 3 || pin >= pin_count[bank] || p->pins[i + 2] > 15 || (p->pins[i + 3] && bank < 2)) { return -22; }
+		if (seen[bank] & (1u << pin)) { return -22; }
+		seen[bank] |= 1u << pin;
 	}
 	return 0;
 }
@@ -56,7 +56,20 @@ static int initialize(const struct ar_boot_profile *profile, unsigned loader)
 		uint8_t mac[4]; result = ar_rf_board_identity(mac);
 		if (result && result != -2) { goto fail; }
 		boot.identity_source = result == -2 ? 1 : 2; /* JSON fallback / hardware OTP. */
+#ifdef AR_IDENTITY_FROM_JSON
+		/* Keep the loader JSON's dev.mac as this receiver's identity (the OTP
+		 * value is still read for the boot record). Lets this ground present a
+		 * MAC an air unit is already bound to. */
+		boot.identity_source = 1;
+#else
 		if (!result) { ar_config_identity(&configured, mac); }
+#endif
+#ifdef AR_PINS_BEFORE_FACTORY
+		/* Board pin mux first: on this board the factory flash may hang off
+		 * pins the mux has to route before the SPI read can see it. */
+		boot.stage = AR_BOOT_PINS;
+		if ((result = ar_rf_setup_pins(profile->pins, profile->pins_length))) { goto fail; }
+#endif
 		boot.stage = AR_BOOT_FACTORY;
 		uint8_t record[8]; struct ar_factory_info factory = {0};
 		result = ar_factory_device_read(profile->flash_parts, profile->flash_part_count, record, &factory);
@@ -70,16 +83,21 @@ static int initialize(const struct ar_boot_profile *profile, unsigned loader)
 		/* Only an actual partition/read result permits the original storage
 		 * fallback. Unsupported identification or controller setup is a native
 		 * integration failure, not proof that factory calibration is absent. */
+#ifndef AR_FACTORY_OPTIONAL
 		if (result && factory.stage != AR_FACTORY_PARTITION) { goto fail; }
+#endif
 		enum ar_power_factory_state state = result ? AR_POWER_FACTORY_UNAVAILABLE : AR_POWER_FACTORY_RECORD;
 		result = ar_config_resolve_power(&configured, state, result ? NULL : record, result ? 0 : sizeof record);
 		if (result) { goto fail; }
 		boot.power_source = configured.power_source;
+		ar_rf_set_power_config(&configured.power);
 		boot.power_offsets[0] = configured.power.path_offset[0];
 		boot.power_offsets[1] = configured.power.path_offset[1];
 	}
+#ifndef AR_PINS_BEFORE_FACTORY
 	boot.stage = AR_BOOT_PINS;
 	if ((result = ar_rf_setup_pins(profile->pins, profile->pins_length))) { goto fail; }
+#endif
 	boot.stage = AR_BOOT_DEFAULTS;
 	/* Match the validated probe's two-batch sequence before changing scheduling. */
 	for (size_t offset = 0; offset < profile->defaults_length; offset += 4096) {

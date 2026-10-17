@@ -134,6 +134,14 @@ int ar_socket_rx_request(struct ar_socket_rx *sockets, const struct ar_frame *re
 	return 1;
 }
 
+/* Bytes offered to and dropped by every host socket since boot; sockets
+ * themselves are zeroed on open/close. */
+static uint32_t socket_totals[2];
+void ar_socket_rx_totals(uint32_t *offered, uint32_t *dropped)
+{
+	*offered = socket_totals[0]; *dropped = socket_totals[1];
+}
+
 size_t ar_socket_rx_feed(struct ar_socket_rx *sockets, unsigned slot, unsigned mac_port,
 	const uint8_t *data, size_t length)
 {
@@ -143,6 +151,7 @@ size_t ar_socket_rx_feed(struct ar_socket_rx *sockets, unsigned slot, unsigned m
 	size_t copied = state->capacity - state->used;
 	if (copied > length) { copied = length; }
 	state->offered += length; state->accepted += copied; state->dropped += length - copied;
+	socket_totals[0] += length; socket_totals[1] += length - copied;
 	size_t tail = (state->head + state->used) % state->capacity;
 	size_t first = state->capacity - tail;
 	if (first > copied) { first = copied; }
@@ -166,8 +175,12 @@ int ar_socket_rx_peek(struct ar_socket_rx *sockets, uint8_t *scratch, size_t cap
 		if (first > copied) { first = copied; }
 		memcpy(scratch, state->bytes + state->head, first);
 		if (copied > first) { memcpy(scratch + first, state->bytes, copied - first); }
+		/* The stock firmware stamps 0x12345678 in the status word of every
+		 * pushed data frame, and ar_libre's host library only delivers a
+		 * SO_READ frame to the socket when it carries that value (the stock
+		 * daemon does not check it). */
 		*frame = (struct ar_frame){.reqid = 0x04020000u | port, .msgid = state->msgid,
-			.payload = scratch, .length = copied};
+			.status = 0x12345678, .payload = scratch, .length = copied};
 		return 1;
 	}
 	return 0;

@@ -2,6 +2,8 @@
 /* Independently implemented Ascent VRX RF peripheral and DEV receiver. Board
  * profiles are data, not executable vendor instructions. Native video and
  * explicit host restarts are verified; full firmware parity remains open. */
+#include "ar_ap_time.h"
+#include "ar_cache.h"
 #include "ar_rf_device.h"
 #include "ar_mac.h"
 #include "ar_dev.h"
@@ -19,6 +21,7 @@
 #include "ar_power_control.h"
 #include "ar_tx_mcs.h"
 #include "ar_tx_irq.h"
+#include "ar_power.h"
 #include <string.h>
 #ifndef AR_RF_SIMULATED
 #include "ar_sdio_device.h"
@@ -35,7 +38,10 @@ static struct ar_rf_info information;
 static uint8_t calibration[5];
 static unsigned pins_configured;
 static struct ar_rf_rx_info receiver;
-static uint8_t receive_buffers[4][65536] __attribute__((aligned(512)));
+/* 48 KiB each: one MAC packet is a block or two (about 10-12 KiB at 20 MHz,
+ * twice that at 40); RAM ran out at 64 KiB once upstream's modules joined
+ * the USB buffers. A longer packet is refused in receive_event(). */
+static uint8_t receive_buffers[4][49152] __attribute__((aligned(512)));
 static unsigned receive_head, receive_pending, receive_length, receive_user;
 static uint32_t receive_metadata;
 static uint64_t receive_started;
@@ -87,6 +93,8 @@ const struct ar_rf_scan_info *ar_rf_scan_information(void) { return &scan_info; 
 #ifdef AR_RF_SIMULATED
 const struct ar_command_program *ar_rf_command_information(void) { return &command_program; }
 #endif
+/* Distance (stock bb_phy_distc_proc), see distance_sample(). */
+static struct { uint32_t raw, ms, irqs, accepted, dropped; uint8_t rejects, valid; } distance;
 static struct ar_dev_idle_config dev_config;
 static struct ar_binding binding;
 static uint8_t dev_candidates[AR_DEV_MAX_CANDIDATES][4], dev_status_a, dev_status_b;
@@ -118,6 +126,12 @@ static struct ar_dev_tx_context dev_tx;
 static struct ar_dev_retx dev_retx;
 static struct ar_dev_stream dev_stream;
 static struct ar_rf_phy_info phy;
+/* The last 8 per-frame user-8 samples, as stock's quality record keeps them
+ * (0x221f1c averages SNR and both gains over 8; samples older than 200 ms
+ * make the reply fail). */
+struct quality_sample { uint16_t snr; uint8_t gain_a, gain_b, errored; uint32_t ms; };
+static struct quality_sample quality_ring[8];
+static unsigned quality_head, quality_count;
 static struct ar_rf_phy_trace phy_trace;
 static uint32_t phy_poll_tick;
 const struct ar_rf_phy_trace *ar_rf_phy_trace_information(void) { return &phy_trace; }
@@ -126,9 +140,24 @@ static struct ar_rf_mcs_info mcs_info;
 static uint32_t mcs_fch_keys[25];
 static uint8_t mcs_sync_mmio;
 static struct ar_rf_sync_info sync_info;
+static uint32_t elapsed_ms(void);
 const struct ar_rf_sync_info *ar_rf_sync_information(void) { return &sync_info; }
 static struct ar_rf_traffic_info traffic_info;
-const struct ar_rf_traffic_info *ar_rf_traffic_information(void) { return &traffic_info; }
+void ar_socket_rx_totals(uint32_t *offered, uint32_t *dropped);
+void ar_main_loop_statistics(uint32_t out[6]);
+void ar_rf_note_push_time(uint32_t us)
+{
+	phy_trace.reserved[3] += us; phy_trace.reserved[4]++;
+	if (us > phy_trace.reserved[5]) { phy_trace.reserved[5] = us; }
+}
+const struct ar_rf_traffic_info *ar_rf_traffic_information(void)
+{
+	ar_socket_rx_totals(&traffic_info.socket_offered, &traffic_info.socket_dropped);
+	uint32_t loop[6]; ar_main_loop_statistics(loop);
+	traffic_info.loop_iterations = loop[0]; traffic_info.loop_pushes = loop[1]; traffic_info.loop_refused = loop[2];
+	traffic_info.loop_max_us = loop[3]; traffic_info.bus_transfers = loop[4]; traffic_info.bus_high_water = loop[5];
+	return &traffic_info;
+}
 static struct ar_rf_tx_mcs_info tx_mcs_info;
 /* User-0 drain/application and attempt history. Initialization leaves the retry
  * limit at zero; no runtime retry-limit policy is established yet. */
@@ -149,6 +178,17 @@ const struct ar_rf_tx_mcs_info *ar_rf_tx_mcs_information(void)
 	tx_mcs_info.pending = u->active | (uint32_t)u->drain << 8 | (uint32_t)u->mcs << 16;
 	return &tx_mcs_info;
 }
+static struct { uint32_t commands, applied, rejected, last, sent; } chan_info;
+static void tune_context_plls(uint64_t pll);
+static uint32_t bw_retry_ms;
+static unsigned bw_code = 2, bw_state, bw_request_pending, bw_settle_step, chain_snr_fresh, bw_target = 4;
+static uint32_t phy_last_invalid, phy_last_mac_invalid;
+static uint32_t bw_deadline_ms, bw_settle_us;
+static uint8_t dev_bw_request[5];
+static struct { uint32_t requests, sent, applied, announced, commands, last, ttl_mask, wide_ok, wide_bad, wide_last_ok, wide_last_bad; } bw_info;
+static unsigned frame_mode, frame_pending;   /* 0 standard, 2 short (TDD frame mode, SET 16); pending = 0x80 | mode */
+static struct { uint32_t requests, applied, from_ap, last; } frame_info;
+static unsigned sync_timer_apply;
 const struct ar_rf_mcs_info *ar_rf_mcs_information(void)
 {
 	mcs_info.samples = dev_mcs.samples; mcs_info.requests = dev_mcs.requests;
@@ -160,6 +200,14 @@ const struct ar_rf_mcs_info *ar_rf_mcs_information(void)
 	mcs_info.current = dev_mcs.current < dev_mcs.config.count ? dev_mcs.config.rows[dev_mcs.current].mcs : 25;
 	mcs_info.previous = dev_mcs.previous < dev_mcs.config.count ? dev_mcs.config.rows[dev_mcs.previous].mcs : 25;
 	mcs_info.observed = dev_mcs.observed; mcs_info.average_snr = dev_mcs.average_snr;
+	mcs_info.reserved[0] = bw_code | bw_state << 8 | frame_mode << 16 | (frame_info.applied & 255) << 24;
+	mcs_info.reserved[1] = bw_info.requests | bw_info.sent << 16;
+	mcs_info.reserved[2] = (bw_info.applied & 255) | (bw_info.commands & 255) << 8 | bw_info.last << 16;
+	mcs_info.reserved[3] = (bw_info.announced & 255) | bw_info.ttl_mask << 8;
+	mcs_info.padding[0] = chan_info.commands | chan_info.applied << 16;
+	mcs_info.padding[1] = chan_info.rejected | chan_info.sent << 16; mcs_info.padding[2] = chan_info.last;
+	mcs_info.padding[3] = (bw_info.wide_ok & 0xffff) | bw_info.wide_bad << 16;
+	mcs_info.padding[4] = bw_info.wide_last_ok; mcs_info.padding[5] = bw_info.wide_last_bad;
 	mcs_info.bad_samples = dev_mcs.bad_samples; mcs_info.recent_bad = dev_mcs.recent_bad;
 	mcs_info.sample_ms = dev_mcs.sample_ms; mcs_info.request_ms = dev_mcs.request_ms;
 	mcs_info.direction_ms = dev_mcs.direction_ms; mcs_info.sync_mmio = mcs_sync_mmio;
@@ -189,6 +237,8 @@ void ar_rf_set_payload_callback(ar_rf_payload_callback callback, void *context)
 	payload_callback = callback; payload_context = context;
 }
 static unsigned dev_active;
+static void dev_mcs_apply(unsigned action);
+static uint32_t dev_frame_microseconds(void);
 
 #ifdef AR_RF_SIMULATED
 extern uint32_t ar_rf_test_read(uint32_t address);
@@ -308,12 +358,387 @@ static void tx_mcs_retry_reset(unsigned user, void *context)
 static const struct ar_interleaver_ops tx_step_ops = {
 	.apply=tx_mcs_drain_apply,.retry_reset=tx_mcs_retry_reset
 };
+/* Link bandwidth. Every stock link starts on the configured 5 MHz broadcast
+ * profile (code 2). The side that transmits owns the switch: it pauses its TX
+ * (0x22e0d0, TX word bit 30), sends PHY command 5 with TTL 3 carrying
+ * [type 0, slot | code << 5, 0], and both ends apply the new profile when the
+ * TTL expires (0x238960; link messages 0x306/0x307). A receiver asks for a
+ * wider downlink the way the stock host's BB_SET_BANDWIDTH dir=RX does
+ * (0x24ed72): port-0 internal command 9 with the one-byte SDK code, which the
+ * AP's 0x234ee6 turns into its own 0x306. */
+
+static void apply_bandwidth(unsigned code)
+{
+	unsigned previous = bw_code;
+	if (code > 5) { return; }
+	/* 0x238960 (received): mute RX8 (0x22ce78(8,1): 0x9e4 bit 24) and hold
+	 * its path (0xcfc bit 23 for buffer user 10, 0xbf8 bit 7 for user 8)
+	 * before the profile change; the deferred step 0x238842 releases them
+	 * over the next two frames (bandwidth_poll). */
+	field(0x9e41801, 1); field(0xcfc1701, 1); field(0xbf80701, 1);
+	/* The receiving side changes only the RX8 bandwidth field (0x22c6f6);
+	 * the slot-0 TX word stays at the configured uplink bandwidth, which the
+	 * AP keeps receiving. The AP's broadcast keeps its symbol structure
+	 * (25933 kbps at 20 MHz against 6483 at 5 MHz is exactly four times the
+	 * bytes in the same burst), so the configured selector/interleave and
+	 * the 3000 us window (0x1250) stay: the frame remains 3 x 100 + 3000 +
+	 * 100 + 2234 us. (Mode 0 also clears the 40 MHz bits in 0xbac/0xbd4 via
+	 * 0x21b1ae(1); never set on this path.) */
+	field(0x9e00803, code);
+	/* Mode 0: 40 MHz sets the 0xbac[31:14,7:6] / 0xbd4[17:8] bits (0x21b1ae(0)),
+	 * any other width clears them (0x21b1ae(1)); 0x238960 passes
+	 * (payload[1] & 0xe0) != 0xa0. 40 MHz is also the one width that changes
+	 * the frame: the stock DEV linked at 40 (linkdump, 2026-10-16) runs the
+	 * RX8 window at 0x09c4 (1600 us) instead of 0x1250 (3000 us) and the
+	 * front end with 0x010 bit 30 and the 0x014/0x050/0x0e0/0x0e4/0x1e0/0x360/
+	 * 0x4a0/0x4ec/0x4f0 values below (whole words from that dump). */
+	if (code == 5) {
+		update(BB + 0xbac, 0xffffc0c0, 0xffffc0c0); update(BB + 0xbd4, 0x0003ff00, 0x0003ff00);
+		field(0x9701010, 0x09c4);
+		static const struct { uint16_t reg; uint32_t value; } at40[] = {
+			{0x010, 0xc0800000}, {0x014, 0x0000f4ef}, {0x050, 0x00150003}, {0x0e0, 0xffa5a56f},
+			{0x0e4, 0x00000eff}, {0x1e0, 0x00ec3c00}, {0x360, 0x00059906}, {0x4a0, 0x00ff191e},
+			{0x4ec, 0x007e007e}, {0x4f0, 0x0000171c}};
+		for (unsigned i = 0; i < sizeof at40 / sizeof at40[0]; i++) { write32(BB + at40[i].reg, at40[i].value); }
+	} else {
+		update(BB + 0xbac, 0xffffc0c0, 0); update(BB + 0xbd4, 0x0003ff00, 0);
+		field(0x9701010, 0x1250);
+		if (previous == 5) {
+			static const struct { uint16_t reg; uint32_t value; } at20[] = {
+				{0x010, 0xa0800000}, {0x014, 0x00012d2d}, {0x050, 0x00140003}, {0x0e0, 0xff48486f},
+				{0x0e4, 0x00002eff}, {0x1e0, 0x00fc3c00}, {0x360, 0x02059607}, {0x4a0, 0x00ff101f},
+				{0x4ec, 0x01b901bf}, {0x4f0, 0x0000101f}};
+			for (unsigned i = 0; i < sizeof at20 / sizeof at20[0]; i++) { write32(BB + at20[i].reg, at20[i].value); }
+		}
+	}
+	bw_settle_step = 1; bw_settle_us = elapsed_us();
+	/* Diagnostics: the frame registers at the switch (sync reserved[3..5]). */
+	sync_info.reserved[3] = read32(BB + 0x970);
+	sync_info.reserved[4] = (read32(BB + 0xa00) & 0xffff) | read32(BB + 0x984) << 16;
+	sync_info.reserved[5] = (read32(BB + 0x980) & 0xffff) | (read32(BB + 0x9e0) & 0xffff) << 16;
+	bw_code = code; bw_info.applied++;
+	receiver.search_frame_us = dev_frame_microseconds();
+	/* Stock event 12: [slot, received, new, old]. */
+	const uint8_t data[] = {0, 1, (uint8_t)code, (uint8_t)previous};
+	publish_event(12, data, sizeof data);
+}
+
+/* PHY command 4, length 3: the AP moves the link to another channel
+ * (0x231cc6, received side 0x231fd4): payload [0] = slot in bits 3:0 with
+ * bits 7:6 set, [1..2] = channel index into the configured list (low byte;
+ * 0x22b0fc). Retune both PLL banks at the TTL and report event 2
+ * [slot, 0, new index, old index]. */
+static void dev_mcs_apply(unsigned action);
+static int retune_channel(unsigned index, unsigned slot, unsigned direction)
+{
+	uint64_t pll;
+	if (index >= receiver.channel_count || ar_rf_pll_word(receiver.channels[index].frequency_khz, &pll)) { return -22; }
+	unsigned previous = receiver.channel_index;
+	tune_context_plls(pll);
+	field(0xa900010, receiver.channels[index].frequency_khz / 2000);
+	receiver.channel_index = index; dev_config.receive_channel = index;
+	receiver.frequency_khz = receiver.channels[index].frequency_khz;
+	receiver.channels[index].visits++;
+	chan_info.applied++;
+	const uint8_t data[] = {(uint8_t)slot, (uint8_t)direction, (uint8_t)index, (uint8_t)previous};
+	publish_event(2, data, sizeof data);
+	return 0;
+}
+/* Command 4 from the AP (stock handler 0x231cc6, node side, remote origin):
+ * byte 0 = flags | slot nibble (must be 0), flag 0x40 retunes the node's
+ * own TX user, 0x10 the CS user, 0x20 the broadcast RX user, 0x80 is the
+ * mode-1/3 hop. Mode 0 keeps every user on one channel, so any flag
+ * retunes both PLL banks here. */
+static void sync_channel(const uint8_t control[7])
+{
+	unsigned index = control[4] | (unsigned)control[5] << 8;
+	chan_info.commands++; chan_info.last = control[3] | (uint32_t)control[4] << 8 | (uint32_t)control[5] << 16;
+	if (!(control[3] & 0xf0) || (control[3] & 15) || retune_channel(index, 0, 0)) { chan_info.rejected++; }
+}
+/* A host channel set on the node (stock: SET 6 dir RX -> 0x221c48 case 1
+ * -> message 0x108 {1, index} -> 0x2314xx builds command 4
+ * [0x80 | own slot, index lo, index hi] with TTL 16 into the 7-byte FCH
+ * control block at 0xb8c, counted down once per frame by 0x2545xx; at zero
+ * the node retunes its broadcast RX user (0x231cc6 local origin) and the AP
+ * its TX (remote origin, "set slot %u tx chan %u"). Both ends hop on the
+ * same frame; nobody retunes on receipt of the host command itself. The
+ * block is shared with the MCS request (dev_mcs.fch), which only enqueues
+ * when the command nibble is free. */
+/* Commands the DEV originates, one at a time, through its 7-byte control
+ * block (shared with the MCS request in dev_mcs.fch, which only enqueues
+ * when the command nibble is free): command 4 channel hop (TTL 16) and
+ * command 8 frame mode (TTL 5, stock SET 16 -> 0x22d42a(8, 5, mode << 4)).
+ * The block goes out with TTL n, then n-1 is stored each frame (0x2545xx);
+ * at zero the DEV applies the command itself and clears the nibble. */
+static struct { unsigned state, command, ttl, length; uint8_t payload[4]; } dev_cmd;
+static void apply_frame_mode(unsigned mode);
+static int hold_engines(void);
+static void release_engines(void);
+static int dev_command_request(unsigned command, unsigned ttl, const uint8_t *payload, unsigned length)
+{
+	if (dev_cmd.state) { return -16; }
+	dev_cmd.command = command; dev_cmd.ttl = ttl; dev_cmd.length = length;
+	memset(dev_cmd.payload, 0, sizeof dev_cmd.payload); memcpy(dev_cmd.payload, payload, length);
+	dev_cmd.state = 1;
+	return 0;
+}
+static int dev_hop_request(unsigned index)
+{
+	if (index >= receiver.channel_count) { return -22; }
+	const uint8_t payload[3] = {(uint8_t)(0x80 | (receiver.assigned_slot & 15)), (uint8_t)index, (uint8_t)(index >> 8)};
+	int result = dev_command_request(4, 16, payload, 3);
+	if (!result) { chan_info.sent++; }
+	return result;
+}
+/* Our own commands to the AP go through upstream's single transmit slot
+ * (phy_control): it sends them, counts the TTL down each frame and calls
+ * phy_dispatch(outgoing) at zero, where dev_command_done() applies them here.
+ * The slot is busy while an MCS request (TTL 31) is out: try again each
+ * preencode. state 1 = waiting for the slot, 2 = in it. */
+static const struct ar_phy_control_ops phy_ops;
+static void dev_hop_poll(void)
+{
+	if (dev_cmd.state != 1 || dev_mcs.advertised) { return; }
+	if (ar_phy_control_enqueue(&phy_control, dev_cmd.command, dev_cmd.ttl, dev_cmd.payload,
+	    dev_cmd.length, &phy_ops, NULL)) { return; }
+	dev_cmd.state = 2;
+}
+static void dev_command_done(unsigned command, const uint8_t *payload)
+{
+	if (dev_cmd.state != 2 || command != dev_cmd.command) { return; }
+	dev_cmd.state = 0;
+	if (command == 4) {
+		unsigned index = payload[1] | (unsigned)payload[2] << 8;
+		if (retune_channel(index, 0, 1)) { chan_info.rejected++; }
+	} else if (command == 8) {
+		frame_pending = 0x80 | ((payload[0] >> 4) & 7);   /* at the next frame header */
+	}
+}
+static void dev_hop_abort(void)
+{
+	if (dev_cmd.state == 2) { (void)ar_phy_control_cancel(&phy_control, &phy_ops, NULL); }
+	dev_cmd.state = 0;
+}
+/* TDD frame mode (stock 0x238bc8, mode 0 link). The DEV side of the short
+ * frame (mode 2) is the uplink slot: 0xa00 [15:0] 2234 -> 1251 us and the
+ * uplink TX profile's time interleave 0xb00 [20:18] 2 -> 1, with the
+ * code-length class [15:12] one step shorter (linked register dumps of
+ * stock in both modes, 2026-10-16: nothing else on the DEV changes). The
+ * frame goes from 5633.92 to 4650.88 us; the broadcast window stays. */
+static void apply_frame_mode(unsigned mode)
+{
+	if (mode != 0 && mode != 2) { return; }
+	frame_info.last = mode;
+	if (mode == frame_mode) { return; }
+	uint32_t word = read32(BB + 0xb00);
+	unsigned code = (word >> 12) & 15, length = code / 3;
+	code %= 3;
+	if (mode == 2) {
+		if (length) { length--; }
+		field(0xb001203, 1);
+		field(0xa000010, 0x07a3);
+	} else {
+		if (length < 2) { length++; }
+		field(0xb001203, 2);
+		field(0xa000010, (2234u * 10000 / 640 + 5) / 10);
+	}
+	field(0xb000c04, code + length * 3);
+	/* The running sequence keeps the old slot until the engines are re-armed:
+	 * without this every frame event stopped (TX, headers) and the AP, which
+	 * had switched, dropped the link ~2 s later. */
+	(void)hold_engines(); release_engines();
+	frame_mode = mode; frame_info.applied++;
+	receiver.search_frame_us = dev_frame_microseconds();
+}
+int ar_rf_host_frame_mode(const uint8_t *payload, size_t length)
+{
+	if (!payload || length < 1) { return -22; }
+	unsigned mode = payload[0];
+	if (mode != 0 && mode != 2) { return -95; }   /* mode 1 (other users' frames) not here */
+	/* Refused for now: switching to 2 dropped the link on the bench (the AP
+	 * did not follow, or not on the same frame). Under investigation. */
+	if (!dev_active || receiver.dev_state != 2) { return -7; }
+	frame_info.requests++;
+	if (mode == frame_mode) { return 0; }
+	const uint8_t word[4] = {(uint8_t)(mode << 4), 0, 0, 0};
+	return dev_command_request(8, 5, word, 4);
+}
+/* Host channel commands (the stock daemon's set_rf_channel sequence):
+ * GET 10 lists the configured channels, SET 5 (auto mode) and SET 35 (work
+ * list) are recorded, SET 6 {direction, index} retunes like command 4. */
+static void serial_word(unsigned offset, uint64_t word);
+static uint8_t chan_auto = 1, chan_work_count, chan_work[128];
+/* Distance (stock bb_phy_distc_proc): the baseband ranges by itself once
+ * 0xd30 is set (window, timeout, slot enables; DEV role 0 in [31:24]) and
+ * raises IRQ 6. 0xfe8 [2:0] picks one of eight 24-bit entries, four packed
+ * at 0xfd0 and four at 0xfdc: [19:0] the round-trip count (bit 19 = below
+ * zero, taken as 0), bits 20, 22, 23 mark an invalid sample. A sample more
+ * than 500 counts from the last is an outlier and dropped, unless ten come
+ * in a row. Metres = (count - offset) * 1.5; none after 1 s without one. */
+static void distance_sample(void)
+{
+	distance.irqs++;
+	unsigned index = read32(BB + 0xfe8) & 7;
+	uint32_t base = index < 4 ? 0xfd0 : 0xfdc, at = base + 3 * (index & 3);
+	uint32_t e = 0;
+	for (unsigned b = 0; b < 3; b++) {
+		uint32_t a = at + b;
+		e |= ((read32(BB + (a & ~3u)) >> ((a & 3) * 8)) & 255) << (8 * b);
+	}
+	if (e & (1u << 20 | 1u << 22 | 1u << 23)) { distance.dropped++; return; }
+	uint32_t value = e & 0x80000 ? 0 : e & 0xfffff, now = elapsed_ms();
+	if (distance.valid && now - distance.ms <= 999) {
+		uint32_t diff = value > distance.raw ? value - distance.raw : distance.raw - value;
+		if (diff > 500) {
+			if (++distance.rejects < 10) { distance.dropped++; return; }
+		}
+	}
+	distance.rejects = 0; distance.raw = value; distance.ms = now; distance.valid = 1;
+	distance.accepted++;
+}
+int ar_rf_host_distance(const uint8_t *payload, size_t length, uint8_t output[32])
+{
+	if (!payload || length < 1 || !output) { return -22; }
+	memset(output, 0, 32);
+	uint32_t offset = dev_mcs.config.distance_offset, now = elapsed_ms();
+	for (unsigned slot = 0; slot < 8; slot++) {
+		if (!(payload[0] & (1u << slot))) { continue; }
+		int32_t metres = -1;
+		/* The DEV keeps one record (slot 0), as stock. */
+		if (slot == 0 && distance.valid && dev_mcs.config.distance_enabled && now - distance.ms <= 1000) {
+			metres = distance.raw > offset ? (int32_t)(((distance.raw - offset) * 3) >> 1) : 0;
+		}
+		for (unsigned b = 0; b < 4; b++) { output[slot * 4 + b] = (uint8_t)((uint32_t)metres >> (8 * b)); }
+	}
+	return 0;
+}
+/* The scan's row for a configured channel (by frequency), or -1. */
+static int scan_row_of(uint32_t frequency_khz)
+{
+	for (unsigned r = 0; r < scan_info.count && r < AR_RF_MAX_CHANNELS; r++) {
+		if ((scan_rows[r] & 0xffffff) == frequency_khz) { return (int)r; }
+	}
+	return -1;
+}
+/* SET 35's work list is the scan's list too (stock: bit 24 of each channel
+ * word); with none set, every channel. Re-applied when the scan is rebuilt. */
+static void scan_apply_work_list(void)
+{
+	for (unsigned r = 0; r < scan_info.count && r < AR_RF_MAX_CHANNELS; r++) {
+		unsigned on = !chan_work_count || !receiver.channel_count;
+		for (unsigned i = 0; i < chan_work_count && !on; i++) {
+			on = chan_work[i] < receiver.channel_count &&
+				receiver.channels[chan_work[i]].frequency_khz == (scan_rows[r] & 0xffffff);
+		}
+		scan_rows[r] = (scan_rows[r] & ~(UINT32_C(1) << 24)) | (uint32_t)on << 24;
+	}
+}
+int ar_rf_host_channel_info(uint8_t output[1028])
+{
+	if (!output) { return -22; }
+	if (information.phase < AR_RF_PSRAM || !receiver.channel_count) { return -11; }
+	memset(output, 0, 1028);
+	output[0] = (uint8_t)receiver.channel_count; output[1] = chan_auto;
+	/* acs_chan: the scan's start-up choice (scan scores), else the link's. */
+	uint8_t acs = (uint8_t)receiver.channel_index;
+	if (scan_scores.selected < scan_info.count) {
+		for (unsigned i = 0; i < receiver.channel_count; i++) {
+			if (receiver.channels[i].frequency_khz == (scan_rows[scan_scores.selected] & 0xffffff)) { acs = (uint8_t)i; }
+		}
+	}
+	output[2] = acs; output[3] = (uint8_t)receiver.channel_index;
+	for (unsigned i = 0; i < receiver.channel_count && i < 128; i++) {
+		uint32_t f = receiver.channels[i].frequency_khz;
+		int r = scan_row_of(f);
+		uint32_t p = r >= 0 ? (uint32_t)scan_history[r].score : 0;
+		for (unsigned b = 0; b < 4; b++) { output[4 + i * 4 + b] = f >> (8 * b); output[516 + i * 4 + b] = p >> (8 * b); }
+	}
+	return 0;
+}
+int ar_rf_host_channel_set(unsigned order, const uint8_t *payload, size_t length)
+{
+	if (order == 5) { if (length < 1) { return -22; } chan_auto = payload[0] & 1; return 0; }
+	if (order == 35) {
+		if (length < 1 || payload[0] > 128 || length < 1u + payload[0]) { return -22; }
+		for (unsigned i = 0; i < payload[0]; i++) { if (payload[1 + i] >= receiver.channel_count) { return -22; } }
+		chan_work_count = payload[0]; memcpy(chan_work, payload + 1, payload[0]);
+		scan_apply_work_list();   /* dropped channels keep their last power */
+		return 0;
+	}
+	if (order == 6) {
+		if (length < 2 || !dev_active || receiver.dev_state != 2) { return -7; }
+		if (payload[1] >= receiver.channel_count) { return -6; }
+		if (payload[1] == receiver.channel_index) { return 0; }
+		return dev_hop_request(payload[1]);
+	}
+	return -95;
+}
+
+static void sync_bandwidth(const uint8_t control[7])
+{
+	/* 0x238960 with param1 == 0: a type-0 switch for slot bits 3:0, code bits 7:5. */
+	bw_info.announced++; bw_info.commands++;
+	bw_info.last = control[3] | (uint32_t)control[4] << 8 | (sync_timer_apply ? 0x4000u : 0);
+	if (control[3] != 0) { return; }
+	unsigned code = control[4] >> 5;
+	if (code <= 5 && code != bw_code) { apply_bandwidth(code); }
+	bw_state = 2;
+}
+
+static void bandwidth_poll(void)
+{
+	static unsigned settled_mcs; static uint32_t settled_ms;
+	uint32_t now = elapsed_ms();
+	if (dev_mcs.current != settled_mcs) { settled_mcs = dev_mcs.current; settled_ms = now; }
+	if (bw_settle_step) {
+		/* 0x238842, run on the slot's next frames: first unmute, then release
+		 * the holds and pulse the buffer-user restart (0xd08 bit 16, 0x22459e). */
+		uint32_t age = elapsed_us() - bw_settle_us;
+		uint32_t frame = receiver.search_frame_us ? receiver.search_frame_us : 5634;
+		if (bw_settle_step == 1 && age >= frame) { field(0x9e41801, 0); bw_settle_step = 2; }
+		else if (bw_settle_step == 2 && age >= 2 * frame) {
+			field(0xcfc1701, 0); field(0xbf80701, 0);
+			field(0xd081001, 1); field(0xd081001, 0);
+			bw_settle_step = 0;
+		}
+	}
+	if (bw_state == 0) {
+		if (bw_info.requests >= 4 && bw_code != bw_target && (uint32_t)(now - bw_retry_ms) > 10000) {
+			/* Four quick tries went unanswered: keep asking every 10 s rather
+			 * than leaving the link narrow until the next rebuild. */
+			bw_info.requests = 3; bw_retry_ms = now;
+		}
+		/* Only on a settled MCS: the AP's MCS state machine (0x253412 from
+		 * its 0x106 path) cancels any pending sync command, our switch included. */
+		if (dev_active && receiver.dev_state == 2 && receiver.assigned_slot == 0 && bw_code != bw_target &&
+		    dev_mcs.acknowledgements && !dev_mcs.pending && !dev_mcs.advertised &&
+		    (uint32_t)(now - settled_ms) > 2000 &&
+		    bw_info.requests < 4 && (uint32_t)(now - receiver.connected_elapsed_us / 1000) > 3000) {
+			uint8_t code = (uint8_t)bw_target;
+			(void)ar_dev_command_encode(dev_bw_request, sizeof dev_bw_request, 9, &code, 1);
+			bw_request_pending = 1; bw_info.requests++;
+			bw_state = 1; bw_deadline_ms = now + 2000;
+		}
+	} else if (bw_state == 1 && (int32_t)(now - bw_deadline_ms) >= 0) {
+		/* No command 5 from the AP: ask again later (poll state 0 limits it). */
+		bw_request_pending = 0; bw_state = 0;
+		receiver.connected_elapsed_us = elapsed_us();
+	}
+}
+
 static void sync_tx_mcs(const uint8_t control[7])
 {
 	/* 0x2300a2 -> 0x229bd4 -> PHY107: mode0 DEV accepts slot0;
 	 * low five payload bits select TX MCS, irrespective of bandwidth bits
 	 * when an MCS is present. 0x24d2a4 applies increases immediately. */
 	unsigned mcs = control[4] & 31;
+	if (mcs >= 25) {
+		/* MCS "none": a bandwidth announcement from the AP (0x22b5b8). */
+		unsigned code = control[4] >> 5;
+		bw_info.announced++; bw_info.last = 0x8000u | control[3] | (uint32_t)control[4] << 8;
+		if (code <= 5 && code != bw_code) { apply_bandwidth(code); bw_state = 2; }
+		return;
+	}
 	tx_mcs_info.requests++; tx_mcs_info.requested = mcs;
 	if (control[3] || mcs >= 16) { tx_mcs_info.rejected++; return; }
 	struct ar_interleaver_user *u = &tx_interleaver.users[0];
@@ -339,6 +764,11 @@ static void sync_apply(void)
 	const uint8_t *control = sync_info.last_control;
 	if (receive_operation >= 71) { traffic_info.commands[control[1] & 15].dispatched++; }
 	if (receive_operation >= 72 && (control[1] & 15) == 3) { sync_tx_mcs(control); return; }
+	if (receive_operation >= 72 && (control[1] & 15) == 5) { sync_bandwidth(control); return; }
+	if (receive_operation >= 72 && (control[1] & 15) == 4) { sync_channel(control); return; }
+	if (receive_operation >= 72 && (control[1] & 15) == 8) {
+		frame_info.from_ap++; frame_pending = 0x80 | ((control[3] >> 4) & 7); return;
+	}
 	if ((control[1] & 15) != 6) { sync_info.unsupported++; return; }
 	unsigned user = control[3] & 15, transmit = !!(control[3] & 16);
 	if (user > 9) { sync_info.invalid_users++; return; }
@@ -539,20 +969,42 @@ int ar_rf_board_identity(uint8_t mac[4])
 
 int ar_rf_setup_pins(const uint8_t *records, size_t length)
 {
-	if (information.phase != AR_RF_PROBED || !records || length != 40) { return failure(-22); }
-	unsigned seen = 0;
+	/* Records {bank, pin, mux, pad}: the stock boot pinmux (0x20540a ->
+	 * 0x2196d0), banks 0-3. Mux nibbles at GPIO+0x2c (bank 0), 0x30 (1),
+	 * 0x34 (2), 0x38/0x3c (3, pins 0-7/8-12). A non-zero pad byte is the
+	 * stock 0x219b78 argument, applied for banks 2-3 (6-bit pad fields at
+	 * GPIO+0x14/0x18 and 0x1c/0x20/0x24). Banks 2-3 carry the RF front-end
+	 * control functions (bank 3 pins 4-9: functions 0x7f-0x84); without
+	 * them the receiver ran ~57 AGC steps hotter than stock. */
+	static const uint8_t pin_count[4] = {5, 5, 6, 13};
+	if (information.phase != AR_RF_PROBED || !records || !length || length % 4 || length > 29 * 4) { return failure(-22); }
+	uint32_t seen[4] = {0};
 	for (size_t i = 0; i < length; i += 4) {
 		unsigned bank = records[i], pin = records[i + 1];
-		if (bank > 1 || pin > 4 || records[i + 2] > 15 || records[i + 3]) { return failure(-22); }
-		unsigned bit = 1u << (bank * 5 + pin);
-		if (seen & bit) { return failure(-22); }
-		seen |= bit;
+		if (bank > 3 || pin >= pin_count[bank] || records[i + 2] > 15 || (records[i + 3] && bank < 2)) { return failure(-22); }
+		if (seen[bank] & (1u << pin)) { return failure(-22); }
+		seen[bank] |= 1u << pin;
 	}
 	update(CLOCK + 0x200, 0, 1u << 25); /* Measured GPIO clock ID 21. */
+	/* Stock 0x24be84(bank, 0) after muxing banks 2 and 3: GPIO+0 bits 1
+	 * and 2 (their I/O domain select). */
+	if (seen[2]) { update(0x0a10a000, 0, 2); }
+	if (seen[3]) { update(0x0a10a000, 0, 4); }
 	for (size_t i = 0; i < length; i += 4) {
-		unsigned bank = records[i], pin = records[i + 1], shift = pin * 4;
-		update(0x0a10a02c + bank * 4, 15u << shift, (uint32_t)records[i + 2] << shift);
+		unsigned bank = records[i], pin = records[i + 1], mux = records[i + 2], pad = records[i + 3];
+		uint32_t reg = bank < 3 ? 0x0a10a02c + bank * 4 : pin < 8 ? 0x0a10a038 : 0x0a10a03c;
+		unsigned shift = (bank == 3 && pin >= 8 ? pin - 8 : pin) * 4;
+		update(reg, 15u << shift, (uint32_t)mux << shift);
 		if (!bank) { update(0x0a090140, 3u << (pin * 2), 2u << (pin * 2)); }
+		if (pad) {
+			unsigned value = pad & 8 ? 0x30 : pad & 4 ? 0x20 : pad & 2 ? 0x10 : 0;
+			value |= pad & 0x40 ? 0 : pad & 0x20 ? 2 : 1;
+			uint32_t pad_reg = bank == 2 ? (pin < 4 ? 0x0a10a014 : 0x0a10a018) :
+				(pin < 4 ? 0x0a10a01c : pin < 8 ? 0x0a10a020 : 0x0a10a024);
+			unsigned pad_shift = (pin % 4) * 8;
+			uint32_t old = (read32(pad_reg) >> pad_shift) & 0x0c;
+			update(pad_reg, 0x3fu << pad_shift, (uint32_t)(value | old) << pad_shift);
+		}
 	}
 	pins_configured = 1;
 	return 0;
@@ -760,12 +1212,21 @@ static void tune_context_plls(uint64_t pll)
 		0x95a,0x960,0x905,0x96a,0x90a,0x90a};
 	static const uint16_t other_shadows[12] = {0x910,0x915,0x91a,0x920,0x925,0x92a,
 		0x930,0x935,0x900,0x965,0x90a,0x90a};
+	/* Like stock (linked dump, 2026-10-16): only the broadcast receive bank
+	 * (user 8's first word) and the uplink slot's bank (user 0's other word)
+	 * follow the channel, with the search users 10/11; every other bank is
+	 * parked at 2100 MHz. Tuning all 24 banks onto the receive channel cost
+	 * the receiver most of its gain margin (AGC index ~75 vs stock's ~18,
+	 * raw SNR 1500 vs 9000 on the same link). */
+	uint64_t park;
+	if (ar_rf_pll_word(2100000, &park)) { park = pll; }
 	for (unsigned user = 0; user < 12; user++) {
-		serial_word(shadows[user], pll);
-		serial_word(other_shadows[user], pll);
+		serial_word(shadows[user], user == 8 || user >= 10 ? pll : park);
+		serial_word(other_shadows[user], user == 0 || user >= 10 ? pll : park);
 	}
 	if (commands_ready && receive_operation == 76) { tune_measurement(); }
 }
+static void reapply_power(unsigned user);
 static void configure_receive_context(uint64_t pll)
 {
 	/* Both direction banks must follow the selected channel, including the
@@ -785,13 +1246,19 @@ static void configure_receive_context(uint64_t pll)
 		field(phy | 0x1808, broadcast ? 0x20 : 0x3c);
 		field(phy | 0x1401, 1); field(phy | 0x1701, 1);
 		uint32_t band = (0x9a4 + user * 8) << 16;
-		field(band | 0x1903, 4); field(band | 0x1201, 1); field(band | 0x1601, 1);
-		field(band | 0x1d03, 4); field(band | 0x1301, 1); field(band | 0x1701, 1);
+		/* Band of each bank (1 = below 4.3 GHz, 4 = 5 GHz), matching where
+		 * tune_context_plls() puts it: bits 25-27 the first word, 29-31 the
+		 * other. */
+		field(band | 0x1903, user == 8 || user >= 10 ? 4 : 1); field(band | 0x1201, 1); field(band | 0x1601, 1);
+		field(band | 0x1d03, user == 0 || user >= 10 ? 4 : 1); field(band | 0x1301, 1); field(band | 0x1701, 1);
+		/* Per-user frequency field (MHz / 2): stock parks all but user 8. */
+		if (user < 10 && user != 8) { field((uint32_t)(0xa80 + (user / 2) * 4) << 16 | (user & 1 ? 0x1010 : 0x0010), 0x041a); }
 		field(band | 8, broadcast ? 0 : user == 0 ? 0x27 : 0x4e);
 		field(band | 0x806, broadcast ? 15 : user == 0 ? 34 : 23);
 		uint32_t power = (0xda0 + user * 8) << 16;
 		field(power | 0x1808, broadcast ? 0 : user == 0 ? 0x27 : 0x4e);
 		field((power + 0x40000) | 6, broadcast ? 14 : user == 0 ? 34 : 22);
+		reapply_power(user);
 		if (user < 10) {
 			/* Corroborated static fields in the other per-user PHY bank, not
 			 * packet contents, live gain status or DMA descriptors. */
@@ -885,12 +1352,13 @@ static void receive_event(void)
 		field(0xcf40002, bits | bit); field(0xcf40002, bits & ~bit);
 	}
 	uint32_t metadata = read32(BB + 0xf90), length = metadata & 0xffff;
-	if ((metadata & (1u << 29)) || !length || receive_pending) {
+	if ((metadata & (1u << 29)) || !length || length > sizeof receive_buffers[0] || receive_pending) {
 		receiver.invalid_packets++;
 		field(0xd540001 | (user + 8) << 8, 1); field(0xd540001 | (user + 8) << 8, 0);
 		return;
 	}
 	receive_length = length; receive_user = user; receive_metadata = metadata; receive_pending = 1;
+	ar_cache_flush(receive_buffers[receive_head], length);
 	barrier();
 	field(0xbec0020, (uint32_t)(uintptr_t)receive_buffers[receive_head]);
 	field(0xbe81801, 1); field(0xbe81801, 0);
@@ -958,7 +1426,8 @@ static void phy_dispatch(unsigned outgoing, unsigned command, uint8_t *payload,
 {
 	if (!outgoing) { sync_dispatch(command,payload,length,context); return; }
 	/* MCS requests use TTL31 and are cancelled on observation; no local
-	 * completion is dispatched. Channel-policy callback integration is pending. */
+	 * completion is dispatched. Ours (channel 4, frame mode 8) apply here. */
+	if (command == 4 || command == 8) { dev_command_done(command, payload); return; }
 	sync_info.unsupported++;
 }
 static const struct ar_phy_control_ops phy_ops = {
@@ -1054,8 +1523,25 @@ static void dev_measure_eop(uint32_t status)
 	phy.sample_elapsed_us = (uint32_t)(sample_ticks / 40);
 	if (!phy.samples) { memcpy(phy.first_sample, phy.sample, sizeof phy.sample); }
 	phy.samples++;
+	quality_ring[quality_head] = (struct quality_sample){(uint16_t)phy.raw_snr, phy.sample[6], phy.sample[7],
+		(uint8_t)(errors != 0), (uint32_t)(sample_ticks / 40000)};
+	quality_head = (quality_head + 1) & 7; if (quality_count < 8) { quality_count++; }
 	if (receive_operation >= 67) {
-		dev_mcs_apply(ar_dev_mcs_sample(dev_mcs_context(), (uint32_t)(sample_ticks / 40000), phy.raw_snr, errors));
+		/* Policy inputs. SNR: the EA0 halfword as it is (a single-chain figure:
+		 * stock's self.snr reads twice this on the bench, and 64-QAM 3/4 fails
+		 * here where stock holds it - the second receive chain is not run).
+		 * Errors: the F08 per-packet error word (non-zero on 1.4% of packets
+		 * at 5 MHz, 12% at 20 MHz MCS 10, 64% at MCS 11) plus packets refused
+		 * since the previous sample. Stock's per-chain snr_chan path keys on
+		 * E6C user 12/14 events this receiver never produces (only user 8). */
+		uint16_t policy_snr = (uint16_t)phy.raw_snr;
+		uint32_t refused = (receiver.invalid_packets - phy_last_invalid) +
+			(receiver.mac_invalid_packets - phy_last_mac_invalid);
+		phy_last_invalid = receiver.invalid_packets; phy_last_mac_invalid = receiver.mac_invalid_packets;
+		uint32_t total = (uint32_t)errors + refused;
+		uint16_t policy_errors = total > 65535 ? 65535 : (uint16_t)total;
+		phy.sample[9] = policy_snr; phy.sample[10] = policy_snr >> 8; phy.sample[11] = (uint8_t)policy_errors;
+		dev_mcs_apply(ar_dev_mcs_sample(dev_mcs_context(), (uint32_t)(sample_ticks / 40000), policy_snr, policy_errors));
 		if (!mcs_info.first_request_ms && dev_mcs.requests) { mcs_info.first_request_ms = dev_mcs.request_ms; }
 	}
 }
@@ -1106,7 +1592,7 @@ static void dev_invalidate(void)
 	if (receive_operation >= 67) { dev_mcs_apply(ar_dev_mcs_connect(dev_mcs_context(), 0)); }
 	field(0x8000201, 1); field(0xcf41501, 0);
 	link_event(0, receiver.dev_state);
-	dev_active = 0; receiver.dev_state = 0; receiver.assigned_slot = 8;
+	dev_active = 0; receiver.dev_state = 0; receiver.assigned_slot = 8; bw_state = 0; bw_info.requests = 0;
 	receiver.sync_ack_pending = 0; receiver.link_invalidations++;
 }
 
@@ -1277,7 +1763,7 @@ static void dev_observe_lock(const struct ar_dev_control *control)
 
 static void dev_preencode(void)
 {
-	if (!dev_active || recovery.pending) { return; }
+	if (!dev_active || recovery.pending) { dev_hop_abort(); return; }
 	receiver.tx_preencode++;
 	receiver.last_tx_user = (read32(BB + 0xf70) >> 12) & 15;
 	receiver.last_tx_budget = read32(BB + 0xf5c) >> 16;
@@ -1302,6 +1788,7 @@ static void dev_preencode(void)
 		dev_mcs_apply(ar_dev_mcs_preencode(dev_mcs_context(),
 			elapsed_ms(), receiver.assigned_slot));
 	}
+	dev_hop_poll();
 	struct ar_dev_report report = {.state = receiver.dev_state, .assigned_slot = receiver.assigned_slot,
 		.receive_channel = dev_config.receive_channel,
 		.slot_value = dev_power_index,
@@ -1309,12 +1796,13 @@ static void dev_preencode(void)
 	memcpy(report.local, dev_config.local, 4);
 	const struct ar_dev_tx_packet *packet;
 	unsigned ack = receiver.sync_ack_pending && (receiver.last_tx_budget & ~7u) >= 33;
+	unsigned request = !receiver.sync_ack_pending && bw_request_pending && (receiver.last_tx_budget & ~7u) >= 33;
 	uint8_t stream[132]; unsigned port = 0;
-	size_t length = ack ? sizeof dev_sync_ack : 0;
+	size_t length = ack || request ? sizeof dev_sync_ack : 0;
 	size_t budget = receiver.last_tx_budget & ~7u;
 	/* Keep remote-sync ACK ahead of host streams even when its budget is
 	 * temporarily too small. The endpoint retains bytes on every skipped TX. */
-	if (!receiver.sync_ack_pending && receive_operation >= 66 && receiver.dev_state == 2 &&
+	if (!receiver.sync_ack_pending && !request && receive_operation >= 66 && receiver.dev_state == 2 &&
 	    receiver.assigned_slot == 0 && budget > 28 && tx_peek_callback && tx_commit_callback) {
 		size_t capacity = budget - 28;
 		if (capacity > sizeof stream) { capacity = sizeof stream; }
@@ -1324,7 +1812,8 @@ static void dev_preencode(void)
 			receiver.tx_errors++; dev_tx_finish_segments(); return;
 		}
 	}
-	int result = ar_dev_tx_prepare_payload(&dev_tx, &report, port, ack ? dev_sync_ack : stream,
+	int result = ar_dev_tx_prepare_payload(&dev_tx, &report, port,
+		ack ? dev_sync_ack : request ? dev_bw_request : stream,
 		length, receiver.last_tx_budget, &packet);
 	if (result) {
 		receiver.tx_errors++; receiver.tx_owned = dev_tx.owned;
@@ -1332,6 +1821,7 @@ static void dev_preencode(void)
 	}
 	/* Original 0x237ca6 submits header then outband as distinct segments,
 	 * followed by its terminal mask pulse. Caches remain disabled. */
+	ar_cache_clean(packet->bytes, packet->length);
 	barrier();
 	field(0xd440020, (uint32_t)(uintptr_t)packet->bytes);
 	field(0xd400010, packet->header_length); field(0xd401808, 1);
@@ -1343,12 +1833,13 @@ static void dev_preencode(void)
 		}
 		receiver.sync_ack_pending = 0; receiver.sync_ack_submitted++;
 	}
+	if (request) { bw_request_pending = 0; bw_info.sent++; }
 	if (length) {
 		field(0xd440020, (uint32_t)(uintptr_t)(packet->bytes + packet->header_length + 16));
 		field(0xd400010, length); field(0xd401808, 4);
 	}
 	dev_tx_finish_segments();
-	if (length && !ack) {
+	if (length && !ack && !request) {
 		if (!tx_payload_info.packets) {
 			tx_payload_info.first_length = packet->length;
 			memcpy(tx_payload_info.first_packet, packet->bytes, packet->length);
@@ -1373,6 +1864,7 @@ static void receive_complete(void)
 {
 	receiver.dma_completions++;
 	if (!receive_pending) { receiver.invalid_packets++; return; }
+	ar_cache_invalidate(receive_buffers[receive_head], receive_length);
 	barrier();
 	receiver.last_packet_elapsed_us = elapsed_us();
 	if (!receiver.packets) { receiver.first_packet_elapsed_us = receiver.last_packet_elapsed_us; }
@@ -1600,18 +2092,26 @@ int ar_rf_host_pairing_result(uint8_t output[164])
 	return ar_binding_result(&binding, output);
 }
 
+
+/* DEV binding (ported from upstream mh1412/Open8030 718c31d): SET 2 starts
+ * or cancels pairing, GET 1 returns the completed peer, SET 3 selects the
+ * peer to admit. Pairing uses the shared zero identity; a cancelled,
+ * unfinished pairing restarts normal search through recovery. */
+static unsigned peer_ignored;
+static uint8_t peer_requested[4];
 int ar_rf_host_peer(const uint8_t *data, size_t length)
 {
 	if (!data || length != 4) { return -22; }
 	if (receive_operation != 76 || !host_initialized || information.error) { return -11; }
-	memcpy(dev_config.configured_peer, data, 4);
-	/* Persist in saved loader state for stop/start and deferred recovery;
-	 * durable storage is still performed by the stock Linux backend. */
-	memcpy(host_config.channels + 8, data, 4);
-	if (!binding.enabled) { binding_identity(); }
+	/* Stock (DEV) stores the peer and retargets the user-8 identity through
+	 * its own hash (0x2218f4), not the XOR used for pairing here. Until that
+	 * hash is derived, record the peer only: a host may name a stored AP
+	 * MAC at every start (often not the unit in front of it), and an XOR
+	 * identity for it stopped the link. Admission still follows the
+	 * candidate list. */
+	memcpy(peer_requested, data, 4); peer_ignored++;
 	return 0;
 }
-
 int ar_rf_host_candidates(const uint8_t *data, size_t length)
 {
 	/* Original 0x221dca copies count four-byte addresses; 0x21b3e2
@@ -1804,6 +2304,10 @@ static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t 
 		if (operation >= 67) {
 			(void)ar_dev_mcs_init(&dev_mcs, &policy);
 			mcs_sync_mmio = channels[42];
+			/* Remote sync as stock's DEV runs it (0x22511e): 0xd30[5:0] 0x3f,
+			 * [7:6] 3, [15:8] one per user, and [23:16] 0xff while one of the
+			 * DEV's own commands is queued in its control block. */
+			mcs_sync_mmio = 1; field(0xd300010, 0xffff);
 			for (unsigned i = 0; i < 25; i++) { mcs_fch_keys[i] = le32(channels + 168 + i * 4); }
 		}
 		if (deferred == 3) {
@@ -1836,6 +2340,7 @@ static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t 
 		scan_rows[i] = le32(scan_channels + 4*i) | 0x11000000;
 		(void)ar_rf_pll_word(scan_rows[i] & 0xffffff,&scan_plls[i]);
 	}
+	scan_apply_work_list();
 	memset(&receiver, 0, sizeof receiver);
 	memset(&tx_payload_info, 0, sizeof tx_payload_info);
 	ar_dev_stream_init(&dev_stream);
@@ -1849,6 +2354,9 @@ static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t 
 	memset(&tx_mcs_info, 0, sizeof tx_mcs_info); tx_mcs_info.current = 1;
 	memset(&tx_interleaver,0,sizeof tx_interleaver);
 	memset(&tx_history_info,0,sizeof tx_history_info);
+	/* Operations 41/42 below program the configured 5 MHz receive profile. */
+	bw_code = 2; bw_state = 0; bw_request_pending = 0; bw_settle_step = 0;
+	bw_info.requests = 0;   /* per link: each new link widens again from 5 MHz */
 	memset(&mcs_info, 0, sizeof mcs_info); mcs_info.first_observed_mcs = 25;
 	if (operation < 67) { memset(&dev_mcs, 0, sizeof dev_mcs); mcs_sync_mmio = 0; }
 	memset(phy_header_valid, 0, sizeof phy_header_valid); memset(phy_eop_seen, 0, sizeof phy_eop_seen);
@@ -2082,6 +2590,8 @@ static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t 
 				mcs_fch_keys,information.chip_profile,1,&tx_mcs_ops,NULL);
 			tx_mcs_info.current = tx_interleaver.users[0].mcs;
 		}
+		frame_mode = 0; frame_pending = 0;   /* a new link starts on the standard frame */
+		memset(&distance, 0, sizeof distance);
 	}
 	if (operation == 36 || operation == 37 || operation == 39 || operation >= 41) {
 		/* 0x222cac(8,0) also clears the shared identity field. Trial 59
@@ -2202,6 +2712,7 @@ void ar_rf_poll(void)
 {
 	if (information.phase != AR_RF_RECEIVING) { return; }
 	if (recovery.pending && automatic_recovery()) { recover_host(); return; }
+	bandwidth_poll();
 	if (receive_operation >= 68) {
 		uint32_t tick = read32(TIMER);
 		if (receiver.dev_state == 2) {
@@ -2225,7 +2736,13 @@ void ar_rf_poll(void)
 			}
 			irq_ack(index);
 			if (index == 16) { receive_event(); }
-			else if (index == 13) { receive_complete(); }
+			else if (index == 6) { distance_sample(); }
+			else if (index == 13) {
+				uint32_t started = elapsed_us(); receive_complete();
+				uint32_t took = elapsed_us() - started;
+				phy_trace.reserved[0] += took; phy_trace.reserved[1]++;
+				if (took > phy_trace.reserved[2]) { phy_trace.reserved[2] = took; }
+			}
 			else if (index == 19) { dev_preencode(); }
 			else if (index == 18 && receive_operation >= 54) {
 				uint32_t context = read32(BB + 0xf68), request = read32(BB + 0xf64);
@@ -2343,13 +2860,21 @@ void ar_rf_poll(void)
 				receiver.source2_command_last = command;
 				receiver.source2_users[(command >> 16) & 15]++;
 				receiver.source2_modes[(command >> 20) & 3]++;
-				uint32_t old = read32(BB + 0xc00);
-				field(0xc000701, 1);
-				receiver.snr_words[0] = read32(BB + 0xef0);
-				receiver.snr_words[1] = read32(BB + 0xef4);
-				field(0xc000701, (old >> 7) & 1);
+				/* Stock 0x229a56: on the (E6C >> 16) & 0xd == 0xc event it
+				 * selects bank 7 of C00 with bit 0 clear and reads the four
+				 * per-chain SNR halfwords at EF0/EF4 (the "snr_chan" values
+				 * that feed its MCS policy through message 0x101). */
+				if (((command >> 16) & 0xd) == 0xc) {
+					uint32_t old = read32(BB + 0xc00);
+					field(0xc000701, 1); field(0xc000001, 0);
+					receiver.snr_words[0] = read32(BB + 0xef0);
+					receiver.snr_words[1] = read32(BB + 0xef4);
+					field(0xc000701, (old >> 7) & 1); field(0xc000001, old & 1);
+					chain_snr_fresh = 1;
+				}
 			}
 			else if (index == 14) {
+				if (frame_pending) { unsigned m = frame_pending & 7; frame_pending = 0; apply_frame_mode(m); }
 				uint32_t old = read32(BB + 0xbb0);
 				field(0xbb00701, 0); receiver.fch_last = read32(BB + 0xf00);
 				field(0xbb00701, (old >> 7) & 1);
@@ -2357,6 +2882,10 @@ void ar_rf_poll(void)
 				if (automatic_recovery() && (user == 8 || user == 9)) {
 					(void)ar_channel_monitor_observe(&channel_monitor,8,!!(receiver.fch_last & 0x80),
 						NULL,0,&monitor_ops,NULL);
+				}
+				if (bw_code == 5) {
+					if (receiver.fch_last & 0x80) { bw_info.wide_ok++; bw_info.wide_last_ok = receiver.fch_last; }
+					else { bw_info.wide_bad++; bw_info.wide_last_bad = receiver.fch_last; }
 				}
 				if (receive_operation >= 64 && (user == 8 || user == 9)) {
 					/* 0x227b96 -> 0x21acb2 aliases both raw users to logical8. */
@@ -2726,6 +3255,175 @@ int ar_rf_host_control(unsigned operation, size_t payload_length)
 	memset(&binding, 0, sizeof binding);
 	return 0;
 }
+/* SET 22 BB_SET_BANDWIDTH {slot, direction, code}: direction 1 (receive)
+ * asks the AP for that broadcast width through internal command 9, the way
+ * stock's 0x24ed72 does; direction 0 would change this DEV's own uplink
+ * width, which is not supported. */
+int ar_rf_host_bandwidth(const uint8_t *payload, size_t length)
+{
+	if (!payload || length < 3) { return -22; }
+	if (payload[1] != 1 || payload[2] > 5) { return -95; }
+	if (!dev_active || receiver.dev_state != 2) { return -7; }
+	bw_target = payload[2];
+	if (bw_code != bw_target) { bw_info.requests = 0; bw_state = 0; }
+	return 0;
+}
+/* SET 38 (0x24f0xx bb_link_retx_ctrl_cfg): the retransmission-request control
+ * parameters; byte 0 is the window the watchdog counts repeats over. */
+static uint8_t retx_config[8];
+/* Host TX power (stock SET 8 -> 0x24fbf2, SET 9, GET 7/8/9). The level is a
+ * dBm index into the board calibration (9..39); the planner turns it into
+ * the per-user analog gain / digital amplitude fields of both RF paths, the
+ * same fields stock writes. SET 9 (automatic power between min and max) is
+ * recorded and answered; the closed loop itself, which follows the peer's
+ * reports, is not implemented: enabling it applies the maximum. */
+static struct ar_power_config power_cfg;
+static uint8_t power_ready, power_level[AR_POWER_USERS], power_auto[3];
+void ar_rf_set_power_config(const struct ar_power_config *config)
+{
+	if (!config) { return; }
+	power_cfg = *config; power_ready = 1;
+	memset(power_level, 0xff, sizeof power_level);
+}
+static int apply_power(unsigned user, unsigned level)
+{
+	struct ar_power_plan plan;
+	if (!power_ready) { return -11; }
+	int result = ar_power_plan(&power_cfg, user, level, &plan);
+	if (result) { return result; }
+	for (unsigned i = 0; i < plan.count; i++) { field(plan.writes[i].field, plan.writes[i].value); }
+	power_level[user] = (uint8_t)level;
+	return 0;
+}
+static void reapply_power(unsigned user)
+{
+	if (power_ready && user < AR_POWER_USERS && power_level[user] != 0xff) { (void)apply_power(user, power_level[user]); }
+}
+int ar_rf_host_power(uint32_t reqid, const uint8_t *in, size_t length, uint8_t *out, size_t *out_length)
+{
+	*out_length = 0;
+	switch (reqid) {
+	case 0x02000008:
+		if (length < 2 || in[0] >= AR_POWER_USERS) { return -22; }
+		return apply_power(in[0], in[1]);
+	case 0x02000009:
+		if (length < 3 || in[0] > 1) { return -22; }
+		if (in[0] && (in[2] < 9 || in[1] > 39 || in[2] > in[1])) { return -22; }
+		memcpy(power_auto, in, 3);
+		return in[0] ? apply_power(0, in[1]) : 0;
+	case 0x01000007:
+		out[0] = power_cfg.closed[0] | power_cfg.closed[1] << 1; *out_length = 1; return 0;
+	case 0x01000008:
+		if (length < 1) { return -22; }
+		out[0] = in[0]; out[1] = in[0] < AR_POWER_USERS ? power_level[in[0]] : 0xff; *out_length = 2; return 0;
+	case 0x01000009:
+		memcpy(out, power_auto, 3); *out_length = 3; return 0;
+	}
+	return -95;
+}
+/* Stock's link-rate figure (GET 6), kbps: 8 blocks a frame; a block is 288
+ * symbols x bits of the modulation, doubled per width step from 5 MHz (40
+ * MHz codes as 20), halved per repeat at the two lowest indexes; 7 bytes
+ * go per group of LDPC codewords. Matches stock's reports (MCS 10 at 20 MHz
+ * on the 5633.92 us frame: 25 934 kbps; stock said 25 933). The index is
+ * the radio's internal one (MCS + 2). */
+static uint32_t link_rate_kbps(unsigned index, unsigned width, uint32_t frame_us)
+{
+	static const uint8_t rep[16] = {2, 1}, cr[16] = {0,0,0,1,2,0,1,2,0,1,2,0,1,2,0,1};
+	static const uint8_t mod[16] = {0,0,0,0,0,1,1,1,2,2,2,3,3,3,4,4}, bits[5] = {1,2,4,6,8};
+	static const uint8_t num[3] = {1,2,3}, den[3] = {2,3,4}, grp[3] = {4,4,8};
+	if (index > 15 || width < 2 || width > 5 || !frame_us) { return 0; }
+	int shift = (width == 5 ? 4 : (int)width) - rep[index];
+	uint32_t coded = (bits[mod[index]] * 288u) << shift;
+	uint32_t groups = (coded / 2304u + grp[cr[index]] - 1) / grp[cr[index]];
+	int32_t bytes = (int32_t)(coded * num[cr[index]] / den[cr[index]] / 8) - 7 * (int32_t)groups;
+	return bytes > 0 ? (uint32_t)((uint64_t)bytes * 64000u / frame_us) : 0;
+}
+#ifdef AR_RF_SIMULATED
+uint32_t ar_rf_test_link_rate(unsigned index, unsigned width, uint32_t frame_us) { return link_rate_kbps(index, width, frame_us); }
+#endif
+/* GET 6 {dir, slot} -> {mcs, pad[3], u32 kbps}. A DEV has slot 0 only. RX:
+ * the MCS the AP sends with, TX: ours; 25 = none, as stock. */
+int ar_rf_host_mcs(const uint8_t *in, size_t length, uint8_t out[8])
+{
+	if (!in || length < 2 || in[0] > 1) { return -22; }
+	if (in[1] != 0) { return -6; }
+	memset(out, 0, 8);
+	unsigned linked = dev_active && receiver.dev_state == 2;
+	unsigned index = !linked ? 25 : in[0] ? dev_mcs.observed : tx_mcs_info.current;
+	out[0] = (uint8_t)index;
+	uint32_t kbps = index < 16 ? link_rate_kbps(index, in[0] ? bw_code : 2, dev_frame_microseconds()) : 0;
+	for (unsigned b = 0; b < 4; b++) { out[4 + b] = (uint8_t)(kbps >> (8 * b)); }
+	return 0;
+}
+/* GET 107 {frames} -> 216 bytes: self quality (bb_info_t: snr, LDPC error
+ * ratios x10000, gains, our TX MCS/channel/power, TX frequency), peer zero.
+ * SNR and gains are averaged over the last 8 frames like stock; the LDPC
+ * ratios here are the share of those frames with a decode error (stock
+ * counts codewords, which this receiver does not expose yet). */
+int ar_rf_host_link_info(const uint8_t *in, size_t length, uint8_t out[216])
+{
+	if (!in || length < 1) { return -22; }
+	memset(out, 0, 216);
+	if (!dev_active || !quality_count) { return -1; }
+	uint32_t newest = quality_ring[(quality_head + 7) & 7].ms, now = (uint32_t)(elapsed_ticks() / 40000);
+	if (now - newest > 200) { return -1; }
+	uint32_t snr = 0, ga = 0, gb = 0, bad = 0;
+	for (unsigned i = 0; i < quality_count; i++) {
+		snr += quality_ring[i].snr; ga += quality_ring[i].gain_a; gb += quality_ring[i].gain_b; bad += quality_ring[i].errored;
+	}
+	uint16_t avg = (uint16_t)(snr / quality_count), ratio = (uint16_t)(bad * 10000 / quality_count);
+	out[0] = (uint8_t)avg; out[1] = avg >> 8;
+	out[2] = (uint8_t)ratio; out[3] = ratio >> 8; out[4] = (uint8_t)ratio; out[5] = ratio >> 8;
+	out[6] = (uint8_t)(ga / quality_count); out[7] = (uint8_t)(gb / quality_count);
+	out[8] = (uint8_t)(receiver.dev_state == 2 ? tx_mcs_info.current : 25);
+	out[9] = (uint8_t)receiver.channel_index;
+	out[10] = power_level[0] != 0xff ? power_level[0] : 0;
+	for (unsigned b = 0; b < 4; b++) { out[12 + b] = (uint8_t)(receiver.frequency_khz >> (8 * b)); }
+	out[16] = (uint8_t)bw_code;
+	return 0;
+}
+int ar_rf_host_retx_config(const uint8_t *payload, size_t length)
+{
+	/* Stock 0x2000026 (bb_link_retx_ctrl_cfg): mode 0 only, the first 8
+	 * bytes replace a 64-bit retransmission control mask in the link state,
+	 * answered 0. Its consumer is the per-user retx feed, which this DEV
+	 * does not run, so the mask is only kept. */
+	if (!payload || length < 8) { return -22; }
+	memcpy(retx_config, payload, 8);
+	return 0;
+}
+/* SET 36 (0x24ea0c): the host replaces one row of the DEV MCS policy, found
+ * by its internal index; a row the configuration does not have answers 6.
+ * Wire: [4] index, [5] consecutive-down, [6..7] SNR up, [8..9] SNR down,
+ * [10] errors up, [11] errors down, [12..13] up keep ms, [14..15] down keep.
+ * Both the saved plan (what a rebuild reloads) and the live policy change. */
+int ar_rf_host_mcs_row(const uint8_t row[16])
+{
+	if (!row) { return -22; }
+	if (!host_config.valid || host_config.length < 32 + AR_DEV_MCS_CONFIG_BYTES) { return -7; }
+	uint8_t *policy = host_config.channels + 32;
+	unsigned count = policy[2], index = row[4];
+	for (unsigned i = 0; i < count && i < AR_DEV_MCS_ROWS; i++) {
+		uint8_t *r = policy + 16 + i * 12;
+		if (r[0] != index) { continue; }
+		/* SNR thresholds and keep times only. The error counts and the
+		 * consecutive-error rule stay the configuration's: stock's rows (2 bad
+		 * samples in 8, 2 in a row, for MCS 10) are tuned to its LDPC failure
+		 * count, while this policy samples the F08 per-packet error word,
+		 * non-zero in 1-2% of packets on a clean bench link - with stock's
+		 * numbers the link flapped 10<->8 every few seconds. */
+		memcpy(r + 4, row + 6, 2); memcpy(r + 6, row + 8, 2);
+		memcpy(r + 8, row + 12, 2); memcpy(r + 10, row + 14, 2);
+		if (i < dev_mcs.config.count && dev_mcs.config.rows[i].mcs == index) {
+			struct ar_dev_mcs_row *live = &dev_mcs.config.rows[i];
+			live->snr_up = row[6] | (uint16_t)row[7] << 8; live->snr_down = row[8] | (uint16_t)row[9] << 8;
+			live->up_ms = row[12] | (uint16_t)row[13] << 8; live->down_ms = row[14] | (uint16_t)row[15] << 8;
+		}
+		return 0;
+	}
+	return 6;
+}
 const struct ar_rf_lifecycle_info *ar_rf_lifecycle_information(void)
 {
 	lifecycle.state = information.error ? 3 : !host_initialized ? 0 : information.phase == AR_RF_RECEIVING ? 2 : 1;
@@ -2755,10 +3453,12 @@ int ar_rf_host_registers(unsigned offset, unsigned length, uint8_t output[256])
 
 int ar_rf_read_registers(unsigned offset, unsigned length, uint8_t *output)
 {
-	/* Diagnostic readback is restricted to the known configuration page,
-	 * outside active monitoring, and never exposes arbitrary MCU memory. */
-	if (information.phase != AR_RF_PSRAM || !output || !length || length > 256 ||
-	    (offset & 3) || (length & 3) || offset > 0xe00 - length) { return -22; }
+	/* Diagnostic readback of the baseband register bank (configuration page
+	 * and the status words above 0xe00), in any phase after PSRAM: reads
+	 * are harmless and a linked-state dump is what a comparison with the
+	 * stock firmware needs. Never exposes arbitrary MCU memory. */
+	if (information.phase < AR_RF_PSRAM || !output || !length || length > 256 ||
+	    (offset & 3) || (length & 3) || offset > 0x1000 - length) { return -22; }
 	for (unsigned i = 0; i < length; i += 4) {
 		uint32_t word = read32(BB + offset + i);
 		for (unsigned byte = 0; byte < 4; byte++) { output[i + byte] = word >> (byte * 8); }

@@ -40,13 +40,15 @@ int ar_flash_find_partition(const uint8_t *data, size_t length,
 		/* Check before multiplication/addition; original truncation of high
 		 * LBA words is not a valid native flash address. */
 		uint64_t sectors = (capacity - base) / 512;
-		if (last >= sectors) { return -74; }
 		unsigned match = 1;
 		for (size_t j = 0; j < name_length; j++) {
 			if (entry[56 + j * 2] != (uint8_t)name[j] || entry[57 + j * 2]) { match = 0; break; }
 		}
 		if (match && name_length < 36 && (entry[56 + name_length * 2] || entry[57 + name_length * 2])) { match = 0; }
 		if (match) {
+			/* Only the selected partition must fit: a USB ground unit's table lists
+			 * app1 up to 0x210000 on a 2 MiB part, which stock never checks. */
+			if (last >= sectors) { return -74; }
 			if (found) { return -74; }
 			selected.offset = base + (uint32_t)(first * 512);
 			selected.length = (uint32_t)((last - first + 1) * 512); found = 1;

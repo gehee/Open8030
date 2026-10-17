@@ -44,6 +44,8 @@
 #define AR_REQ_SOCKET_CLOSE_INFO UINT32_C(0x0c5a0029)
 #define AR_REQ_SOCKET_FLOW_INFO UINT32_C(0x0c5a002a)
 #define AR_REQ_TELEMETRY_INFO UINT32_C(0x0c5a002b)
+/* Diagnostics for the USB transport and host features, after upstream's. */
+#define AR_REQ_FLASH_READ UINT32_C(0x0c5a0030)
 /* Project-only read diagnostics through the original Linux daemon. Its
  * 0x4030d0 dispatcher consumes group 0x0c locally; group 0x01 is forwarded.
  * These aliases are not vendor commands. Never alias configuration/start. */

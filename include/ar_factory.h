@@ -25,4 +25,5 @@ int ar_factory_read(const struct ar_flash_spi_io *io, void *context,
 /* Physical GND binding, called once during boot with RF held. */
 int ar_factory_device_read(const struct ar_flash_part *parts, size_t count,
 	uint8_t record[8], struct ar_factory_info *info);
+int ar_factory_device_flash_read(uint32_t capacity, uint32_t offset, uint8_t *out, size_t length);
 #endif

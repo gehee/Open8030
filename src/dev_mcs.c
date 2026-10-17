@@ -11,19 +11,21 @@ int ar_dev_mcs_decode_config(struct ar_dev_mcs_config *config, const uint8_t *wi
 {
 	if (!config || !wire || length != AR_DEV_MCS_CONFIG_BYTES || (wire[0] & ~3u) ||
 	    !wire[2] || wire[2] > AR_DEV_MCS_ROWS || wire[1] > AR_DEV_MCS_NONE || wire[3] > 1 ||
-	    wire[10] > 1 || wire[11] != 2 || wire[12] || wire[13] || wire[14] || wire[15]) { return -22; }
+	    wire[10] > 1 || wire[11] != 2 || wire[12] > 100 || wire[13] || wire[14] || wire[15]) { return -22; }
 	struct ar_dev_mcs_config parsed = {.enabled = wire[0] & 1, .automatic = wire[0] >> 1,
 		.initial_mcs = wire[1], .count = wire[2], .policy = wire[3],
-		.hold_ms = le16(wire + 4), .delay_samples = le16(wire + 6), .max_wait_ms = le16(wire + 8)};
+		.hold_ms = le16(wire + 4), .delay_samples = le16(wire + 6), .max_wait_ms = le16(wire + 8),
+		.distance_enabled = wire[10], .distance_offset = wire[12]};
 	for (unsigned i = 0; i < AR_DEV_MCS_ROWS; i++) {
 		const uint8_t *p = wire + 16 + i * 12;
 		if (i >= parsed.count) {
 			for (unsigned j = 0; j < 12; j++) { if (p[j]) { return -22; } }
 			continue;
 		}
-		/* This monitor keeps its configured 5-MHz profile; stock truncates
-		 * that profile's policy table at internal MCS12 (220496). */
-		if (p[0] > 12 || (i && p[0] <= parsed.rows[i - 1].mcs)) { return -22; }
+		/* Stock truncates the table at internal MCS12 when the link starts
+		 * on 5 MHz (0x221b7e: 12); the link widens to 20 MHz after login, so
+		 * rows up to internal 15 (MCS 13, 1024-QAM 3/4) are taken. */
+		if (p[0] > 15 || (i && p[0] <= parsed.rows[i - 1].mcs)) { return -22; }
 		parsed.rows[i] = (struct ar_dev_mcs_row){p[0], p[1], p[2], (int8_t)p[3],
 			le16(p + 4), le16(p + 6), le16(p + 8), le16(p + 10)};
 	}
@@ -126,7 +128,7 @@ unsigned ar_dev_mcs_sample(struct ar_dev_mcs *ctx, uint32_t now_ms,
 		if (!explicit) {
 			while (selected + 1 < ctx->config.count && ctx->config.rows[selected + 1].snr_down <= minimum) { selected++; }
 		}
-		ctx->current = selected; ctx->previous = 255; ctx->started = 1;
+		ctx->current = selected; ctx->previous = 255; ctx->started = 1; ctx->row_since_ms = now_ms;
 		return request(ctx, now_ms);
 	}
 	if (!ctx->config.automatic || ctx->pending ||
@@ -145,11 +147,12 @@ unsigned ar_dev_mcs_sample(struct ar_dev_mcs *ctx, uint32_t now_ms,
 	average >>= 3;
 	ctx->average_snr = average; ctx->bad_samples = bad; ctx->recent_bad = recent;
 	int direction = 1;
-	unsigned forced = 0;
+	unsigned forced = 0, error_down = 0;
 	if (!ctx->config.policy) {
 		unsigned up = next ? next->errors_up : 0;
 		unsigned down = ctx->current ? current->errors_down : 255;
 		direction = bad <= up ? 1 : bad < down ? 0 : -1;
+		error_down = direction == -1;
 		if (ctx->current && current->consecutive_down > 0 && recent >= (unsigned)current->consecutive_down) {
 			direction = -1; forced = 1;
 		}
@@ -170,8 +173,18 @@ unsigned ar_dev_mcs_sample(struct ar_dev_mcs *ctx, uint32_t now_ms,
 	uint32_t elapsed = now_ms - ctx->direction_ms;
 	int step = ctx->direction == 1 && elapsed > up_ms ? 1 :
 		ctx->direction == 2 && (elapsed >= down_ms || forced) ? -1 : 0;
+	if (ctx->current < AR_DEV_MCS_ROWS && (uint32_t)(now_ms - ctx->row_since_ms) > 60000) {
+		ctx->backoff_level[ctx->current] = 0;
+	}
+	if (step > 0 && next && (int32_t)(now_ms - ctx->blocked_until[ctx->current + 1]) < 0) { step = 0; }
 	if ((step > 0 && !next) || (step < 0 && !ctx->current) || !step) { return AR_DEV_MCS_NOTHING; }
-	ctx->previous = ctx->current; ctx->current += step;
+	if (step < 0 && (error_down || forced) && ctx->current < AR_DEV_MCS_ROWS) {
+		unsigned level = ctx->backoff_level[ctx->current];
+		ctx->blocked_until[ctx->current] = now_ms + (30000u << level);
+		if (level < 4) { ctx->backoff_level[ctx->current]++; }
+		ctx->backoffs++;
+	}
+	ctx->previous = ctx->current; ctx->current += step; ctx->row_since_ms = now_ms;
 	return request(ctx, now_ms);
 }
 

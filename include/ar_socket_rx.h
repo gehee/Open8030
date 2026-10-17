@@ -69,4 +69,5 @@ void ar_socket_close_commit(struct ar_socket_rx *sockets, const struct ar_frame 
 size_t ar_socket_tx_peek(struct ar_socket_rx *sockets, uint8_t *scratch,
 	size_t capacity, unsigned *mac_port);
 void ar_socket_tx_commit(struct ar_socket_rx *sockets, unsigned mac_port, size_t length);
+void ar_socket_rx_totals(uint32_t *offered, uint32_t *dropped);
 #endif

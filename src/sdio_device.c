@@ -3,6 +3,7 @@
  * register/descriptor contracts. Packet bring-up validated on Ascent VRX; RF,
  * queued ownership and the full interrupt/cache HAL remain incomplete. */
 #include "ar_sdio_device.h"
+#include "ar_cache.h"
 #include <string.h>
 
 #define SDIO_BASE UINT32_C(0x04200000)
@@ -95,6 +96,7 @@ static void arm_receive(void)
 {
 	if (!ready || rx_armed || tx_count == AR_SDIO_TX_DEPTH) { return; }
 	barrier();
+	ar_cache_flush(receive_buffer, AR_SDIO_BUFFER_SIZE);
 	write32(SDIO_BASE + RX_ADDR, pointer(receive_buffer));
 	control_byte(SDIO_BASE + RX_BLOCKS, AR_SDIO_BUFFER_SIZE / AR_SDIO_BLOCK);
 	barrier();
@@ -105,6 +107,7 @@ static void start_transmit(void)
 {
 	if (!ready || tx_pending || !tx_count) { return; }
 	barrier();
+	ar_cache_clean(transmit_buffers[tx_head], transmit_lengths[tx_head]);
 	write32(SDIO_BASE + TX_ADDR, pointer(transmit_buffers[tx_head]));
 	update(SDIO_BASE + TX_LENGTH, 0x1fffff, (uint32_t)transmit_lengths[tx_head]);
 	control_byte(SDIO_BASE + TX_BLOCKS, (uint8_t)(transmit_lengths[tx_head] >> 9));
@@ -189,6 +192,8 @@ void ar_sdio_init(void)
 	barrier();
 	write32(SDIO_BASE + CFG, 0);
 	update(SDIO_BASE + DMA_FEATURES, 0, 7);
+	ar_cache_clean(common_cis, sizeof common_cis); ar_cache_clean(function_cis, sizeof function_cis);
+	ar_cache_clean(progress_cis, sizeof progress_cis);
 	write32(SDIO_BASE + CIS_COMMON, pointer(common_cis));
 	write32(SDIO_BASE + CIS_F1, pointer(function_cis));
 	write32(SDIO_BASE + RX_ADDR, 0);
@@ -207,6 +212,7 @@ void ar_sdio_init(void)
 	control_byte(SDIO_BASE + 0x154, 0xa1);
 #ifdef AR_SDIO_FINAL_DIAGNOSTIC_ID_LOW
 	common_cis[4] = AR_SDIO_FINAL_DIAGNOSTIC_ID_LOW;
+	ar_cache_clean(common_cis, sizeof common_cis);
 	barrier();
 	write32(SDIO_BASE + CIS_COMMON, pointer(common_cis));
 #endif
@@ -265,6 +271,7 @@ size_t ar_sdio_receive(const uint8_t **data)
 		size_t length = read32(SDIO_BASE + RX_LENGTH) & 0xffff;
 		if (!(events & (8 | 16)) && length && length <= sizeof receive_buffer &&
 		    read32(SDIO_BASE + RX_ADDR) == pointer(receive_buffer)) {
+			ar_cache_invalidate(receive_buffer, AR_SDIO_BUFFER_SIZE);
 			*data = receive_buffer;
 			stats.rx_packets++;
 			return length;
@@ -319,6 +326,7 @@ void ar_sdio_record_progress(uint32_t stage, uint32_t a, uint32_t b, uint32_t c)
 	uint32_t fields[4] = {stage, a, b, c};
 	memcpy(common_cis + 12, fields, sizeof fields);
 	memcpy(progress_cis, common_cis, sizeof progress_cis);
+	ar_cache_clean(progress_cis, sizeof progress_cis); ar_cache_clean(common_cis, sizeof common_cis);
 	barrier();
 	progress_bank ^= 1;
 	write32(SDIO_BASE + CIS_COMMON, pointer(progress_bank ? progress_cis : common_cis));

@@ -19,6 +19,8 @@ struct ar_dev_mcs_row {
 struct ar_dev_mcs_config {
 	uint8_t enabled, automatic, initial_mcs, count, policy;
 	uint16_t hold_ms, delay_samples, max_wait_ms;
+	/* dist_calc from the same config block: enable, offset in raw units. */
+	uint8_t distance_enabled, distance_offset;
 	struct ar_dev_mcs_row rows[AR_DEV_MCS_ROWS];
 };
 enum ar_dev_mcs_action {
@@ -40,6 +42,10 @@ struct ar_dev_mcs {
 	uint32_t sample_ms, direction_ms, request_ms, retry_ms;
 	uint32_t samples, requests, acknowledgements, unsolicited, timeouts;
 	uint32_t advertisements, cancellations, average_snr, bad_samples, recent_bad;
+	/* A row left because of errors is not retried for 30 s, doubling up to
+	 * 8 min each time it fails again; a row that holds 60 s clears its level. */
+	uint32_t blocked_until[AR_DEV_MCS_ROWS], row_since_ms, backoffs;
+	uint8_t backoff_level[AR_DEV_MCS_ROWS];
 };
 /* Reject unsupported/ill-formed policy data before modifying the context. */
 int ar_dev_mcs_init(struct ar_dev_mcs *ctx, const struct ar_dev_mcs_config *config);

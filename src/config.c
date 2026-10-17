@@ -140,11 +140,15 @@ int ar_config_parse(struct ar_config *out, const char *json, size_t length,
 	if (optional_number(policy, "delay_start", 0, 0, 65535, &n)) { return -22; } put16(m + 6, n);
 	if (number(policy, "max_wait_time", 0, 65535, &n)) { return -22; } put16(m + 8, n);
 	if (boolean(basic, "dist_calc.enable", &flag)) { return -22; } m[10] = flag; m[11] = 2;
+	/* Ranging offset in raw units (stock 0..100; distance = (raw - offset) * 1.5 m). */
+	if (optional_number(basic, "dist_calc.offset", 20, 0, 100, &n)) { return -22; } m[12] = n;
 	if (ar_json_path(policy, "mcs_tab", &array)) { return -22; }
 	for (unsigned i = 0; i < 10; i++) {
 		int error = ar_json_index(array, i, &row); if (error == -2) { break; } if (error) { return -22; }
 		uint8_t *r = m + 16 + i * 12;
-		if (number(row, "mcs", -2, 10, &n)) { return -95; } r[0] = n + 2;
+		/* Internal index = mcs + 2; the FCH key table covers 25 entries, so
+		 * rows up to MCS 13 (index 15, 1024-QAM 3/4) are valid. */
+		if (number(row, "mcs", -2, 13, &n)) { return -95; } r[0] = n + 2;
 		if (i && r[0] <= r[-12]) { return -22; }
 		if (number(row, "ldpc_up_num", 0, 255, &n)) { return -22; } r[1] = n;
 		if (number(row, "ldpc_dw_num", 0, 255, &n)) { return -22; } r[2] = n;
