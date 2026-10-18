@@ -26,6 +26,14 @@ def main():
     ):
         command = commands.add_parser(name, help=help_text)
         command.add_argument('host', type=vrx.validate_host)
+    image = commands.add_parser('image', help='Build one firmware image from a board profile')
+    image.add_argument('--profile', type=Path, required=True, help='Board profile C data')
+    image.add_argument('--output', type=Path, required=True)
+    image.add_argument('--cflags', default='', help='e.g. "-DAR_ROLE_AP -DAR_FACTORY_OPTIONAL" for an AP')
+    image.add_argument('--zephyr', type=Path, help='Zephyr tree (default: the pinned local one)')
+    image.add_argument('--toolchain', type=Path, help='riscv64-zephyr-elf toolchain directory')
+    image.add_argument('--python', type=Path, help='Python with the build requirements')
+    image.add_argument('--build-dir', type=Path)
     commands.add_parser('test', help='Run native C and Python tests offline')
     qemu = commands.add_parser('qemu', help='Build and exercise the protocol in QEMU')
     qemu.add_argument('--prepare', action='store_true')
@@ -36,6 +44,9 @@ def main():
         if args.prepare:
             build.prepare()
         build.build_release(args.profile)
+    elif args.command == 'image':
+        build.build_image(args.profile, args.output, args.cflags, args.zephyr, args.toolchain,
+                          args.python, args.build_dir)
     elif args.command == 'qemu':
         if args.prepare:
             build.prepare()

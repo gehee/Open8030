@@ -103,10 +103,9 @@ def build(board, cflags, boot_profile=None):
 
 
 
-def build_bootstrap():
-    output = ROOT / '.local/build-ar8030-bootstrap'
+def compile_bootstrap(prefix, output):
+    """The bootstrap companion, built with the riscv64-zephyr-elf tools at prefix."""
     output.mkdir(parents=True, exist_ok=True)
-    prefix = SDK / 'riscv64-zephyr-elf/bin/riscv64-zephyr-elf-'
     elf, binary = output / 'bootstrap.elf', output / 'bootstrap.bin'
     command = [str(prefix)+'gcc', '-march=rv32imc_zicsr', '-mabi=ilp32', '-Os',
                '-std=c11', '-Wall', '-Wextra', '-Werror', '-ffreestanding', '-fno-builtin',
@@ -118,6 +117,13 @@ def build_bootstrap():
     subprocess.run([str(prefix)+'objcopy', '-O', 'binary', str(elf), str(binary)], check=True)
     data=binary.read_bytes()
     if not 0 < len(data) <= 0x5f8: raise ValueError('Bootstrap overlaps ROM scratch')
+    return data
+
+
+def build_bootstrap():
+    output = ROOT / '.local/build-ar8030-bootstrap'
+    prefix = SDK / 'riscv64-zephyr-elf/bin/riscv64-zephyr-elf-'
+    data = compile_bootstrap(prefix, output)
     sources={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()
              for p in (ROOT/'bootstrap').iterdir() if p.is_file()}
     result={'bytes':len(data),'sha256':hashlib.sha256(data).hexdigest(),'load_address':'0x0a098a00',
@@ -266,3 +272,31 @@ def build_release(profile):
         staged.replace(LOCAL / 'open8030.img')
         staged.with_suffix('.manifest.json').replace(LOCAL / 'open8030.manifest.json')
     print(f'Image ready: {LOCAL / "open8030.img"}')
+
+
+def build_image(profile, output, cflags="", zephyr=None, toolchain=None, python=None,
+                directory=None, jobs=4):
+    """One loader image from a board profile. The Zephyr tree, riscv64-zephyr-elf
+    toolchain directory and Python (with the build requirements) default to the
+    pinned local ones; a distribution build passes its own."""
+    zephyr, python = Path(zephyr or SOURCE), Path(python or PYTHON)
+    prefix = Path(toolchain or SDK / "riscv64-zephyr-elf") / "bin/riscv64-zephyr-elf-"
+    directory = Path(directory or LOCAL / "build-image")
+    profile = Path(profile).resolve(strict=True)
+    if profile.suffix != ".c":
+        raise ValueError("Boot profile must be C data")
+    env = dict(os.environ)
+    env.pop("ZEPHYR_SDK_INSTALL_DIR", None)
+    env.update(PATH=str(python.parent) + os.pathsep + env.get("PATH", "/usr/bin:/bin"),
+               ZEPHYR_BASE=str(zephyr), ZEPHYR_TOOLCHAIN_VARIANT="cross-compile",
+               CROSS_COMPILE=str(prefix))
+    runtime = directory / "runtime"
+    run(["cmake", "-GNinja", "-S", ROOT, "-B", runtime, "-DBOARD=ar8030_bringup",
+         f"-DPython3_EXECUTABLE={python}", f"-DCMAKE_C_FLAGS={cflags}",
+         f"-DAR8030_BOOT_PROFILE_SOURCE={profile}"], env=env)
+    run(["cmake", "--build", runtime, f"-j{jobs}"], env=env)
+    bootstrap = compile_bootstrap(prefix, directory / "bootstrap")
+    image = make_image((runtime / "zephyr/zephyr.bin").read_bytes(), bootstrap)
+    parse_image(image)
+    Path(output).write_bytes(image)
+    print(f"{output}: {len(image)} bytes, sha256 {digest(image)}")
