@@ -13,6 +13,10 @@ struct ar_boot_profile {
 	size_t keys_length;
 	const struct ar_flash_part *flash_parts;
 	size_t flash_part_count;
+	/* I/O voltage domains to select (GPIO+0 bit 1 bank 2, bit 2 bank 3);
+	 * 0 = those of the banks the pin records use. One tested air
+	 * board selects bank 3's only. */
+	uint8_t io_domains;
 };
 enum ar_boot_stage {
 	AR_BOOT_IDLE, AR_BOOT_VALIDATE, AR_BOOT_PROBE, AR_BOOT_PINS,

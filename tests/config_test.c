@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "config_fixture.h"
+#include "ap_config_fixture.h"
 static uint8_t keys[100];
 static uint32_t le32(const uint8_t *p) { return p[0] | (uint32_t)p[1]<<8 | (uint32_t)p[2]<<16 | (uint32_t)p[3]<<24; }
 static void changed(const char *before, const char *after, int expected)
@@ -16,9 +17,63 @@ static void changed(const char *before, const char *after, int expected)
 	assert(ar_config_parse(&c, text, strlen(text), keys, sizeof keys) == expected);
 	if (expected) { assert(!memcmp(&c, &saved, sizeof c)); }
 }
+static struct ar_config ap_parsed;
+static int ap_changed(const char *before, const char *after)
+{
+	char text[sizeof ap_config_fixture + 256]; const char *p = strstr(ap_config_fixture, before); assert(p);
+	size_t prefix = p - ap_config_fixture; memcpy(text, ap_config_fixture, prefix);
+	strcpy(text + prefix, after); strcpy(text + prefix + strlen(after), p + strlen(before));
+	return ar_config_parse(&ap_parsed, text, strlen(text), keys, sizeof keys);
+}
+static void ap_tests(void)
+{
+	struct ar_config c;
+	assert(!ar_config_parse(&c, ap_config_fixture, sizeof ap_config_fixture - 1, keys, sizeof keys));
+	/* AP04 plan: init_chan -1 starts on 5914 MHz (index 1), not a search. */
+	assert(!memcmp(c.plan + 16, "AP04", 4) && !c.search && le32(c.plan) == 5914000 && c.plan[16 + 21] == 1);
+	assert(!memcmp(c.plan + 20, (uint8_t[]){0xa1,0xb2,0xc3,0xd4}, 4) && c.plan[8] == (0xa1^0xb2^0xc3^0xd4));
+	assert(c.plan[16 + 20] == 0 && c.plan[16 + 28] == 10 && c.plan[16 + 29] == 100);
+	/* Two calibration groups; 5914 MHz is above the 5850 MHz edge: the second. */
+	assert(c.calibration.groups == 2 && c.calibration.sub_band_khz == 5850000);
+	assert(!memcmp(c.plan + 40, (uint8_t[]){0x1d,0x37,0x29,0x35}, 4));
+	assert(!memcmp(c.calibration.rows[1], (uint8_t[]){0x23,0x31,0x29,0x35}, 4));
+	struct ar_dev_mcs_config m;
+	assert(!ar_dev_mcs_decode_config(&m, c.plan + 48, 136) && m.count == 2 && m.hold_ms == 1000 && m.rows[0].mcs == 1);
+	assert(!memcmp(c.plan + 184, keys, 100) && c.plan_length == 284 + 12);
+	/* No factory record on the air unit's radio: JSON rows, AP role. */
+	assert(!ar_config_resolve_power(&c, AR_POWER_FACTORY_UNAVAILABLE, NULL, 0));
+	assert(c.power.dev_role == 0 && c.power_source == AR_POWER_OFFSET_DEFAULT);
+	/* Below the edge the first group; a fixed init_chan is kept. */
+	assert(!ap_changed("\"init_chan\":-1", "\"init_chan\":0"));
+	assert(le32(ap_parsed.plan) == 5839000 && !memcmp(ap_parsed.plan + 40, (uint8_t[]){0x23,0x31,0x29,0x35}, 4));
+	/* What the AP path does not run is refused. */
+	assert(ap_changed("\"tx_mode\":\"2TX_STBC\"", "\"tx_mode\":\"2TX\"") == -95);
+	assert(ap_changed("\"rx_mode\":\"1T1R\"", "\"rx_mode\":\"2T2R_STBC\"") == -95);
+	assert(ap_changed("\"mode\":\"1V1\"", "\"mode\":\"1V3\"") == -95);
+	assert(ap_changed("\"pwr_init\":10", "\"pwr_init\":11") == -22);   /* no 11 dBm row */
+	assert(ap_changed("\"retx_count\":100", "\"retx_count\":128") == -22);
+	assert(ap_changed("\"1D\",\"37\",\"29\",\"35\"]}", "\"1D\",\"37\",\"29\"]}") == -22); /* 7 values */
+	assert(ap_changed("[5850000,5990000]", "[]") == -22);
+	/* The channel policy: stock's defaults, then the configuration's. */
+	assert(c.hop.measure_start && !c.hop.auto_start && c.hop.blind_errors == 16 && c.hop.blind_ms == 3000 && c.hop.tier_count == 3);
+	assert(c.hop.tiers[0][0] == 3 && c.hop.tiers[0][1] == 20 && c.hop.tiers[2][0] == 9 && c.hop.tiers[2][1] == 5);
+	assert(!ap_changed("\"rc_hop\":{\"enable\":false}}", "\"rc_hop\":{\"enable\":false},"
+		"\"hop_ex\":{\"blind_hop\":{\"at_err_cnt\":100,\"duration\":2000}},"
+		"\"hop_para\":[{\"retx_cnt\":3,\"power_diff\":20},{\"retx_cnt\":6,\"power_diff\":10},"
+		"{\"retx_cnt\":9,\"power_diff\":5},{\"retx_cnt\":16,\"power_diff\":1}]}"));
+	assert(ap_parsed.hop.blind_errors == 100 && ap_parsed.hop.blind_ms == 2000 && ap_parsed.hop.tier_count == 4);
+	assert(ap_parsed.hop.tiers[3][0] == 16 && ap_parsed.hop.tiers[3][1] == 1);
+	assert(ap_changed("\"rc_hop\":{\"enable\":false}}", "\"rc_hop\":{\"enable\":false},"
+		"\"hop_para\":[{\"retx_cnt\":3}]}") == -22);
+	assert(!ap_changed("\"init_chan\":-1", "\"init_chan\":2") && !ap_parsed.hop.measure_start);
+	assert(!ap_changed("\"init_band\":\"5G\",\"mode\":\"manu\"", "\"init_band\":\"5G\",\"mode\":\"auto\"") &&
+		ap_parsed.hop.auto_start);
+	assert(ap_changed("\"init_band\":\"5G\",\"mode\":\"manu\"", "\"init_band\":\"5G\",\"mode\":\"fast\"") == -95);
+}
 int main(void)
 {
 	for (unsigned i = 0; i < 25; i++) { keys[i*4] = i % 3; keys[i*4+1] = i/3%3; keys[i*4+2] = i/9; }
+	ap_tests();
 	struct ar_config c;
 	assert(!ar_config_parse(&c, config_fixture, sizeof config_fixture-1, keys, sizeof keys));
 	assert(c.search && c.plan_length == 296 && le32(c.plan) == 4915000 && !le32(c.plan+4));
@@ -63,7 +118,7 @@ int main(void)
 	changed("\"init_chan\":-1", "\"init_chan\":2", 0);
 	changed("\"init_chan\":-1", "\"init_chan\":3", -22);
 	changed("5220000", "4915000", -22);
-	changed("\"role\":\"dev\"", "\"role\":\"ap\"", -95);
+	changed("\"role\":\"dev\"", "\"role\":\"ap\"", -22); /* an AP document needs its ap block */
 	changed("\"hold_time\":101", "\"hold_time\":65536", -22);
 	changed("\"hold_time\":101", "\"hold_time\":101,\"hold_time\":102", -22);
 	changed("\"mac\":\"12345678\"", "\"mac\":\"1234567z\"", -22);

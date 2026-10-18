@@ -6,6 +6,11 @@
 
 struct ar_power_calibration {
 	uint8_t rows[AR_POWER_LEVELS][4];
+	/* Boards with two sub-band groups (eight values a row, e.g. one tested air
+	 * unit): the second group's rows, used from `sub_band_khz` up. */
+	uint8_t rows_high[AR_POWER_LEVELS][4];
+	uint32_t sub_band_khz;
+	uint8_t groups;
 	uint32_t valid;
 	int8_t fallback_offsets[4];
 	uint8_t has_fallback, csma_offset, board_specific;

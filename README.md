@@ -3,8 +3,8 @@
 Open-source radio firmware for **AR8030-based video receivers (VRX)**, built on
 Zephyr, with potential support for AR8030-based transmitters (VTX).
 
-**Only the Ascent VRX has been tested**, with matched 18.21.10 inputs and the
-original receiver Linux software and transmitter. Other boards may need different
+**Tested on** the Ascent VRX as the receiver, with matched 18.21.10 inputs, and,
+in the AP role, on two SDIO air units. Other boards may need different
 profiles and loading procedures. See [status and remaining work](docs/status.md).
 
 ## Run the prebuilt firmware

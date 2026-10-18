@@ -68,7 +68,9 @@ static int initialize(const struct ar_boot_profile *profile, unsigned loader)
 		/* Board pin mux first: on this board the factory flash may hang off
 		 * pins the mux has to route before the SPI read can see it. */
 		boot.stage = AR_BOOT_PINS;
-		if ((result = ar_rf_setup_pins(profile->pins, profile->pins_length))) { goto fail; }
+		ar_rf_set_io_domains(profile->io_domains);
+		ar_rf_set_io_domains(profile->io_domains);
+	if ((result = ar_rf_setup_pins(profile->pins, profile->pins_length))) { goto fail; }
 #endif
 		boot.stage = AR_BOOT_FACTORY;
 		uint8_t record[8]; struct ar_factory_info factory = {0};
@@ -91,11 +93,16 @@ static int initialize(const struct ar_boot_profile *profile, unsigned loader)
 		if (result) { goto fail; }
 		boot.power_source = configured.power_source;
 		ar_rf_set_power_config(&configured.power);
+		if (configured.calibration.groups == 2) {
+			ar_rf_set_power_bands(configured.calibration.rows_high, configured.calibration.sub_band_khz);
+		}
+		ar_rf_set_hop_config(&configured.hop);
 		boot.power_offsets[0] = configured.power.path_offset[0];
 		boot.power_offsets[1] = configured.power.path_offset[1];
 	}
 #ifndef AR_PINS_BEFORE_FACTORY
 	boot.stage = AR_BOOT_PINS;
+	ar_rf_set_io_domains(profile->io_domains);
 	if ((result = ar_rf_setup_pins(profile->pins, profile->pins_length))) { goto fail; }
 #endif
 	boot.stage = AR_BOOT_DEFAULTS;

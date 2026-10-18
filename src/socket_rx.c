@@ -3,6 +3,7 @@
  * SDK-to-MAC mapping 0x24241c, RX worker 0x23bb5c, TX worker 0x24029e.
  * Host RF/session initialization remains separate. */
 #include "ar_socket_rx.h"
+#include "ar_copy.h"
 #include <string.h>
 
 static uint32_t le32(const uint8_t *p)
@@ -31,15 +32,16 @@ static void write_request(struct ar_socket_rx *sockets, struct ar_socket_rx_port
 	uint64_t position = le64(request->payload);
 	uint32_t length = request->length - 8, count = length;
 	if (position != state->position) {
-		response->status = -264; count = (uint32_t)state->position;
+		response->status = -264; count = (uint32_t)state->position; sockets->tx_out_of_order++;
 	} else if (state->pending_count == AR_SOCKET_TX_PENDING) {
-		response->status = -263;
+		response->status = -263; sockets->tx_full++;
 	} else {
+		sockets->tx_writes++; sockets->tx_write_bytes += length;
 		struct ar_socket_write *write = &state->pending[
 			(state->pending_head + state->pending_count) % AR_SOCKET_TX_PENDING];
 		write->position = position; write->length = length; write->copied = 0;
 		write->active = write->cancelled = 0;
-		if (length) { memcpy(write->bytes, request->payload + 8, length); }
+		if (length) { ar_copy(write->bytes, request->payload + 8, length); }
 		state->pending_count++; state->position += length; state->enqueued++;
 		response->status = -262;
 	}
@@ -113,11 +115,13 @@ int ar_socket_rx_request(struct ar_socket_rx *sockets, const struct ar_frame *re
 	if (state->flags || state->closing) { response->status = 0x101; return 1; }
 	uint32_t flags = le32(request->payload), capacity = le32(request->payload + 8);
 	uint32_t tx_capacity = le32(request->payload + 4);
-	/* Retained-descriptor TX (0x20) has a different capacity contract and is
-	 * still unsupported. The matched backend opens plain copy mode, flags3. */
-	if (flags != 1 && flags != 2 && flags != 3 && flags != 0x21) {
+	/* Retained-descriptor TX (0x20 with TX, stock's 0x23 on an air unit):
+	 * the host's TX figure counts the writes it keeps in flight, not bytes,
+	 * so the port gets the whole TX ring. */
+	if (flags != 1 && flags != 2 && flags != 3 && flags != 0x21 && flags != 0x22 && flags != 0x23) {
 		response->status = AR_STATUS_UNSUPPORTED; return 1;
 	}
+	if ((flags & 0x22) == 0x22 && tx_capacity) { tx_capacity = AR_SOCKET_TX_CAPACITY; }
 	if (((flags & 1) && !capacity) || ((flags & 2) && !tx_capacity)) {
 		open_error(sockets, response, -6); return 1;
 	}
@@ -137,6 +141,32 @@ int ar_socket_rx_request(struct ar_socket_rx *sockets, const struct ar_frame *re
 /* Bytes offered to and dropped by every host socket since boot; sockets
  * themselves are zeroed on open/close. */
 static uint32_t socket_totals[2];
+int ar_socket_rx_ring_info(const struct ar_socket_rx *sockets, const uint8_t *in, size_t length,
+	uint8_t out[AR_SOCKET_RING_INFO_BYTES])
+{
+	if (!sockets || !in || length < 2 || !out) { return -22; }
+	memset(out, 0, AR_SOCKET_RING_INFO_BYTES);
+	if (in[0]) { return 0; }   /* slot 0 only */
+	for (unsigned port = 0; port < AR_SOCKET_RX_PORTS; port++) {
+		const struct ar_socket_rx_port *state = &sockets->ports[port];
+		if (!state->flags || state->closing || ((int8_t)in[1] >= 0 && in[1] != port)) { continue; }
+		out[0] |= (uint8_t)(1u << port);
+		if (!(state->flags & 2)) { continue; }
+		uint32_t queued = state->tx_used;
+		for (unsigned i = 0; i < state->pending_count; i++) {
+			const struct ar_socket_write *write = &state->pending[(state->pending_head + i) % AR_SOCKET_TX_PENDING];
+			if (!write->cancelled) { queued += write->length - write->copied; }
+		}
+		uint8_t *entry = out + 8 + port * 0x50;
+		entry[0] = 1;
+		for (unsigned b = 0; b < 4; b++) {
+			entry[4 + b] = (uint8_t)(state->tx_capacity >> (8 * b));
+			entry[8 + b] = (uint8_t)(queued >> (8 * b));
+		}
+	}
+	return 0;
+}
+
 void ar_socket_rx_totals(uint32_t *offered, uint32_t *dropped)
 {
 	*offered = socket_totals[0]; *dropped = socket_totals[1];
@@ -155,8 +185,8 @@ size_t ar_socket_rx_feed(struct ar_socket_rx *sockets, unsigned slot, unsigned m
 	size_t tail = (state->head + state->used) % state->capacity;
 	size_t first = state->capacity - tail;
 	if (first > copied) { first = copied; }
-	if (first) { memcpy(state->bytes + tail, data, first); }
-	if (copied > first) { memcpy(state->bytes, data + first, copied - first); }
+	if (first) { ar_copy(state->bytes + tail, data, first); }
+	if (copied > first) { ar_copy(state->bytes, data + first, copied - first); }
 	state->used += copied;
 	return copied;
 }
@@ -173,8 +203,8 @@ int ar_socket_rx_peek(struct ar_socket_rx *sockets, uint8_t *scratch, size_t cap
 		size_t copied = state->used < capacity ? state->used : capacity;
 		size_t first = state->capacity - state->head;
 		if (first > copied) { first = copied; }
-		memcpy(scratch, state->bytes + state->head, first);
-		if (copied > first) { memcpy(scratch + first, state->bytes, copied - first); }
+		ar_copy(scratch, state->bytes + state->head, first);
+		if (copied > first) { ar_copy(scratch + first, state->bytes, copied - first); }
 		/* The stock firmware stamps 0x12345678 in the status word of every
 		 * pushed data frame, and ar_libre's host library only delivers a
 		 * SO_READ frame to the socket when it carries that value (the stock
@@ -211,9 +241,10 @@ void ar_socket_tx_service(struct ar_socket_rx *sockets)
 		size_t tail = (state->tx_head + state->tx_used) % state->tx_capacity;
 		size_t first = state->tx_capacity - tail;
 		if (first > count) { first = count; }
-		memcpy(state->tx_bytes + tail, write->bytes + write->copied, first);
-		if (count > first) { memcpy(state->tx_bytes, write->bytes + write->copied + first, count - first); }
+		ar_copy(state->tx_bytes + tail, write->bytes + write->copied, first);
+		if (count > first) { ar_copy(state->tx_bytes, write->bytes + write->copied + first, count - first); }
 		state->tx_used += count; write->copied += count;
+		if (state->tx_used > sockets->tx_peak) { sockets->tx_peak = state->tx_used; }
 	}
 }
 
@@ -237,6 +268,7 @@ int ar_socket_tx_completion(struct ar_socket_rx *sockets, uint8_t scratch[8], st
 
 void ar_socket_tx_complete(struct ar_socket_rx *sockets, const struct ar_frame *frame)
 {
+	if (sockets) { sockets->tx_completed++; }
 	if (!sockets || !frame || (frame->reqid & 0xfffffffc) != 0x04010000 ||
 	    frame->length != 8 || !frame->payload) { return; }
 	unsigned port = frame->reqid & 3;
@@ -307,8 +339,8 @@ size_t ar_socket_tx_peek(struct ar_socket_rx *sockets, uint8_t *scratch,
 		size_t count = state->tx_used < capacity ? state->tx_used : capacity;
 		size_t first = state->tx_capacity - state->tx_head;
 		if (first > count) { first = count; }
-		memcpy(scratch, state->tx_bytes + state->tx_head, first);
-		if (count > first) { memcpy(scratch + first, state->tx_bytes, count - first); }
+		ar_copy(scratch, state->tx_bytes + state->tx_head, first);
+		if (count > first) { ar_copy(scratch + first, state->tx_bytes, count - first); }
 		*mac_port = port + 1;
 		return count;
 	}

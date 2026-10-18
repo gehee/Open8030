@@ -6,7 +6,13 @@
 
 #define AR_HEADER_SIZE 18u
 #define AR_OVERHEAD 19u
+#ifdef AR_ROLE_AP
+/* An air unit's host writes the stream in SDIO frames of up to twenty
+ * blocks (10240 bytes), as the stock air daemon does. */
+#define AR_MAX_PAYLOAD 10240u
+#else
 #define AR_MAX_PAYLOAD 4096u
+#endif
 #define AR_MAX_FRAME (AR_MAX_PAYLOAD + AR_OVERHEAD)
 #define AR_REQ_HELLO UINT32_C(0xff000000)
 #define AR_REQ_RESET UINT32_C(0xff000001)
@@ -46,6 +52,10 @@
 #define AR_REQ_TELEMETRY_INFO UINT32_C(0x0c5a002b)
 /* Diagnostics for the USB transport and host features, after upstream's. */
 #define AR_REQ_FLASH_READ UINT32_C(0x0c5a0030)
+#define AR_REQ_RF_CAPTURE_INFO UINT32_C(0x0c5a0031)
+#define AR_REQ_RF_AP_INFO UINT32_C(0x0c5a0032)
+#define AR_REQ_RF_AP_TRACE UINT32_C(0x0c5a0033)
+#define AR_REQ_RF_AP_RESET UINT32_C(0x0c5a0034)
 /* Project-only read diagnostics through the original Linux daemon. Its
  * 0x4030d0 dispatcher consumes group 0x0c locally; group 0x01 is forwarded.
  * These aliases are not vendor commands. Never alias configuration/start. */

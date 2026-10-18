@@ -57,7 +57,12 @@ static void discard(struct ar_parser *parser, size_t length)
 static void consume(struct ar_parser *parser, ar_frame_callback callback, void *context)
 {
 	while (parser->used) {
-		if (parser->bytes[0] != 0xaa) { discard(parser, 1); continue; }
+		if (parser->bytes[0] != 0xaa) {
+			/* Skip to the next start byte in one move (block padding). */
+			const uint8_t *next = memchr(parser->bytes, 0xaa, parser->used);
+			discard(parser, next ? (size_t)(next - parser->bytes) : parser->used);
+			continue;
+		}
 		if (parser->used < AR_HEADER_SIZE) { return; }
 		uint32_t length = get_le32(parser->bytes + 1);
 		if (length > AR_MAX_PAYLOAD || header_check(parser->bytes) != parser->bytes[17]) {
@@ -81,9 +86,15 @@ static void consume(struct ar_parser *parser, ar_frame_callback callback, void *
 void ar_feed(struct ar_parser *parser, const uint8_t *bytes, size_t length,
 	     ar_frame_callback callback, void *context)
 {
-	for (size_t i = 0; i < length; i++) {
-		/* A complete bounded frame is consumed as soon as its tail arrives. */
-		parser->bytes[parser->used++] = bytes[i];
+	/* Copy what fits, then consume every complete frame. A byte at a time,
+	 * with the header checked after each byte, a 4 KiB write held the main
+	 * loop for about a millisecond: long enough for an AP to miss its
+	 * pre-encode. A full buffer always holds a complete or invalid frame
+	 * (frames are bounded by its size), so consume frees room each pass. */
+	while (length) {
+		size_t room = sizeof parser->bytes - parser->used, n = length < room ? length : room;
+		memcpy(parser->bytes + parser->used, bytes, n);
+		parser->used += n; bytes += n; length -= n;
 		consume(parser, callback, context);
 	}
 }

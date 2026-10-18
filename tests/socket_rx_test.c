@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "ar_socket_rx.h"
+#include "ar_copy.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -139,7 +140,11 @@ static void transmit_contract(void)
 	assert(!ar_socket_tx_peek(&sockets, scratch, sizeof scratch, &port));
 	assert(!ar_socket_tx_completion(&sockets, scratch, &frame));
 	assert(command(3, 0, 2, 44, 0) == 0);
-	configure(0x23, 100); options[4] = 8;
+	/* Retained-descriptor TX counts writes in flight: the whole ring. */
+	configure(0x23, 100); options[4] = 5;
+	assert(command(0, 0, 2, 44, 12) == 0 && sockets.ports[2].tx_capacity == AR_SOCKET_TX_CAPACITY);
+	assert(command(3, 0, 2, 44, 0) == 0);
+	configure(0x43, 100); options[4] = 8;
 	assert(command(0, 0, 2, 44, 12) == -95);
 	configure(2, 0); options[5] = 0x11;
 	assert(command(0, 0, 2, 44, 12) == -259);
@@ -259,8 +264,44 @@ static void deferred_close(void)
 	assert(sockets.ports[0].used == 3 && !ar_socket_close_peek(&sockets, &response));
 	assert(sockets.close_info.requested == 3 && sockets.close_info.cleaned == 3 && sockets.close_info.replied == 3);
 }
+/* ar_copy matches memcpy for every source/destination alignment and length,
+ * and writes nothing outside the destination. */
+static void copy_alignments(void)
+{
+	static uint8_t source[96], destination[96], expected[96];
+	for (unsigned i = 0; i < sizeof source; i++) { source[i] = (uint8_t)(i * 37 + 11); }
+	for (unsigned from = 0; from < 4; from++) {
+		for (unsigned to = 0; to < 4; to++) {
+			for (size_t length = 0; length <= 64; length++) {
+				memset(destination, 0xee, sizeof destination); memset(expected, 0xee, sizeof expected);
+				memcpy(expected + 8 + to, source + 8 + from, length);
+				ar_copy(destination + 8 + to, source + 8 + from, length);
+				assert(!memcmp(destination, expected, sizeof destination));
+			}
+		}
+	}
+}
+
+/* GET 0x11: the open-port bitmap and a written port's backlog at 8 + port * 0x50. */
+static void ring_info(void)
+{
+	static struct ar_socket_rx sockets; static uint8_t out[AR_SOCKET_RING_INFO_BYTES];
+	ar_socket_rx_init(&sockets);
+	sockets.ports[3].flags = 0x23; sockets.ports[3].tx_capacity = 1000; sockets.ports[3].tx_used = 100;
+	sockets.ports[3].pending_count = 1; sockets.ports[3].pending[0].length = 50; sockets.ports[3].pending[0].copied = 20;
+	sockets.ports[2].flags = 1;
+	const uint8_t all[2] = {0, 0xff}, three[2] = {0, 3}, other_slot[2] = {1, 3};
+	assert(!ar_socket_rx_ring_info(&sockets, all, 2, out) && out[0] == 0x0c);
+	assert(!ar_socket_rx_ring_info(&sockets, three, 2, out) && out[0] == 0x08 && out[8 + 3 * 0x50] == 1);
+	assert(out[0x100] == 130 && out[0x101] == 0 && out[8 + 3 * 0x50 + 4] == (1000 & 255));
+	assert(!ar_socket_rx_ring_info(&sockets, other_slot, 2, out) && !out[0] && !out[0x100]);
+	assert(ar_socket_rx_ring_info(&sockets, three, 1, out) == -22);
+}
+
 int main(void)
 {
+	copy_alignments();
+	ring_info();
 	ar_socket_rx_init(&sockets);
 	for (unsigned i = 0; i < sizeof input; i++) { input[i] = i; }
 	assert(!ar_socket_rx_feed(&sockets, 0, 4, input, 100));

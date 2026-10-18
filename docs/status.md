@@ -1,9 +1,25 @@
 # Firmware status
 
-Open8030 targets AR8030-based video receivers, with potential transmitter support.
-Hardware validation currently covers only the Ascent VRX with matched 18.21.10
-board inputs. Other AR8030 receiver variants and transmitter/AP operation remain
-unverified; the supplied loading helpers target the tested Ascent VRX configuration.
+Open8030 targets AR8030-based video receivers and, in the AP role, their
+transmitters. Hardware validation covers the Ascent VRX (DEV, over USB) with matched
+18.21.10 board inputs, and two air units (AP, over SDIO).
+Other AR8030 variants remain unverified; the supplied loading helpers target the
+tested Ascent VRX configuration.
+
+## Air units (AP role)
+
+The AP image (`-DAR_ROLE_AP -DAR_FACTORY_OPTIONAL`) runs on two air-unit boards.
+Their two stock radio images boot the chip identically - the same pin setup, pads and I/O
+domains, and the same pin function table - so one board's
+profile serves both and the build is byte-identical. The boards differ only in the stock radio
+configuration the host passes at load (power calibration: two sub-band groups on
+one board, one on the other) and in the host's own front-end and power-offset calls.
+
+Against an Open8030 VRX, both reach stock parity: MCS 11 at 20 MHz, a 35.5 Mbit/s
+link, SNR as stock's. The board with one group (2026-10-20): 20 Mbit/s video at 100 fps with no
+decode errors, the short frame (4650.9 us), and a VRX radio restart relinks in
+~21 s without restarting the air unit. Not yet covered on that board: TX power
+changes.
 
 ## Button binding
 

@@ -5,7 +5,11 @@
 #include <stdint.h>
 
 #define AR_SDIO_BLOCK 512u
+#ifdef AR_ROLE_AP
+#define AR_SDIO_BUFFER_SIZE 10752u   /* a 10240-byte payload and its framing */
+#else
 #define AR_SDIO_BUFFER_SIZE 4608u
+#endif
 #define AR_SDIO_TX_DEPTH 4u
 struct ar_sdio_stats {
 	uint32_t polls, host_enabled, rx_packets, tx_packets, errors, invalid_rx;

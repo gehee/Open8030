@@ -510,7 +510,7 @@ int main(void)
 	assert(offsetof(struct ar_rf_rx_info, first_packet_elapsed_us) == 590 * 4);
 	assert(offsetof(struct ar_rf_rx_info, admission_attempts) == 593 * 4);
 	assert(offsetof(struct ar_rf_rx_info, irq_last_elapsed_us) == 619 * 4);
-	assert(sizeof(struct ar_rf_rx_info) == 1021 * 4);
+	assert(sizeof(struct ar_rf_rx_info) == 1024 * 4);
 	assert(offsetof(struct ar_rf_rx_info, lock_messages) == 662 * 4);
 	assert(offsetof(struct ar_rf_rx_info, first_login_control) == 685 * 4);
 	assert(offsetof(struct ar_rf_rx_info, last_login_sync) == 789 * 4);

@@ -43,10 +43,29 @@ int ar_power_calibration_load(struct ar_power_calibration *out,
 			if (ar_json_index(row, i, &value) || calibration_byte(value, &c.rows[level - 9][i])) { return -22; }
 			if (!(i & 1) && c.rows[level - 9][i] > 63) { return -22; }
 		}
-		if (ar_json_index(row, 4, &value) != -2) { return -22; }
+		/* Four values, or eight: two sub-band groups of four. Every row
+		 * must have the same count. */
+		unsigned groups = ar_json_index(row, 4, &value) == -2 ? 1 : 2;
+		if (groups == 2) {
+			for (unsigned i = 0; i < 4; i++) {
+				if (ar_json_index(row, 4 + i, &value) || calibration_byte(value, &c.rows_high[level - 9][i])) { return -22; }
+				if (!(i & 1) && c.rows_high[level - 9][i] > 63) { return -22; }
+			}
+			if (ar_json_index(row, 8, &value) != -2) { return -22; }
+		}
+		if (c.groups && c.groups != groups) { return -22; }
+		c.groups = (uint8_t)groups;
 		c.valid |= UINT32_C(1) << (level - 9);
 	}
 	if (!c.valid) { return -22; }
+	if (c.groups == 2) {
+		/* The first sub-band edge splits the groups (a stock air config: 5850 MHz;
+		 * its AP at 5839 MHz runs the first group). */
+		struct ar_json bands, edge; int32_t khz;
+		if (ar_json_member(selected, "sub_bands", &bands) || ar_json_index(bands, 0, &edge) ||
+		    ar_json_integer(edge, &khz) || khz < 1000000) { return -22; }
+		c.sub_band_khz = (uint32_t)khz;
+	} else { c.groups = 1; }
 	error = ar_json_path(root, "baseband.basic.power.pwr_offset", &row);
 	if (!error) {
 		for (unsigned i = 0; i < 4; i++) {

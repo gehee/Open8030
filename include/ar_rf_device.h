@@ -125,6 +125,89 @@ struct ar_rf_scan_info {
 	int32_t channel_scores[AR_RF_MAX_CHANNELS];
 };
 const struct ar_rf_scan_info *ar_rf_scan_information(void);
+/* What the peer sends, recorded on change: MAC packets (header, descriptors and
+ * the start of the outband) whose outband or descriptor layout differs from the
+ * last one recorded of its kind, and valid PHY control messages whose bytes
+ * differ (command 7, the AP clock, every 64th). For learning the AP side. */
+#define AR_RF_CAPTURE_ENTRIES 48
+struct ar_rf_capture_entry { uint32_t seq, elapsed_us, extra; uint16_t kind, length; uint8_t data[52]; };
+struct ar_rf_capture_info {
+	uint32_t version, head, packets, full, compact, other, phy, recorded;
+	uint32_t phy_commands[16], outband_lengths[8];
+	/* The DEV's own side: state, slot, what it sent up. */
+	uint32_t dev_state, assigned_slot, tx_preencode, tx_packets, tx_errors, tx_budget, tx_user;
+	uint32_t lock_result, login_packets, login_matching, sync_unsupported, dev_active, admission_result, lock_messages, sync_acks;
+	uint32_t rx_max_length, rx_over_4k;     /* received packets: the largest, and those over 4096 bytes */
+	struct ar_rf_capture_entry entries[AR_RF_CAPTURE_ENTRIES];
+};
+const struct ar_rf_capture_info *ar_rf_capture_information(void);
+/* The AP role (air unit, AP04 plan): link state, what it sent, what came up. */
+struct ar_rf_ap_info {
+	uint32_t version, state, token, channel;
+	uint32_t preencodes, other_users, packets, bytes, payload_bytes, errors;
+	uint32_t budget_last, budget_min, budget_max, last_user;
+	uint32_t uplink_packets, uplink_invalid, reports, bad_reports, foreign_reports;
+	uint32_t logins, connects, drops, acks, bad_acks, commands, bandwidth_requests;
+	uint32_t phy_sent, phy_expired, identity, tx_end;
+	uint8_t ground[4], last_report[16], last_packet[64];
+	uint32_t phase, error, irq_total, irq_counts[20], reg800, reg80c, regfa8, rege6c, regf70;
+	uint32_t error_last, fch_last, fch_valid, power_last, regf00, regf04, regf08, regf0c;
+	uint32_t receive_events, invalid_packets, dma_completions, rx_pending, rx_metadata, regf88, regf90, regbe8;
+	uint32_t decoder_resets, decoder_reset_result;
+	uint32_t calibration_rounds, calibration_status, configured_us;
+	uint32_t broadcast_mcs, bandwidth, mcs_requests, bandwidth_switches, uplink_phy;
+	uint32_t payload_packets, empty_packets;
+	uint32_t preencode_requests[16];         /* pre-encodes by 0xf58[7:4] */
+	uint32_t preencode_late;                 /* handled with the encoder already started (IRQ 4 pending) */
+	/* Main-loop gaps between RF polls, and those just before a pre-encode:
+	 * counts over 50, 100, 200, 500, 1000 us, and the longest (us). */
+	uint32_t poll_gaps[5], pre_gaps[5], poll_gap_max, pre_gap_max;
+	/* Main-loop stages (0 bus receive, 1 frame parse + dispatch, 2 socket
+	 * services, 3 reply push): longest (us) and how often over 200 us. */
+	uint32_t host_max[4], host_slow[4];
+	uint32_t frame_mode, frame_requests, frame_switches, frame_us;   /* TDD frame mode (0 standard, 2 short) */
+	uint32_t retx_threshold, retx_disables, retx_enables;            /* broadcast HARQ recovery */
+	uint32_t tx_stalls;                                              /* frame control with 0xf70 [7:6] set, first of a run */
+	uint32_t uplink_mcs, mcs_keys[4];                                /* the MCS asked of the ground (command 3), keys 0-3 */
+	uint32_t channel_requests, channel_moves, channel_errors;         /* command 4 heard, hops done, bad index */
+	uint32_t gpio_d[3], adc_samples, adc_raw; int32_t adc_mv[8];      /* bank D mux 0x38, level 0x64, output-off 0x68; ADC */
+	/* The ground's uplink MCS policy: requests (command 3), changes seen,
+	 * timeouts, samples (end of packet), last SNR, packets with LDPC errors,
+	 * the MCS its FCH shows. */
+	uint32_t uplink_requests, uplink_changes, uplink_timeouts, uplink_samples, uplink_snr, uplink_errors, uplink_observed;
+	/* Own channel choice: frames with a block sent again, the last measure,
+	 * hops by level / blind, rollbacks, hops kept 2 s, measured starts,
+	 * last hop (from | to << 8 | measure << 16). */
+	uint32_t hop_retx_frames, hop_measure, hop_by_power, hop_blind, hop_rollbacks, hop_kept, measured_starts, hop_last;
+};
+const struct ar_rf_ap_info *ar_rf_ap_information(void);
+void ar_rf_note_host_stage(unsigned stage, uint32_t us);
+/* Stock's receive-decoder reset (its "DEC HALT patch"): baseband hold, both
+ * engine flush requests until acknowledged, release. 0, or -110 when a flush
+ * was not acknowledged. */
+int ar_rf_ap_decoder_reset(void);
+/* SET 0xc8 project dispatch (path B control; GPIO and ADC acknowledged). */
+int ar_rf_host_project(const uint8_t *in, size_t length);
+int ar_rf_host_project_get(const uint8_t *in, size_t length, uint8_t out[256]);
+/* SET 0x1b {slot, min MCS, max MCS} (internal indexes). */
+int ar_rf_host_uplink_mcs_range(const uint8_t *in, size_t length);
+/* Test: 1 re-arms RX now (0x800 bit 1 + 0x80c bit 2), 2 TX now (bit 2 +
+ * bit 3), 3 RX at the next IRQ 5 (end of the sweep before the receive slot). */
+int ar_rf_ap_rearm(unsigned variant);
+/* Prepared with an AP04 plan: the radio starts by itself (the air unit's host
+ * never sends init/start). */
+int ar_rf_ap_role(void);
+/* The AP's last interrupts, frozen when its pre-encodes stop (a stalled
+ * frame engine, frozen 1) or 120 interrupts after its first login (2): time,
+ * source | 0xfa8 << 8, 0xf70, 0xf88, 0xf90, and on 14 the header read. */
+#ifdef AR_ROLE_AP
+#define AR_RF_AP_TRACE_ENTRIES 400
+#else
+#define AR_RF_AP_TRACE_ENTRIES 160   /* a DEV's replies hold 4 KiB */
+#endif
+struct ar_rf_ap_trace { uint32_t head, frozen, frozen_us, last_pre_us, freeze_at; uint32_t entries[AR_RF_AP_TRACE_ENTRIES][6]; };
+const struct ar_rf_ap_trace *ar_rf_ap_trace_information(void);
+void ar_rf_ap_trace_unfreeze(unsigned mode);
 struct ar_rf_rx_info {
 	uint32_t frequency_khz, irq_total, irq_counts[20];
 	uint32_t fch_last, fch_locked, receive_events, dma_completions;
@@ -223,6 +306,8 @@ struct ar_rf_rx_info {
 	/* Operation 62: complete internal stream envelopes, including splits. */
 	uint32_t stream_commands[8], stream_checksum_errors, stream_length_errors;
 	uint32_t stream_discarded, stream_buffered;
+	/* Receive events dropped: flagged (metadata bit 29), all DMAs busy, other. */
+	uint32_t drop_flagged, drop_busy, drop_other;
 };
 int ar_rf_probe(void);
 /* Payload view is borrowed only for this synchronous polling callback. */
@@ -241,6 +326,9 @@ struct ar_rf_tx_payload_info {
 };
 const struct ar_rf_tx_payload_info *ar_rf_tx_payload_information(void);
 int ar_rf_setup_pins(const uint8_t *records, size_t length);
+/* The I/O domain bits ar_rf_setup_pins selects (bits 1-2 of GPIO+0); 0 derives
+ * them from the banks used. Call before ar_rf_setup_pins. */
+void ar_rf_set_io_domains(unsigned mask);
 int ar_rf_load_defaults(const uint8_t *records, size_t length);
 int ar_rf_calibrate(void);
 int ar_rf_setup_psram(void);
@@ -345,4 +433,10 @@ void ar_rf_poll(void);
 int ar_rf_read_registers(unsigned offset, unsigned length, uint8_t *output);
 struct ar_power_config;
 void ar_rf_set_power_config(const struct ar_power_config *config);
+/* Boards with a second calibration group: its rows, used from `edge_khz` up
+ * (call after ar_rf_set_power_config). */
+void ar_rf_set_power_bands(const uint8_t (*high)[4], uint32_t edge_khz);   /* AR_POWER_LEVELS rows */
+struct ar_hop_config;
+/* An AP's channel policy (see ar_config.h), taken at boot. */
+void ar_rf_set_hop_config(const struct ar_hop_config *hop);
 #endif

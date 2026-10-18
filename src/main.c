@@ -26,6 +26,7 @@ static struct {
 static struct {
 	uint32_t count, overflow, event_drops, reserved;
 	struct { uint32_t reqid, count, length; uint8_t last_prefix[16]; } entries[64];
+	uint32_t unsupported[64];   /* per entry: answered "unsupported" by the generic dispatch */
 } host_audit;
 static void rf_event(unsigned id, const uint8_t *data, size_t length, void *context)
 {
@@ -158,6 +159,44 @@ static void receive(const struct ar_frame *frame, void *context)
 		size_t size = ar_encode(reply, sizeof reply, &response);
 		(void)bus->send(reply, size); return;
 	}
+	if (diagnostic_reqid == AR_REQ_RF_AP_TRACE && !frame->status && frame->length == 1) {
+		/* One byte: let the trace run on, never freezing again (1), or
+		 * freezing only when the AP stops transmitting (2). */
+		ar_rf_ap_trace_unfreeze(frame->payload[0]);
+		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid};
+		size_t size = ar_encode(reply, sizeof reply, &response);
+		(void)bus->send(reply, size); return;
+	}
+	if (diagnostic_reqid == AR_REQ_RF_AP_TRACE && !frame->status && !frame->length) {
+		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid,
+			.payload = (const uint8_t *)ar_rf_ap_trace_information(), .length = sizeof(struct ar_rf_ap_trace)};
+		size_t size = ar_encode(reply, sizeof reply, &response);
+		(void)bus->send(reply, size); return;
+	}
+	if (diagnostic_reqid == AR_REQ_RF_AP_RESET && !frame->status && frame->length == 1) {
+		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid,
+			.status = ar_rf_ap_rearm(frame->payload[0])};
+		size_t size = ar_encode(reply, sizeof reply, &response);
+		(void)bus->send(reply, size); return;
+	}
+	if (diagnostic_reqid == AR_REQ_RF_AP_RESET && !frame->status && !frame->length) {
+		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid,
+			.status = ar_rf_ap_decoder_reset()};
+		size_t size = ar_encode(reply, sizeof reply, &response);
+		(void)bus->send(reply, size); return;
+	}
+	if (diagnostic_reqid == AR_REQ_RF_AP_INFO && !frame->status && !frame->length) {
+		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid,
+			.payload = (const uint8_t *)ar_rf_ap_information(), .length = sizeof(struct ar_rf_ap_info)};
+		size_t size = ar_encode(reply, sizeof reply, &response);
+		(void)bus->send(reply, size); return;
+	}
+	if (diagnostic_reqid == AR_REQ_RF_CAPTURE_INFO && !frame->status && !frame->length) {
+		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid,
+			.payload = (const uint8_t *)ar_rf_capture_information(), .length = sizeof(struct ar_rf_capture_info)};
+		size_t size = ar_encode(reply, sizeof reply, &response);
+		(void)bus->send(reply, size); return;
+	}
 	if (diagnostic_reqid == AR_REQ_RF_SCAN_INFO && !frame->status && !frame->length) {
 		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid,
 			.payload = (const uint8_t *)ar_rf_scan_information(), .length = sizeof(struct ar_rf_scan_info)};
@@ -249,7 +288,36 @@ static void receive(const struct ar_frame *frame, void *context)
 		size_t size = ar_encode(reply, sizeof reply, &response);
 		(void)bus->send(reply, size); return;
 	}
+	if (frame->reqid == UINT32_C(0x0200001b)) {
+		int status = frame->status ? AR_STATUS_INVALID : ar_rf_host_uplink_mcs_range(frame->payload, frame->length);
+		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid, .status = status};
+		size_t size = ar_encode(reply, sizeof reply, &response);
+		(void)bus->send(reply, size); return;
+	}
+	if (frame->reqid == UINT32_C(0x01000011)) {
+		static uint8_t out[AR_SOCKET_RING_INFO_BYTES];
+		int status = frame->status ? AR_STATUS_INVALID : ar_socket_rx_ring_info(&sockets, frame->payload, frame->length, out);
+		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid, .status = status,
+			.payload = out, .length = status ? 0 : sizeof out};
+		size_t size = ar_encode(reply, sizeof reply, &response);
+		(void)bus->send(reply, size); return;
+	}
+	if (frame->reqid == UINT32_C(0x010000c8)) {
+		uint8_t out[256];
+		int status = frame->status ? AR_STATUS_INVALID : ar_rf_host_project_get(frame->payload, frame->length, out);
+		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid, .status = status,
+			.payload = out, .length = status ? 0 : sizeof out};
+		size_t size = ar_encode(reply, sizeof reply, &response);
+		(void)bus->send(reply, size); return;
+	}
+	if (frame->reqid == UINT32_C(0x020000c8)) {
+		int status = frame->status ? AR_STATUS_INVALID : ar_rf_host_project(frame->payload, frame->length);
+		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid, .status = status};
+		size_t size = ar_encode(reply, sizeof reply, &response);
+		(void)bus->send(reply, size); return;
+	}
 	if (frame->reqid == UINT32_C(0x02000008) || frame->reqid == UINT32_C(0x02000009) ||
+	    frame->reqid == UINT32_C(0x0200006e) || frame->reqid == UINT32_C(0x01000071) ||
 	    frame->reqid == UINT32_C(0x01000007) || frame->reqid == UINT32_C(0x01000008) || frame->reqid == UINT32_C(0x01000009)) {
 		size_t out_length = 0;
 		int status = frame->status ? AR_STATUS_INVALID :
@@ -389,7 +457,7 @@ static void receive(const struct ar_frame *frame, void *context)
 		(void)bus->send(reply, size); return;
 	}
 	if (diagnostic_reqid == AR_REQ_SOCKET_TX_INFO && !frame->status && !frame->length) {
-		uint32_t words[AR_SOCKET_RX_PORTS * 12];
+		uint32_t words[AR_SOCKET_RX_PORTS * 12 + 6];
 		for (unsigned port = 0; port < AR_SOCKET_RX_PORTS; port++) {
 			const struct ar_socket_rx_port *s = &sockets.ports[port];
 			uint32_t values[] = {s->flags, s->tx_capacity, s->tx_used, s->pending_count,
@@ -397,6 +465,9 @@ static void receive(const struct ar_frame *frame, void *context)
 				s->submitted, s->rejected, s->tx_head, s->msgid};
 			for (unsigned i = 0; i < 12; i++) { words[port * 12 + i] = values[i]; }
 		}
+		const uint32_t totals[6] = {sockets.tx_writes, sockets.tx_write_bytes, sockets.tx_full,
+			sockets.tx_out_of_order, sockets.tx_completed, sockets.tx_peak};
+		memcpy(words + AR_SOCKET_RX_PORTS * 12, totals, sizeof totals);
 		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid,
 			.payload = (const uint8_t *)words, .length = sizeof words};
 		size_t size = ar_encode(reply, sizeof reply, &response);
@@ -566,6 +637,12 @@ static void receive(const struct ar_frame *frame, void *context)
 	size_t length;
 	ar_dispatch(frame, reply, &length);
 #ifdef CONFIG_SOC_AR8030_BRINGUP
+	if (length >= AR_HEADER_SIZE) {
+		int32_t status = (int32_t)((uint32_t)reply[13] << 24 | (uint32_t)reply[14] << 16 | (uint32_t)reply[15] << 8 | reply[16]);
+		for (unsigned i = 0; status == AR_STATUS_UNSUPPORTED && i < host_audit.count; i++) {
+			if (host_audit.entries[i].reqid == frame->reqid) { host_audit.unsupported[i]++; break; }
+		}
+	}
 	(void)bus->send(reply, length);
 #else
 	for (size_t i = 0; i < length; i++) { uart_poll_out(uart, reply[i]); }
@@ -617,6 +694,14 @@ int main(void)
 		ar_boot_prepare_loader(&ar_boot_embedded_profile, (const char *)(uintptr_t)0x200000, 16384);
 	bus->record_progress(0xc000, ar_boot_information()->stage, boot_status,
 		ar_boot_information()->default_bytes);
+	/* An air unit's radio (AP04 plan) starts by itself: its host never sends
+	 * init/start, the stock AP is on the air as soon as it is loaded. */
+	if (!boot_status && ar_rf_ap_role()) {
+		/* The loader path is already initialized (init answers -7, as it
+		 * does to a ground's backend); start is what matters. */
+		int init = ar_rf_host_control(2, 0), start = ar_rf_host_control(0, 0);
+		bus->record_progress(0xc001, (uint32_t)init, (uint32_t)start, 0);
+	}
 #endif
 	if (bus->init_after_boot) { bus->init(); }
 	unsigned completion_first = 1;
@@ -627,10 +712,17 @@ int main(void)
 		loop_stats[0]++;
 		const uint8_t *data;
 		size_t length = bus->receive(&data);
-		if (length) { ar_feed(&parser, data, length, receive, NULL); }
+		uint32_t stage = *(volatile uint32_t *)0xe000bff8u;
+		ar_rf_note_host_stage(0, (stage - loop_started) / 40);
+		if (length) {
+			ar_feed(&parser, data, length, receive, NULL);
+			uint32_t fed = *(volatile uint32_t *)0xe000bff8u;
+			ar_rf_note_host_stage(1, (fed - stage) / 40); stage = fed;
+		}
 		else { arch_nop(); }
 		ar_socket_tx_service(&sockets);
 		ar_socket_close_service(&sockets);
+		ar_rf_note_host_stage(2, (*(volatile uint32_t *)0xe000bff8u - stage) / 40);
 		ar_rf_poll();
 		struct ar_frame frame;
 		/* Leave one entry for a reply to an already granted host request. */
@@ -662,6 +754,7 @@ int main(void)
 				ar_rf_poll();
 				int sent = bus->send(reply, size);
 				ar_rf_note_push_time((*(volatile uint32_t *)0xe000bff8u - push_started) / 40);
+				ar_rf_note_host_stage(3, (*(volatile uint32_t *)0xe000bff8u - push_started) / 40);
 				if (!sent) {
 					loop_stats[1]++;
 					unsigned completion = (frame.reqid >> 16 & 255) == 1;

@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include "ar_power_config.h"
 #define AR_CONFIG_PLAN_BYTES 452
+#include "ar_ap_hop.h"   /* struct ar_hop_config: an AP's channel policy */
 struct ar_config {
 	uint8_t plan[AR_CONFIG_PLAN_BYTES];
 	size_t plan_length;
@@ -14,6 +15,7 @@ struct ar_config {
 	struct ar_power_calibration calibration;
 	struct ar_power_config power;
 	unsigned power_source;
+	struct ar_hop_config hop;   /* AP only */
 };
 /* Parse loader JSON into the implemented DEV mode-0 configuration. Board
  * register defaults/pins and FCH encoding keys have separate provenance. */

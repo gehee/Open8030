@@ -23,8 +23,11 @@ static int step(unsigned expected)
 	return calls == fail_at ? -110 : 0;
 }
 void ar_rf_set_power_config(const struct ar_power_config *config) { (void)config; }
+void ar_rf_set_power_bands(const uint8_t (*high)[4], uint32_t edge_khz) { (void)high; (void)edge_khz; }
+void ar_rf_set_hop_config(const struct ar_hop_config *hop) { (void)hop; }
 int ar_rf_probe(void) { radio.chip_profile = bad_chip ? 2 : 1; return step(1); }
 const struct ar_rf_info *ar_rf_information(void) { return &radio; }
+void ar_rf_set_io_domains(unsigned mask) { (void)mask; }
 int ar_rf_setup_pins(const uint8_t *data, size_t size)
 {
 	assert(data == pins && size == expected_pins); return step(2);

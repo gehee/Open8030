@@ -6,8 +6,14 @@
 /* Mode-0 sockets. Storage belongs to the endpoint until SDIO/MAC copies it.
  * This is a polling implementation; no calls may run concurrently. */
 #define AR_SOCKET_RX_PORTS 4u
+#ifdef AR_ROLE_AP
+/* An AP sends the stream (video) and takes little back from its ground. */
+#define AR_SOCKET_RX_CAPACITY 8192u
+#define AR_SOCKET_TX_CAPACITY 32768u
+#else
 #define AR_SOCKET_RX_CAPACITY 56320u
 #define AR_SOCKET_TX_CAPACITY 4096u
+#endif
 #define AR_SOCKET_TX_PENDING 2u
 struct ar_socket_write {
 	uint8_t bytes[AR_MAX_PAYLOAD - 8];
@@ -38,10 +44,21 @@ struct ar_socket_close_info {
 struct ar_socket_rx {
 	struct ar_socket_rx_port ports[AR_SOCKET_RX_PORTS];
 	uint32_t next_port, next_tx_port, next_completion;
+	/* Since boot, across opens and closes: writes taken and their bytes,
+	 * refused (-263 queue full, -264 position), completed, peak TX ring use. */
+	uint32_t tx_writes, tx_write_bytes, tx_full, tx_out_of_order, tx_completed, tx_peak;
 	uint8_t error_payload[16];
 	struct ar_socket_close_info close_info;
 };
 void ar_socket_rx_init(struct ar_socket_rx *sockets);
+/* GET 0x11 (stock 0x219d9a): [0] a bitmap of the open ports, then from 8 a
+ * 0x50-byte block per port; its first half, for a port the host writes:
+ * [0] 1, u32 [4] ring capacity, u32 [8] bytes still to go out (the ring and
+ * the writes not yet copied in) - an air unit's video backlog at 0x100 for
+ * port 3. Input: [0] slot (0), [1] port, or negative for all. */
+#define AR_SOCKET_RING_INFO_BYTES 648u
+int ar_socket_rx_ring_info(const struct ar_socket_rx *sockets, const uint8_t *in, size_t length,
+	uint8_t out[AR_SOCKET_RING_INFO_BYTES]);
 /* 0: unhandled; 1: immediate response; 2: close deferred (do not send response).
  * Other socket commands return an immediate -95. */
 int ar_socket_rx_request(struct ar_socket_rx *sockets, const struct ar_frame *request,

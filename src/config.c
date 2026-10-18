@@ -7,8 +7,10 @@
 int ar_config_resolve_power(struct ar_config *config, enum ar_power_factory_state state,
 	const uint8_t *record, size_t length)
 {
-	if (!config || config->plan_length < 48 || memcmp(config->plan + 16, "DEV4", 4)) { return -22; }
-	struct ar_power_config power = {.closed={1,1}, .high_clock=1, .dev_role=1};
+	if (!config || config->plan_length < 48 ||
+	    (memcmp(config->plan + 16, "DEV4", 4) && memcmp(config->plan + 16, "AP04", 4))) { return -22; }
+	struct ar_power_config power = {.closed={1,1}, .high_clock=1,
+		.dev_role = memcmp(config->plan + 16, "AP04", 4) != 0};
 	int source = ar_power_calibration_resolve(&power, &config->calibration, state, record, length);
 	if (source < 0) { return source; }
 	struct ar_power_plan initial;
@@ -58,6 +60,142 @@ void ar_config_identity(struct ar_config *c, const uint8_t identity[4])
 	memmove(c->plan + 20, identity, 4);
 	c->plan[8] = identity[0] ^ identity[1] ^ identity[2] ^ identity[3];
 }
+/* An `mcs.slot` policy block into the plan's 136-byte policy record. Rows'
+ * ldpc_dw_conti_num is optional (the air unit's tables leave it out). */
+static int parse_policy(struct ar_json policy, struct ar_json basic, uint8_t *m)
+{
+	struct ar_json array, row, value; int32_t n; unsigned flag;
+	if (boolean(policy, "enable", &flag)) { return -22; } m[0] = flag;
+	if (!equal(policy, "mode", "auto")) { m[0] |= 2; } else if (equal(policy, "mode", "manu")) { return -95; }
+	if (number(policy, "init", -2, 23, &n)) { return -22; } m[1] = n + 2;
+	if (number(policy, "hold_time", 0, 65535, &n)) { return -22; } put16(m + 4, n);
+	if (optional_number(policy, "delay_start", 0, 0, 65535, &n)) { return -22; } put16(m + 6, n);
+	if (number(policy, "max_wait_time", 0, 65535, &n)) { return -22; } put16(m + 8, n);
+	if (boolean(basic, "dist_calc.enable", &flag)) { return -22; } m[10] = flag; m[11] = 2;
+	if (optional_number(basic, "dist_calc.offset", 20, 0, 100, &n)) { return -22; } m[12] = n;
+	if (ar_json_path(policy, "mcs_tab", &array)) { return -22; }
+	for (unsigned i = 0; i < 10; i++) {
+		int error = ar_json_index(array, i, &row); if (error == -2) { break; } if (error) { return -22; }
+		uint8_t *r = m + 16 + i * 12;
+		if (number(row, "mcs", -2, 13, &n)) { return -95; } r[0] = n + 2;
+		if (i && r[0] <= r[-12]) { return -22; }
+		if (number(row, "ldpc_up_num", 0, 255, &n)) { return -22; } r[1] = n;
+		if (number(row, "ldpc_dw_num", 0, 255, &n)) { return -22; } r[2] = n;
+		if (optional_number(row, "ldpc_dw_conti_num", 0, -128, 127, &n)) { return -22; } r[3] = n;
+		const char *fields[] = {"snr_up","snr_dw","up_keep_time","dw_keep_time"};
+		for (unsigned j = 0; j < 4; j++) { if (number(row, fields[j], 0, 65535, &n)) { return -22; } put16(r + 4 + j * 2, n); }
+		m[2]++;
+	}
+	if (!m[2] || ar_json_index(array, m[2], &value) != -2) { return -22; }
+	struct ar_dev_mcs_config checked;
+	return ar_dev_mcs_decode_config(&checked, m, AR_DEV_MCS_CONFIG_BYTES) ? -22 : 0;
+}
+
+/* The air unit's configuration (role "ap"): the same plan layout as DEV4
+ * under the magic "AP04". The AP serves the grounds the host names later
+ * (SET 4); none are compiled in. Its own receive policy is ap.mcs.slot. */
+static int parse_ap(struct ar_config *out, struct ar_json root, struct ar_json basic,
+	struct ar_json channel, const uint8_t *keys)
+{
+	struct ar_json ap, policy, array, row, value;
+	struct ar_config c = {0}; uint8_t *plan = c.plan, *p = plan + 16;
+	int32_t n; unsigned flag;
+	if (ar_json_path(basic, "ap", &ap) || ar_json_path(ap, "mcs.slot", &policy)) { return -22; }
+	const struct { const char *path, *text; } required[] = {
+		{"ap.clock","200MHz"},
+		{"channel.band_mode","band_single"}, {"channel.init_band","5G"},
+		{"channel.band_hop","manu"}, {"channel.fs_bw","5"},
+		{"power.mode","closeloop"},
+		{"lna.inner.mode","manu"}, {"lna.inner.manu","on"}, {"lna.fem.mode","manu"}, {"lna.fem.manu","on"},
+		{"para.br.tx.bandwidth","5"}, {"para.br.rx.bandwidth","5"},
+		{"para.slot.tx.bandwidth","2.5"}, {"para.slot.rx.bandwidth","2.5"},
+		{"ap.user_mode.mode","1V1"}
+	};
+	for (unsigned i = 0; i < sizeof required / sizeof required[0]; i++) {
+		int error = equal(basic, required[i].path, required[i].text); if (error) { return error; }
+	}
+	/* channel.mode "manu", or "auto": the AP's own hopping on from the start. */
+	unsigned auto_start = !equal(channel, "mode", "auto");
+	if (!auto_start) { int error = equal(channel, "mode", "manu"); if (error) { return error; } }
+	/* Broadcast out on two streams (STBC), the slot in on one. */
+	const char *profiles[] = {"para.br.tx", "para.br.rx", "para.slot.tx", "para.slot.rx"};
+	const char *modes[] = {"2TX_STBC", "2T2R_STBC", "1TX", "1T1R"};
+	for (unsigned i = 0; i < 4; i++) {
+		if (ar_json_path(basic, profiles[i], &row)) { return -22; }
+		const char *enabled[] = {"payload", "enable_tintlv"};
+		for (unsigned j = 0; j < 2; j++) {
+			if (boolean(row, enabled[j], &flag)) { return -22; } if (!flag) { return -95; }
+		}
+		const char *fields[] = {"tintlv_num", "tintlv_len", "fch_info_len"};
+		const int32_t expected[] = {i < 2 ? 2 : 1, 12, 96};
+		for (unsigned j = 0; j < 3; j++) {
+			if (number(row, fields[j], 0, INT32_MAX, &n)) { return -22; } if (n != expected[j]) { return -95; }
+		}
+		int error = equal(row, i & 1 ? "rx_mode" : "tx_mode", modes[i]); if (error) { return error; }
+	}
+	if (boolean(basic, "channel.multi_mode.enable", &flag)) { return -22; } if (flag) { return -95; }
+	if (boolean(basic, "channel.rc_hop.enable", &flag)) { return -22; } if (flag) { return -95; }
+	memcpy(p, "AP04", 4); put32(plan + 12, 76);
+	if (mac(ap, "mac", p + 4)) { return -22; }
+	ar_config_identity(&c, p + 4);
+	p[22] = p[23] = 2;
+	if (ar_json_path(channel, "freq", &array)) { return -22; }
+	unsigned count = 0;
+	for (; count < 42; count++) {
+		int error = ar_json_index(array, count, &value); if (error == -2) { break; }
+		if (error || ar_json_integer(value, &n) || n <= 4300000 || n > 7500000) { return -22; }
+		put32(p + 268 + count * 4, (uint32_t)n);
+		for (unsigned i = 0; i < count; i++) { if (!memcmp(p + 268 + i * 4, p + 268 + count * 4, 4)) { return -22; } }
+	}
+	if (!count || ar_json_index(array, count, &value) != -2 || number(channel, "init_chan", -1, (int32_t)count - 1, &n)) { return -22; }
+	/* Stock's defaults (0x236bf0) when the configuration has no hop_ex /
+	 * hop_para; the first three tiers are those of its built-in config. */
+	c.hop = (struct ar_hop_config){.blind_ms = 3000, .blind_errors = 16, .tier_count = 3,
+		.tiers = {{3, 20}, {6, 10}, {9, 5}}, .measure_start = n < 0,
+		.auto_start = (uint8_t)auto_start};
+	struct ar_json blind, tiers, tier;
+	if (!ar_json_path(channel, "hop_ex.blind_hop", &blind)) {
+		int32_t errors, ms;
+		if (optional_number(blind, "at_err_cnt", c.hop.blind_errors, 0, 255, &errors) ||
+		    optional_number(blind, "duration", c.hop.blind_ms, 0, 65535, &ms)) { return -22; }
+		c.hop.blind_errors = (uint8_t)errors; c.hop.blind_ms = (uint16_t)ms;
+	}
+	if (!ar_json_path(channel, "hop_para", &tiers)) {
+		unsigned found = 0;
+		for (unsigned i = 0; i < AR_HOP_TIERS; i++) {
+			int error = ar_json_index(tiers, i, &tier); if (error == -2) { break; } if (error) { return -22; }
+			int32_t retx, diff;
+			if (number(tier, "retx_cnt", 0, 255, &retx) || number(tier, "power_diff", 0, 255, &diff)) { return -22; }
+			c.hop.tiers[found][0] = (uint8_t)retx; c.hop.tiers[found][1] = (uint8_t)diff; found++;
+		}
+		if (found) { c.hop.tier_count = (uint8_t)found; }
+	}
+	/* init_chan -1: stock's AP chooses by measurement. It starts on 5914 MHz
+	 * when listed, else the first channel, and moves once the scan has
+	 * measured every channel (measure_start). */
+	c.search = 0;
+	if (n < 0) {
+		n = 0;
+		for (unsigned i = 0; i < count; i++) {
+			uint32_t f = p[268 + i * 4] | (uint32_t)p[269 + i * 4] << 8 | (uint32_t)p[270 + i * 4] << 16;
+			if (f == 5914000) { n = (int32_t)i; break; }
+		}
+	}
+	p[21] = (uint8_t)n;
+	memcpy(plan, p + 268 + p[21] * 4, 4); c.plan_length = 284 + count * 4;
+	if (number(basic, "power.pwr_init", 9, 36, &n)) { return -22; } p[28] = n;
+	if (ar_power_calibration_load(&c.calibration, root, NULL) ||
+	    !(c.calibration.valid & (UINT32_C(1) << (n - 9)))) { return -22; }
+	uint32_t frequency = plan[0] | (uint32_t)plan[1] << 8 | (uint32_t)plan[2] << 16 | (uint32_t)plan[3] << 24;
+	const uint8_t *gains = c.calibration.groups == 2 && frequency >= c.calibration.sub_band_khz ?
+		c.calibration.rows_high[n - 9] : c.calibration.rows[n - 9];
+	memcpy(p + 24, gains, 4);
+	if (number(basic, "para.br.tx.retx_count", 0, 127, &n)) { return -22; } p[29] = n;
+	int error = parse_policy(policy, basic, p + 32); if (error) { return error; }
+	memcpy(p + 168, keys, 100);
+	*out = c; return 0;
+}
+
 int ar_config_parse(struct ar_config *out, const char *json, size_t length,
 	const uint8_t *keys, size_t keys_length)
 {
@@ -72,9 +210,9 @@ int ar_config_parse(struct ar_config *out, const char *json, size_t length,
 	struct ar_config c = {0}; uint8_t *plan = c.plan, *p = plan + 16;
 	int32_t n; unsigned flag;
 	if (ar_json_parse(&root, json, length) ||
-	    ar_json_path(root, "baseband.basic", &basic) ||
-	    ar_json_path(basic, "dev", &dev) || ar_json_path(basic, "channel", &channel) ||
-	    ar_json_path(dev, "mcs.slot", &policy)) { return -22; }
+	    ar_json_path(root, "baseband.basic", &basic) || ar_json_path(basic, "channel", &channel)) { return -22; }
+	if (!equal(basic, "role", "ap")) { return parse_ap(out, root, basic, channel, keys); }
+	if (ar_json_path(basic, "dev", &dev) || ar_json_path(dev, "mcs.slot", &policy)) { return -22; }
 	/* These settings select hardware paths implemented and validated on Ascent VRX.
 	 * Reject incompatible requests rather than silently retaining compiled data. */
 	const struct { const char *path, *text; } required[] = {
