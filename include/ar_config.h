@@ -16,6 +16,11 @@ struct ar_config {
 	struct ar_power_config power;
 	unsigned power_source;
 	struct ar_hop_config hop;   /* AP only */
+	/* DEV only: the broadcast widths it may run (codes 2..5, 5 .. 40 MHz),
+	 * stock's bw_auto.range low/high (5 to 20 MHz without one), and the MCS
+	 * (internal) it narrows at or below / widens above, bw_auto.threshold
+	 * low/high (configuration values; 0/0: MCS 3 and 6). See ar_dev_width.h. */
+	uint8_t bw_min, bw_target, bw_narrow_mcs, bw_widen_mcs;
 };
 /* Parse loader JSON into the implemented DEV mode-0 configuration. Board
  * register defaults/pins and FCH encoding keys have separate provenance. */

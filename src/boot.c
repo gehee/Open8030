@@ -97,6 +97,8 @@ static int initialize(const struct ar_boot_profile *profile, unsigned loader)
 			ar_rf_set_power_bands(configured.calibration.rows_high, configured.calibration.sub_band_khz);
 		}
 		ar_rf_set_hop_config(&configured.hop);
+		ar_rf_set_bandwidth_policy(configured.bw_min, configured.bw_target,
+			configured.bw_narrow_mcs, configured.bw_widen_mcs);
 		boot.power_offsets[0] = configured.power.path_offset[0];
 		boot.power_offsets[1] = configured.power.path_offset[1];
 	}

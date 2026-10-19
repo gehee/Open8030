@@ -17,6 +17,14 @@ static void changed(const char *before, const char *after, int expected)
 	assert(ar_config_parse(&c, text, strlen(text), keys, sizeof keys) == expected);
 	if (expected) { assert(!memcmp(&c, &saved, sizeof c)); }
 }
+static struct ar_config dev_parsed;
+static int dev_changed(const char *before, const char *after)
+{
+	char text[sizeof config_fixture + 256]; const char *p = strstr(config_fixture, before); assert(p);
+	size_t prefix = p - config_fixture; memcpy(text, config_fixture, prefix);
+	strcpy(text + prefix, after); strcpy(text + prefix + strlen(after), p + strlen(before));
+	return ar_config_parse(&dev_parsed, text, strlen(text), keys, sizeof keys);
+}
 static struct ar_config ap_parsed;
 static int ap_changed(const char *before, const char *after)
 {
@@ -116,6 +124,18 @@ int main(void)
 	changed("\"dist_calc\":{\"enable\":true}", "\"dist_calc\":{\"enable\":true,\"offset\":-1}", -22);
 	changed("\"mcs\":0", "\"mcs\":13", 0);
 	changed("\"init_chan\":-1", "\"init_chan\":2", 0);
+	/* The width target: bw_auto.range.high, 20 MHz without one. */
+	assert(!dev_changed("\"init_chan\":-1", "\"init_chan\":-1") && dev_parsed.bw_target == 4);
+	assert(dev_parsed.bw_min == 2 && dev_parsed.bw_narrow_mcs == 5 && dev_parsed.bw_widen_mcs == 8);
+	assert(!dev_changed("\"bw_auto\":{\"enable\":false}", "\"bw_auto\":{\"enable\":false,"
+		"\"range\":{\"low\":\"10\",\"high\":\"40\"},\"threshold\":{\"low\":2,\"high\":9}}") &&
+		dev_parsed.bw_min == 3 && dev_parsed.bw_target == 5 && dev_parsed.bw_narrow_mcs == 4 && dev_parsed.bw_widen_mcs == 11);
+	assert(dev_changed("\"bw_auto\":{\"enable\":false}",
+		"\"bw_auto\":{\"enable\":false,\"range\":{\"low\":\"40\",\"high\":\"20\"}}") == -22);
+	assert(!dev_changed("\"bw_auto\":{\"enable\":false}",
+		"\"bw_auto\":{\"enable\":false,\"range\":{\"low\":\"5\",\"high\":\"40\"}}") && dev_parsed.bw_target == 5);
+	assert(dev_changed("\"bw_auto\":{\"enable\":false}",
+		"\"bw_auto\":{\"enable\":false,\"range\":{\"high\":\"30\"}}") == -22);
 	changed("\"init_chan\":-1", "\"init_chan\":3", -22);
 	changed("5220000", "4915000", -22);
 	changed("\"role\":\"dev\"", "\"role\":\"ap\"", -22); /* an AP document needs its ap block */

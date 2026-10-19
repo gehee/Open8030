@@ -42,10 +42,9 @@ struct ar_dev_mcs {
 	uint32_t sample_ms, direction_ms, request_ms, retry_ms;
 	uint32_t samples, requests, acknowledgements, unsolicited, timeouts;
 	uint32_t advertisements, cancellations, average_snr, bad_samples, recent_bad;
-	/* A row left because of errors is not retried for 30 s, doubling up to
-	 * 8 min each time it fails again; a row that holds 60 s clears its level. */
-	uint32_t blocked_until[AR_DEV_MCS_ROWS], row_since_ms, backoffs;
-	uint8_t backoff_level[AR_DEV_MCS_ROWS];
+	/* Open8030: the host's ceiling, internal MCS (0: none) - no row above it,
+	 * and down from one at once. */
+	uint8_t ceiling;
 };
 /* Reject unsupported/ill-formed policy data before modifying the context. */
 int ar_dev_mcs_init(struct ar_dev_mcs *ctx, const struct ar_dev_mcs_config *config);
@@ -55,6 +54,9 @@ int ar_dev_mcs_init(struct ar_dev_mcs *ctx, const struct ar_dev_mcs_config *conf
  * sync-MMIO enable is consumed by the RF integration, not this policy. */
 int ar_dev_mcs_decode_config(struct ar_dev_mcs_config *config, const uint8_t *wire, size_t length);
 unsigned ar_dev_mcs_connect(struct ar_dev_mcs *ctx, unsigned connected);
+/* The highest internal MCS the policy may use (0: no limit). Kept across
+ * links; the policy steps down to it at its next sample. */
+void ar_dev_mcs_set_ceiling(struct ar_dev_mcs *ctx, unsigned internal_mcs);
 unsigned ar_dev_mcs_sample(struct ar_dev_mcs *ctx, uint32_t now_ms,
 	uint16_t snr, uint16_t errors);
 /* A hardware-valid logical-user8 FCH supplies the observed internal MCS. */

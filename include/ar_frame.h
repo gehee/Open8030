@@ -56,6 +56,8 @@
 #define AR_REQ_RF_AP_INFO UINT32_C(0x0c5a0032)
 #define AR_REQ_RF_AP_TRACE UINT32_C(0x0c5a0033)
 #define AR_REQ_RF_AP_RESET UINT32_C(0x0c5a0034)
+#define AR_REQ_RF_FRAME_INFO UINT32_C(0x0c5a0035)
+#define AR_REQ_RF_MCS_CEILING UINT32_C(0x0c5a0036)
 /* Project-only read diagnostics through the original Linux daemon. Its
  * 0x4030d0 dispatcher consumes group 0x0c locally; group 0x01 is forwarded.
  * These aliases are not vendor commands. Never alias configuration/start. */

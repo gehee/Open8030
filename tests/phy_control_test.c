@@ -64,6 +64,11 @@ int main(void)
 	assert(state.tx[1] == 7 && state.lead_ms == 11 && state.time_value == 60001);
 	assert(state.tx[3] == (60012 & 255) && state.tx[4] == (60012 >> 8));
 	assert(!ar_phy_control_tick(&state,60002,&ops,&state) && writes == 2 && !state.tx[1] && !calls);
+	/* A period of 1 s, and the lead following a shorter frame. */
+	state.time_period_ms = 1000; state.frame_us = 3251;
+	assert(!ar_phy_control_tick(&state,61000,&ops,&state) && writes == 2);
+	assert(!ar_phy_control_tick(&state,61001,&ops,&state) && writes == 3 && state.tx[1] == 7);
+	assert(state.lead_ms == 4 && state.tx[3] == (61005 & 255) && state.tx[4] == (61005 >> 8));
 	reset(); state.rx[1] = 0x14; state.rx[2] = 6;
 	assert(!ar_phy_control_expire(&state,&ops,&state));
 	assert(calls == 1 && !outgoing_seen && command_seen == 4 && length_seen == 3);
@@ -81,6 +86,23 @@ int main(void)
 	assert(ar_phy_control_enqueue(&state,4,1,data,5,&ops,&state) == -22);
 	assert(ar_phy_control_enqueue(&state,4,1,NULL,3,&ops,&state) == -22);
 	assert(!memcmp(&before,&state,sizeof state) && !locked);
-	puts("PHY control queue, TTL, cancellation and timer tests passed");
+	/* Open8030 frame stamps (command 10): between the AP time's messages, at
+	 * most once per stamp period, 32 bits packed as command 7's ms (bits
+	 * 24..27 in byte 3's low nibble, 28..31 in the TTL nibble);
+	 * one tick in the slot, then cleared; never from a ground. */
+	memset(&state, 0, sizeof state); writes = 0;
+	state.time_period_ms = 1000; state.stamp_period_ms = 100; state.stamp_us = UINT64_C(0xabcdef1234);
+	assert(ar_phy_control_tick(&state, 5000, &ops, &state) == 0 && writes == 1 && (packets[0][1] & 15) == 7);
+	assert(ar_phy_control_tick(&state, 5010, &ops, &state) == 0 && writes == 2 && !(packets[1][1] & 15));
+	assert(ar_phy_control_tick(&state, 5150, &ops, &state) == 0 && writes == 3);
+	assert((packets[2][1] & 15) == 10 && (packets[2][1] >> 4) == 0xc && ((packets[2][2] >> 1) & 7) == 4);
+	assert(packets[2][3] == 0x34 && packets[2][4] == 0x12 && packets[2][5] == 0xef && packets[2][6] == 0x0d);
+	assert(packets[2][0] == ar_phy_control_checksum(packets[2]) && state.stamps == 1);
+	assert(ar_phy_control_enqueue(&state, 4, 16, (const uint8_t[]){1, 2, 3}, 3, &ops, &state) == -1);
+	assert(ar_phy_control_tick(&state, 5160, &ops, &state) == 0 && writes == 4 && !(state.tx[1] & 15));
+	assert(ar_phy_control_tick(&state, 5170, &ops, &state) == 0 && writes == 4);   /* not before 100 ms */
+	writes = 0; state.role = 1; state.stamp_ms = 0;
+	assert(ar_phy_control_tick(&state, 9000, &ops, &state) == 0 && writes == 0);
+	puts("PHY control queue, TTL, cancellation, timer and frame stamp tests passed");
 	return 0;
 }

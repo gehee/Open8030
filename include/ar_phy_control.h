@@ -8,6 +8,15 @@ struct ar_phy_control {
 	uint32_t time_value, frame_us;
 	uint16_t callbacks;
 	uint8_t role, mode, wake, ticks, time_valid, lead_ms;
+	/* The AP time (command 7) goes when the channel is free, at most once per
+	 * period: 0 is stock's 60001 ms. */
+	uint16_t time_period_ms;
+	/* Open8030's frame stamp (command 10, ar_frame_stamp.h), between them: the
+	 * AP's stamp_us (36 bits) when the channel is free, at most once per
+	 * stamp_period_ms (0: none). stamps counts those sent. */
+	uint64_t stamp_us;
+	uint32_t stamp_ms, stamps;
+	uint16_t stamp_period_ms;
 };
 struct ar_phy_control_ops {
 	void (*lock)(void *context);
@@ -20,7 +29,7 @@ struct ar_phy_control_ops {
 	void (*idle)(uint8_t packet[7], void *context);
 };
 uint8_t ar_phy_control_checksum(const uint8_t packet[7]);
-/* Single pending slot: -1 means busy. Native -22 rejects unsafe storage,
+/* Single pending slot: -1 means busy (a frame stamp holds it one tick). Native -22 rejects unsafe storage,
  * command >9, TTL >31 or length >4 before effects; original enqueue lacks
  * these guards. All ops callbacks are required. Unwritten payload tails are
  * retained and checksummed. */

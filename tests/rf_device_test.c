@@ -296,6 +296,8 @@ static void open8030_linked_tests(void)
 	/* AP command 5: the AP changes the broadcast width (code in bits 7:5). */
 	uint8_t width[3] = {0, 4 << 5, 0};
 	ap_command(5, 1, width, 3);
+	/* ... applied at the frame's IRQ 5, as the AP does. */
+	irq(5);
 	assert(((*reg(0x0a1109e0) >> 8) & 7) == 4 && bandwidth_events && bandwidth_event[2] == 4);
 
 	/* Frame mode: SET 16 validates, a mode-2 request goes out as command 8

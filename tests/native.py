@@ -45,6 +45,8 @@ TESTS = {
     'dev_mcs': ('dev_mcs', [], []),
     'ap_time': ('ap_time', [], []),
     'ap_hop': ('ap_hop', [], []),
+    'dev_width': ('dev_width', [], []),
+    'frame_stamp': ('frame_stamp', [], []),
     'fch_monitor': ('fch_monitor', [], []),
     'event': ('event', [], []),
     'telemetry': ('telemetry data_framing data_event event', [], []),
@@ -74,7 +76,7 @@ TESTS = {
     'sfdp': ('sfdp', [], []),
     'factory_storage': ('flash flash_spi sfdp factory power_config power json', [], ['-lz']),
     'boot': ('boot config json power_config power dev_mcs factory flash_spi sfdp flash', [], []),
-    'rf_device': ('rf_device ap ap_hop mac dev binding dev_tx dev_mcs tx_mcs interleaver tx_irq fch_monitor channel_monitor power power_control ap_time command scan scan_scores tune phy_control phy_receive socket_rx', ['AR_RF_SIMULATED'], []),
+    'rf_device': ('rf_device ap ap_hop dev_width frame_stamp mac dev binding dev_tx dev_mcs tx_mcs interleaver tx_irq fch_monitor channel_monitor power power_control ap_time command scan scan_scores tune phy_control phy_receive socket_rx', ['AR_RF_SIMULATED'], []),
     'bootstrap': ('', ['AR_BOOTSTRAP_SIMULATED'], []),
 }
 

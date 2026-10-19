@@ -24,6 +24,8 @@
 #include "ar_power.h"
 #include "ar_ap.h"
 #include "ar_config.h"
+#include "ar_dev_width.h"
+#include "ar_frame_stamp.h"
 #include <string.h>
 #ifndef AR_RF_SIMULATED
 #include "ar_sdio_device.h"
@@ -172,7 +174,7 @@ static void ap_trace_mark(unsigned source, uint32_t a, uint32_t b, uint32_t c);
  * it), retransmission goes off for two frames, which drops that block. */
 static struct ar_dev_retx ap_retx;
 #define AP_RETX_THRESHOLD 4   /* when the configuration has none */
-static unsigned ap_bw_code = 2, ap_bw_pending;
+static unsigned ap_bw_code = 2, ap_bw_pending, ap_bw_at_sweep;   /* at_sweep = 0x80 | code */
 /* The ground's uplink MCS. Stock asks for it once the identity has moved
  * (command 3 [slot 0, mcs], TTL 31): its ground then sends modulation 0,
  * code 0, rate 0 (0xb00 0x14086021 in stock's linked dumps). Left alone, it
@@ -265,14 +267,24 @@ static struct { uint32_t commands, applied, rejected, last, sent; } chan_info;
 static void tune_context_plls(uint64_t pll);
 static void ap_receive(const struct ar_mac_frame *frame);
 static uint32_t bw_retry_ms;
-static unsigned bw_code = 2, bw_state, bw_request_pending, bw_settle_step, chain_snr_fresh, bw_target = 4;
+static unsigned bw_code = 2, bw_state, bw_request_pending, bw_settle_step, chain_snr_fresh, bw_target = 2;
+/* The receiver's width policy (dev_width.c): bw_target is what it asks for. */
+static struct ar_width_config bw_policy = {.min = 2, .max = 4, .narrow_mcs = 5,
+	.narrow_ms = 200, .widen_ms = 1000, .settle_ms = 500};
+static uint8_t bw_widen_mcs = 8;   /* internal: the row whose snr_up widening keeps */
+static struct ar_width_state bw_width;
+static void bw_policy_rows(void);
+/* Open8030's frame stamps (ar_frame_stamp.h): our IRQ 5s on both roles, the
+ * AP's clock on a ground. */
+static struct ar_frame_stamp fstamp;
+static struct ar_rf_frame_info frame_stamp_info;
 static uint32_t phy_last_invalid, phy_last_mac_invalid;
 static uint32_t bw_deadline_ms, bw_settle_us;
 static uint8_t dev_bw_request[5];
 static struct { uint32_t requests, sent, applied, announced, commands, last, ttl_mask, wide_ok, wide_bad, wide_last_ok, wide_last_bad; } bw_info;
 static unsigned frame_mode, frame_pending;   /* 0 standard, 2 short (TDD frame mode, SET 16); pending = 0x80 | mode */
 static struct { uint32_t requests, applied, from_ap, last; } frame_info;
-static unsigned sync_timer_apply;
+static unsigned sync_timer_apply, bw_at_sweep;   /* bw_at_sweep = 0x80 | code */
 const struct ar_rf_mcs_info *ar_rf_mcs_information(void)
 {
 	mcs_info.samples = dev_mcs.samples; mcs_info.requests = dev_mcs.requests;
@@ -510,6 +522,8 @@ static const struct ar_interleaver_ops tx_step_ops = {
  * (0x24ed72): port-0 internal command 9 with the one-byte SDK code, which the
  * AP's 0x234ee6 turns into its own 0x306. */
 
+static int hold_engines(void);
+static void release_engines(void);
 static void apply_bandwidth(unsigned code)
 {
 	unsigned previous = bw_code;
@@ -528,32 +542,24 @@ static void apply_bandwidth(unsigned code)
 	 * 100 + 2234 us. (Mode 0 also clears the 40 MHz bits in 0xbac/0xbd4 via
 	 * 0x21b1ae(1); never set on this path.) */
 	field(0x9e00803, code);
-	/* Mode 0: 40 MHz sets the 0xbac[31:14,7:6] / 0xbd4[17:8] bits (0x21b1ae(0)),
-	 * any other width clears them (0x21b1ae(1)); 0x238960 passes
-	 * (payload[1] & 0xe0) != 0xa0. 40 MHz is also the one width that changes
-	 * the frame: the stock DEV linked at 40 (linkdump, 2026-10-16) runs the
-	 * RX8 window at 0x09c4 (1600 us) instead of 0x1250 (3000 us) and the
-	 * front end with 0x010 bit 30 and the 0x014/0x050/0x0e0/0x0e4/0x1e0/0x360/
-	 * 0x4a0/0x4ec/0x4f0 values below (whole words from that dump). */
+	/* Mode 0: 40 MHz sets the receiver's 0xbac[31:14,7:6] / 0xbd4[17:8] bits
+	 * (0x21b1ae(0)), any other width clears them (0x21b1ae(1)). 40 MHz is also
+	 * the one width that changes the frame: the RX8 window [31:16] is 0x09c4
+	 * (1600 us) instead of 0x1250 (3000 us). Nothing else: stock writes no
+	 * clock or front-end register for 40 (stock dumps at 5/20/40 MHz,
+	 * 2026-10-18; the other words that differ are live AGC/calibration state). */
 	if (code == 5) {
 		update(BB + 0xbac, 0xffffc0c0, 0xffffc0c0); update(BB + 0xbd4, 0x0003ff00, 0x0003ff00);
 		field(0x9701010, 0x09c4);
-		static const struct { uint16_t reg; uint32_t value; } at40[] = {
-			{0x010, 0xc0800000}, {0x014, 0x0000f4ef}, {0x050, 0x00150003}, {0x0e0, 0xffa5a56f},
-			{0x0e4, 0x00000eff}, {0x1e0, 0x00ec3c00}, {0x360, 0x00059906}, {0x4a0, 0x00ff191e},
-			{0x4ec, 0x007e007e}, {0x4f0, 0x0000171c}};
-		for (unsigned i = 0; i < sizeof at40 / sizeof at40[0]; i++) { write32(BB + at40[i].reg, at40[i].value); }
 	} else {
 		update(BB + 0xbac, 0xffffc0c0, 0); update(BB + 0xbd4, 0x0003ff00, 0);
 		field(0x9701010, 0x1250);
-		if (previous == 5) {
-			static const struct { uint16_t reg; uint32_t value; } at20[] = {
-				{0x010, 0xa0800000}, {0x014, 0x00012d2d}, {0x050, 0x00140003}, {0x0e0, 0xff48486f},
-				{0x0e4, 0x00002eff}, {0x1e0, 0x00fc3c00}, {0x360, 0x02059607}, {0x4a0, 0x00ff101f},
-				{0x4ec, 0x01b901bf}, {0x4f0, 0x0000101f}};
-			for (unsigned i = 0; i < sizeof at20 / sizeof at20[0]; i++) { write32(BB + at20[i].reg, at20[i].value); }
-		}
 	}
+	/* Re-arm the running sequence on the new width, as a frame-mode change
+	 * does: 40 MHz changes the frame (the broadcast window; stock tears the
+	 * link down here instead and searches again, ~1 s), and 5 -> 20 without
+	 * it lost the link every time (bench, 2026-10-19). */
+	(void)hold_engines(); release_engines();
 	bw_settle_step = 1; bw_settle_us = elapsed_us();
 	/* Diagnostics: the frame registers at the switch (sync reserved[3..5]). */
 	sync_info.reserved[3] = read32(BB + 0x970);
@@ -616,8 +622,6 @@ static void sync_channel(const uint8_t control[7])
  * at zero the DEV applies the command itself and clears the nibble. */
 static struct { unsigned state, command, ttl, length; uint8_t payload[4]; } dev_cmd;
 static void apply_frame_mode(unsigned mode);
-static int hold_engines(void);
-static void release_engines(void);
 static int dev_command_request(unsigned command, unsigned ttl, const uint8_t *payload, unsigned length)
 {
 	if (dev_cmd.state) { return -16; }
@@ -819,6 +823,15 @@ int ar_rf_host_channel_set(unsigned order, const uint8_t *payload, size_t length
 	return -95;
 }
 
+/* The AP's command 5 arrived: the switch waits for this frame's IRQ 5, as
+ * the AP does, so both run the new width from the next frame. Across 40 MHz
+ * the frame changes; 5/10/20 at once dropped the link on the short frame
+ * (mode 2) every time (bench, 2026-10-19), at IRQ 5 they do not. */
+static void bandwidth_switch(unsigned code)
+{
+	if (code > 5 || code == bw_code) { return; }
+	bw_at_sweep = 0x80 | code;
+}
 static void sync_bandwidth(const uint8_t control[7])
 {
 	/* 0x238960 with param1 == 0: a type-0 switch for slot bits 3:0, code bits 7:5. */
@@ -826,7 +839,7 @@ static void sync_bandwidth(const uint8_t control[7])
 	bw_info.last = control[3] | (uint32_t)control[4] << 8 | (sync_timer_apply ? 0x4000u : 0);
 	if (control[3] != 0) { return; }
 	unsigned code = control[4] >> 5;
-	if (code <= 5 && code != bw_code) { apply_bandwidth(code); }
+	bandwidth_switch(code);
 	bw_state = 2;
 }
 
@@ -847,18 +860,36 @@ static void bandwidth_poll(void)
 			bw_settle_step = 0;
 		}
 	}
+	/* A switch done (command 5 applied, the receiver released): look again. */
+	if (bw_state == 2 && !bw_settle_step && !bw_at_sweep) { bw_state = 0; bw_info.requests = 0; }
+	if (bw_state == 0 && dev_active && receiver.dev_state == 2 && receiver.assigned_slot == 0 &&
+	    !bw_settle_step && !bw_at_sweep && dev_mcs.current < dev_mcs.config.count) {
+		/* A stock AP drops and re-forms the link at every step to or from
+		 * 40 MHz: up to 20 until a frame stamp says the AP is Open8030 (one
+		 * every 100 ms; requests wait 3 s into a link anyway). */
+		struct ar_width_config policy = bw_policy;
+		if (!fstamp.valid && policy.max > 4) { policy.max = 4; }
+		unsigned want = ar_width_decide(&policy, &bw_width, bw_code,
+			dev_mcs.config.rows[dev_mcs.current].mcs, dev_mcs.average_snr, now);
+		if (want != bw_target) { bw_target = want; bw_info.requests = 0; }
+	}
 	if (bw_state == 0) {
 		if (bw_info.requests >= 4 && bw_code != bw_target && (uint32_t)(now - bw_retry_ms) > 10000) {
 			/* Four quick tries went unanswered: keep asking every 10 s rather
 			 * than leaving the link narrow until the next rebuild. */
 			bw_info.requests = 3; bw_retry_ms = now;
 		}
-		/* Only on a settled MCS: the AP's MCS state machine (0x253412 from
-		 * its 0x106 path) cancels any pending sync command, our switch included. */
+		/* Wider while the MCS still climbs, from 1 s into the link: an
+		 * Open8030 AP keeps a width switch through MCS changes (it cancels
+		 * only its own uplink-MCS command). A stock AP's MCS state machine
+		 * (0x253412 from its 0x106 path) cancels a pending sync command, our
+		 * switch included: unanswered, it is asked for again (state 1's
+		 * deadline). Before, wider waited for 3 s into the link and 2 s on
+		 * one MCS: ~15 s at 5 MHz after a link-up. Narrower at once. */
+		(void)settled_ms;
 		if (dev_active && receiver.dev_state == 2 && receiver.assigned_slot == 0 && bw_code != bw_target &&
-		    dev_mcs.acknowledgements && !dev_mcs.pending && !dev_mcs.advertised &&
-		    (uint32_t)(now - settled_ms) > 2000 &&
-		    bw_info.requests < 4 && (uint32_t)(now - receiver.connected_elapsed_us / 1000) > 3000) {
+		    (bw_target < bw_code || dev_mcs.acknowledgements) &&
+		    bw_info.requests < 4 && (uint32_t)(now - receiver.connected_elapsed_us / 1000) > 1000) {
 			uint8_t code = (uint8_t)bw_target;
 			(void)ar_dev_command_encode(dev_bw_request, sizeof dev_bw_request, 9, &code, 1);
 			bw_request_pending = 1; bw_info.requests++;
@@ -881,7 +912,7 @@ static void sync_tx_mcs(const uint8_t control[7])
 		/* MCS "none": a bandwidth announcement from the AP (0x22b5b8). */
 		unsigned code = control[4] >> 5;
 		bw_info.announced++; bw_info.last = 0x8000u | control[3] | (uint32_t)control[4] << 8;
-		if (code <= 5 && code != bw_code) { apply_bandwidth(code); bw_state = 2; }
+		if (code <= 5 && code != bw_code) { bandwidth_switch(code); bw_state = 2; }
 		return;
 	}
 	tx_mcs_info.requests++; tx_mcs_info.requested = mcs;
@@ -986,6 +1017,16 @@ static const struct ar_phy_control_ops sync_expire_ops = {
 };
 static void sync_receive(const uint8_t control[7])
 {
+	if ((control[1] & 15) == AR_PHY_STAMP) {
+		/* Open8030's frame stamp: not a stock command (refused there, and never
+		 * cached as the AP's last one). Checked like any block. */
+		if (((control[2] >> 1) & 7) == 4 && control[0] == ar_phy_control_checksum(control)) {
+			const uint64_t us = control[3] | (uint64_t)control[4] << 8 | (uint64_t)control[5] << 16 |
+				(uint64_t)(control[6] & 15) << 24 | (uint64_t)(control[1] >> 4) << 28;
+			(void)ar_frame_stamp_receive(&fstamp, us);
+		}
+		return;
+	}
 	/* Runtime provisioning currently admits only mode0 and local position0.
 	 * Broader mode3/retransmission state ownership remains unintegrated. */
 	struct ar_phy_receive receive = {.slot=receiver.assigned_slot,.dev_state=receiver.dev_state};
@@ -1700,9 +1741,11 @@ static void dev_measure_eop(uint32_t status)
 		(uint8_t)(errors != 0), (uint32_t)(sample_ticks / 40000)};
 	quality_head = (quality_head + 1) & 7; if (quality_count < 8) { quality_count++; }
 	if (receive_operation >= 67) {
-		/* Policy inputs. SNR: the EA0 halfword as it is (a single-chain figure:
-		 * stock's self.snr reads twice this on the bench, and 64-QAM 3/4 fails
-		 * here where stock holds it - the second receive chain is not run).
+		/* Policy inputs. SNR: the EA0 halfword as it is (stock's self.snr reads
+		 * twice this on the bench, so the stock rows' thresholds hold ~3 dB more
+		 * here). Both receive chains run and combine as stock (0x000 [6:3],
+		 * 2T2R_STBC, path weights; checked live 2026-10-19) - "64-QAM 3/4
+		 * fails here", written before that and the sensitivity fix, is gone.
 		 * Errors: the F08 per-packet error word (non-zero on 1.4% of packets
 		 * at 5 MHz, 12% at 20 MHz MCS 10, 64% at MCS 11) plus packets refused
 		 * since the previous sample. Stock's per-chain snr_chan path keys on
@@ -1763,6 +1806,7 @@ static void dev_invalidate(void)
 		recovery.invalidations++; request_recovery(2); return;
 	}
 	if (receive_operation >= 67) { dev_mcs_apply(ar_dev_mcs_connect(dev_mcs_context(), 0)); }
+	ar_frame_stamp_reset(&fstamp);
 	field(0x8000201, 1); field(0xcf41501, 0);
 	link_event(0, receiver.dev_state);
 	dev_active = 0; receiver.dev_state = 0; receiver.assigned_slot = 8; bw_state = 0; bw_info.requests = 0;
@@ -1932,6 +1976,7 @@ static void dev_observe_lock(const struct ar_dev_control *control)
 		ar_binding_complete(&binding, login.slot, receiver.accepted_peer, sample);
 	}
 	if (receive_operation >= 67) { dev_mcs_apply(ar_dev_mcs_connect(dev_mcs_context(), 1)); }
+	ar_frame_stamp_reset(&fstamp);
 }
 
 static void dev_preencode(void)
@@ -2187,6 +2232,11 @@ static void ap_link_changed(unsigned previous)
 		/* The AP time (command 7) goes once the PHY channel is free, not a
 		 * minute after boot: until then the ground has no AP clock. */
 		phy_control.time_value = (uint32_t)(timer_ticks() / 40000) - 60001; phy_control.time_valid = 0;
+		/* And then every second, not every minute: one lost header (a frame or
+		 * bandwidth switch right after the login) left the ground without an
+		 * AP clock for a minute - the host's latency figures fell back to an
+		 * estimate. */
+		phy_control.time_period_ms = 1000;
 		link_event(2, 0);
 	} else if (previous == AR_AP_CONNECTED || now == AR_AP_IDLE) {
 		(void)ar_phy_control_cancel(&phy_control, &phy_ops, NULL);
@@ -2202,9 +2252,11 @@ static void ap_link_changed(unsigned previous)
 		ap_auto_hopping = 0; ar_hop_measure_reset(&ap_measure);
 		ap_set_identity(0);
 		field(0xb201e01, 1); field(0xcf41501, 0);   /* no retransmission without a ground */
-		/* A new link starts at 5 MHz and the first MCS. */
-		ap_bw_pending = 0;
-		if (ap_bw_code != 2) { ap_apply_bandwidth(2); }
+		/* A new link starts at 5 MHz and the first MCS. From 40 MHz the frame
+		 * changes back too: at IRQ 5 (an engine hold from here lands mid-TX). */
+		ap_bw_pending = 0; ap_bw_at_sweep = 0;
+		if (ap_bw_code == 5) { ap_bw_at_sweep = 0x80 | 2; }
+		else if (ap_bw_code != 2) { ap_apply_bandwidth(2); }
 		ap_frame_pending = 0;
 		if (ap_frame_mode) { ap_frame_at_sweep = 0x80; }   /* a new link starts on the standard frame */
 		ap_set_mcs(ap_init_mcs);
@@ -2665,13 +2717,27 @@ int ar_rf_ap_rearm(unsigned variant)
 	if (variant == 3) { ap_rearm_pending = 3; return 0; }
 	return -22;
 }
-/* The broadcast (user 8) TX bandwidth: code 2 = 5 MHz (a new link), 4 = 20.
- * The MCS fields depend on it, so the current MCS is programmed again. */
+/* The broadcast (user 8) TX bandwidth: code 2 = 5 MHz (a new link), 4 = 20,
+ * 5 = 40. The MCS fields depend on it, so the current MCS is programmed again.
+ * 0xa48 is what stock writes before each TX entry (IRQ 7) for the code. 40 MHz
+ * also shortens the broadcast window [15:0] from 3000 to 1600 us: the frame
+ * changes, so the running sequence is re-armed and the frame time taken again,
+ * as for a frame-mode change (stock tears the link down here instead). */
 static void ap_apply_bandwidth(unsigned code)
 {
 	unsigned previous = ap_bw_code;
 	field(0xb200003, code);
-	write32(BB + 0xa48, code >= 4 ? 0x40404040 : 0);    /* stock AP at 20 MHz */
+	write32(BB + 0xa48, code == 5 ? 0x80808080 : code == 4 ? 0x40404040 : 0);
+	field(0x9700010, code == 5 ? 0x09c4 : 0x1250);
+	{
+		int held = hold_engines(); release_engines();
+		ap_frame_us = dev_frame_microseconds(); phy_control.frame_us = ap_frame_us;
+		ap_info.frame_us = ap_frame_us;
+		ap_trace_mark(40 + code, read32(BB + 0x970), read32(BB + 0xb20), (uint32_t)held);
+		/* Diagnostics: with the stall freeze off (unfreeze 1), keep the frames
+		 * around the first switch across 40 MHz in the trace. */
+		if (!ap_trace.frozen && ap_trace.freeze_at == UINT32_MAX) { ap_trace.freeze_at = ap_trace.head + 300; }
+	}
 	(void)ar_tx_mcs_control(&tx_interleaver, AR_TX_MCS_PROGRAM, 8, tx_interleaver.users[8].mcs,
 		mcs_fch_keys, information.chip_profile, 0, &tx_mcs_ops, NULL);
 	ap_bw_code = code; ap_info.bandwidth = code; ap_info.bandwidth_switches++;
@@ -2762,9 +2828,13 @@ static void ap_command_done(unsigned command, const uint8_t *payload)
 	}
 	/* Our command 4 expired: the ground hopped on its last TTL, we follow at IRQ 5. */
 	if (command == 4 && ap_chan_hop) { ap_chan_at_sweep = ap_chan_hop; ap_chan_hop = 0; }
-	/* Command 5 expired on both ends: the ground's receiver moves now. */
+	/* Command 5 expired on both ends: the ground's receiver moves now. A
+	 * switch across 40 MHz has moved already, at the IRQ 5 after the TTL-1
+	 * header; if that was missed, at the next one. */
 	if (command == 5 && ap_bw_pending) {
-		if (ap_link.state == AR_AP_CONNECTED) { ap_apply_bandwidth(ap_bw_pending); }
+		if (ap_link.state == AR_AP_CONNECTED && ap_bw_pending != ap_bw_code) {
+			ap_bw_at_sweep = 0x80 | ap_bw_pending;
+		}
 		ap_bw_pending = 0;
 	}
 }
@@ -2832,17 +2902,28 @@ static void ap_poll(void)
 		ap_uplink_mcs_pending = 0;
 	}
 	/* The ground's port-0 command 9 asks for a broadcast bandwidth: stock
-	 * answers with command 5 [0, 0x88, code], TTL 3, and both ends switch as
-	 * it expires. 40 MHz needs front-end changes not done here. */
+	 * answers with command 5 [type 0, slot 8 | code << 5, 0], TTL 3, and both
+	 * ends switch as it expires (the ground reads the code from bits 7:5; a
+	 * fixed 0x88 there read as 20 MHz whatever was asked). */
 	if (ap_link.state == AR_AP_CONNECTED && ap_link.bandwidth_request && !ap_bw_pending) {
 		unsigned code = ap_link.bandwidth_request - 1u;
-		if (code >= 2 && code <= 4 && code != ap_bw_code) {
-			const uint8_t request[3] = {0, 0x88, (uint8_t)code};
+		if (code >= 2 && code <= 5 && code != ap_bw_code) {
+			const uint8_t request[3] = {0, (uint8_t)(8 | code << 5), 0};
 			if (!ar_phy_control_enqueue(&phy_control, 5, 3, request, 3, &phy_ops, NULL)) {
 				ap_bw_pending = code; ap_info.phy_sent++;
 			}
 		}
 	}
+}
+
+int ar_rf_host_mcs_ceiling(const uint8_t *payload, size_t length)
+{
+	if (!payload || length != 1) { return -22; }
+	if (payload[0] == 0xff) { ar_dev_mcs_set_ceiling(&dev_mcs, 0); return 0; }
+	const int mcs = (int8_t)payload[0];
+	if (mcs < -2 || mcs > 13) { return -22; }
+	ar_dev_mcs_set_ceiling(&dev_mcs, (unsigned)(mcs + 2));   /* internal = stock + 2 */
+	return 0;
 }
 
 /* Duration of this monitor's six-step DEV frame only. The stock frame reader
@@ -2852,11 +2933,33 @@ static void ap_poll(void)
 static uint32_t dev_frame_microseconds(void)
 {
 	uint32_t prepare = ((read32(BB + 0x984) & 0xffff) * 640 + 500) / 1000;
-	uint32_t broadcast = ((read32(BB + 0x970) >> 16) * 640 + 500) / 1000;
+	/* The broadcast window: [31:16] receives (DEV), [15:0] transmits (AP). */
+	uint32_t window = read32(BB + 0x970), broadcast = (((ap_role ? window : window >> 16) & 0xffff) * 640 + 500) / 1000;
 	uint32_t special = ((read32(BB + 0x980) & 0xffff) * 640 + 500) / 1000;
 	/* The ground's uplink slot: 0xa00 on a DEV, 0xa10 on an AP. */
 	uint32_t transmit = ((read32(BB + (ap_role ? 0xa10 : 0xa00)) & 0xffff) * 640 + 500) / 1000;
 	return prepare * 3 + broadcast + special + transmit;
+}
+
+const struct ar_rf_frame_info *ar_rf_frame_information(void)
+{
+	struct ar_rf_frame_info *info = &frame_stamp_info;
+	uint64_t us = 0;
+	const int known = ar_frame_stamp_ap_us(&fstamp, ap_role, &us) == 0;
+	info->version = 1;
+	info->flags = (ap_role ? 1u : 0u) | (known ? 2u : 0u) | (!ap_role && fstamp.valid ? 4u : 0u);
+	info->frames = fstamp.frames;
+	/* The frame in 0.64 us ticks, its parts as dev_frame_microseconds adds them. */
+	const uint32_t window = read32(BB + 0x970);
+	info->frame_ticks = (read32(BB + 0x984) & 0xffff) * 3 + ((ap_role ? window : window >> 16) & 0xffff) +
+		(read32(BB + 0x980) & 0xffff) + (read32(BB + (ap_role ? 0xa10 : 0xa00)) & 0xffff);
+	info->since_us = fstamp.irq5[0] ? (uint32_t)((timer_ticks() - fstamp.irq5[0]) / 40) : 0;
+	info->ap_us_lo = (uint32_t)us; info->ap_us_hi = 0;   /* modulo 2^32 */
+	info->taken = fstamp.taken; info->rejected = fstamp.rejected; info->residual_us = fstamp.residual_us;
+	info->width = ap_role ? ap_bw_code : bw_code;
+	info->frame_mode = ap_role ? ap_frame_mode : frame_mode;
+	info->sent = phy_control.stamps;
+	return info;
 }
 
 uint8_t ar_rf_control_checksum(const uint8_t control[7])
@@ -2925,6 +3028,9 @@ int ar_rf_host_status(uint16_t users, uint8_t output[300])
 		output[253] = dev_mcs.config.rows[dev_mcs.current].mcs;
 	}
 	memcpy(output + 254, dev_config.configured_peer, 4);
+	/* Open8030: linked, the AP it took (its address from its broadcast), so
+	 * the host can tell air units apart; stock reports the configured peer. */
+	if (output[252] == 2) { memcpy(output + 254, receiver.accepted_peer, 4); }
 	if (ap_role) {
 		/* The AP's view: role 0, the link state of its slot-0 ground. */
 		output[0] = 0;
@@ -3243,6 +3349,7 @@ static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t 
 		ar_dev_retx_init(&dev_retx, operation >= 61 ? channels[29] : 0);
 		if (operation >= 67) {
 			(void)ar_dev_mcs_init(&dev_mcs, &policy);
+			bw_policy_rows();
 			/* An AP's own policy is the ground's uplink one; its channel
 			 * mode starts as the configuration's channel.mode. */
 			if (ap_role) { ap_up_config = policy; ap_up_build(); chan_auto = ap_hop.auto_start; }
@@ -3299,7 +3406,8 @@ static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t 
 	memset(&tx_interleaver,0,sizeof tx_interleaver);
 	memset(&tx_history_info,0,sizeof tx_history_info);
 	/* Operations 41/42 below program the configured 5 MHz receive profile. */
-	bw_code = 2; bw_state = 0; bw_request_pending = 0; bw_settle_step = 0;
+	bw_code = 2; bw_state = 0; bw_request_pending = 0; bw_settle_step = 0; bw_at_sweep = 0;
+	bw_target = 2; ar_width_reset(&bw_width);
 	bw_info.requests = 0;   /* per link: each new link widens again from 5 MHz */
 	memset(&mcs_info, 0, sizeof mcs_info); mcs_info.first_observed_mcs = 25;
 	if (operation < 67) { memset(&dev_mcs, 0, sizeof dev_mcs); mcs_sync_mmio = 0; }
@@ -3763,7 +3871,7 @@ void ar_rf_poll(void)
 						ap_info.tx_stalls++;
 						ap_trace_mark(35, request, read32(BB + 0xb20), ap_link.state);
 						/* With the stall freeze armed (aptool unfreeze 2): keep 150 interrupts after it starts. */
-						if (!ap_trace.frozen && ap_trace.freeze_at >= UINT32_MAX - 1) { ap_trace.freeze_at = ap_trace.head + 150; }
+						if (!ap_trace.frozen && ap_trace.freeze_at == UINT32_MAX - 1) { ap_trace.freeze_at = ap_trace.head + 150; }
 					}
 					stalled = now_stalled;
 				}
@@ -3808,6 +3916,9 @@ void ar_rf_poll(void)
 				 * most messages, a TTL-5 identity switch among them. */
 				phy_control.role = 0; phy_control.mode = 0; phy_control.wake = 1;
 				phy_control.callbacks = 0x17e; phy_control.frame_us = receiver.search_frame_us;
+				/* The frame stamp (when the channel is free): the AP's time at
+				 * the IRQ 5 before this block's header. */
+				phy_control.stamp_us = ar_frame_stamp_value(&fstamp); phy_control.stamp_period_ms = 100;
 				(void)ar_phy_control_tick(&phy_control,timer_ticks()/40000,&phy_ops,NULL);
 			}
 			else if (index == 11 && dev_active) {
@@ -3833,6 +3944,7 @@ void ar_rf_poll(void)
 			}
 			else if (index == 15) { receiver.error_last = read32(BB + 0xf48); }
 			else if (index == 5) {
+				ar_frame_stamp_irq5(&fstamp, timer_ticks());   /* first: the stamps' moment */
 				/* The AP's receive path can sit 0, ~677 or ~1415 us behind
 				 * its slot (where RX was last released: a sync on noise late
 				 * in the slot runs on past the slot end and leaves it there).
@@ -3850,6 +3962,20 @@ void ar_rf_poll(void)
 						unsigned index = ap_chan_at_sweep & 0xffff;
 						ap_chan_at_sweep = 0; ap_retune(index);
 					}
+					/* A width switch: both ends move at the IRQ 5 of the frame
+					 * whose header carried TTL 1 (our command 5 is then at TTL
+					 * 0, the ground has decoded it), so both run the new width
+					 * from the next one (across 40 MHz, a new frame too). */
+					if (ap_bw_pending &&
+					    ap_link.state == AR_AP_CONNECTED && (phy_control.tx[1] & 15) == 5 &&
+					    !(phy_control.tx[1] >> 4) && !(phy_control.tx[2] & 1)) {
+						ap_bw_at_sweep = 0x80 | ap_bw_pending;
+					}
+					if (ap_bw_at_sweep) {
+						unsigned code = ap_bw_at_sweep & 7;
+						ap_bw_at_sweep = 0;
+						if (code != ap_bw_code) { ap_apply_bandwidth(code); }
+					}
 					if (ap_frame_at_sweep) {
 						unsigned mode = ap_frame_at_sweep & 7;
 						ap_frame_at_sweep = 0; ap_apply_frame_mode(mode);
@@ -3859,6 +3985,10 @@ void ar_rf_poll(void)
 						ap_info.decoder_reset_result = (uint32_t)ap_rearm_rx(); ap_info.decoder_resets++;
 					}
 					ap_sweep_us = elapsed_us();
+				} else if (bw_at_sweep) {
+					unsigned code = bw_at_sweep & 7;
+					bw_at_sweep = 0;
+					if (code != bw_code) { apply_bandwidth(code); }
 				}
 				/* Stock IRQ5 (0x21f804) byte-swaps E70 before PHY message
 				 * 0x100. Preserve the raw numeric contract; units unknown. */
@@ -4051,6 +4181,14 @@ void ar_rf_poll(void)
 			}
 			else if (index == 7) {
 				receiver.command_last = read32(BB + 0xe6c);
+				/* 0xa48 lasts one TX entry (it reads 0 after): stock writes it at
+				 * IRQ 7 before each one, from the entry's bandwidth. At 40 MHz the
+				 * broadcast (user 8) stalls after its first frame without it; at
+				 * 20 a switch from 5 MHz lost the link every time (bench,
+				 * 2026-10-19). */
+				if (ap_role && ap_bw_code >= 4 && ((receiver.command_last >> 16) & 15) == 8) {
+					write32(BB + 0xa48, ap_bw_code == 5 ? 0x80808080 : 0x40404040);
+				}
 				receiver.command_modes[(receiver.command_last >> 20) & 3]++;
 				if (receive_operation == 76 && commands_ready) {
 					command_prepare(receiver.command_last);
@@ -4327,13 +4465,41 @@ int ar_rf_host_control(unsigned operation, size_t payload_length)
  * asks the AP for that broadcast width through internal command 9, the way
  * stock's 0x24ed72 does; direction 0 would change this DEV's own uplink
  * width, which is not supported. */
+/* The policy's SNRs from the MCS rows: narrow under what the row above the
+ * narrow MCS needs to stay (its snr_down), widen while the widen MCS row
+ * could be entered (its snr_up; the first row at or above it, else the top). */
+static void bw_policy_rows(void)
+{
+	const struct ar_dev_mcs_config *mcs = &dev_mcs.config;
+	if (!mcs->count) { return; }
+	unsigned row = 0;
+	while (row + 1 < mcs->count && mcs->rows[row].mcs <= bw_policy.narrow_mcs) { row++; }
+	bw_policy.narrow_snr = mcs->rows[row].snr_down;
+	row = 0;
+	while (row + 1 < mcs->count && mcs->rows[row].mcs < bw_widen_mcs) { row++; }
+	bw_policy.widen_snr = mcs->rows[row].snr_up;
+}
+/* 40 MHz (code 5) needs the frame switch both ends make together, not on
+ * this line: a wider configuration or request stops at 20 MHz. */
+#define BW_WIDEST 4u
+void ar_rf_set_bandwidth_policy(unsigned min, unsigned max, unsigned narrow_mcs, unsigned widen_mcs)
+{
+	if (max < 2 || max > 5 || min < 2 || min > max) { return; }
+	if (max > BW_WIDEST) { max = BW_WIDEST; }
+	if (min > max) { min = max; }
+	bw_policy.min = (uint8_t)min; bw_policy.max = (uint8_t)max;
+	bw_policy.narrow_mcs = (uint8_t)narrow_mcs; bw_widen_mcs = (uint8_t)widen_mcs;
+	bw_policy_rows();
+}
 int ar_rf_host_bandwidth(const uint8_t *payload, size_t length)
 {
 	if (!payload || length < 3) { return -22; }
 	if (payload[1] != 1 || payload[2] > 5) { return -95; }
 	if (!dev_active || receiver.dev_state != 2) { return -7; }
-	bw_target = payload[2];
-	if (bw_code != bw_target) { bw_info.requests = 0; bw_state = 0; }
+	/* The widest the receiver may run; the policy decides below it. */
+	if (payload[2] < bw_policy.min) { return -22; }
+	bw_policy.max = payload[2] > BW_WIDEST ? BW_WIDEST : payload[2]; ar_width_reset(&bw_width);
+	if (bw_state != 1) { bw_info.requests = 0; bw_state = 0; }
 	return 0;
 }
 /* SET 38 (0x24f0xx bb_link_retx_ctrl_cfg): the retransmission-request control

@@ -81,38 +81,43 @@ int main(void)
 	assert(ar_dev_mcs_decode_config(&cfg, wire, sizeof wire) == 0 && !cfg.distance_enabled && !cfg.distance_offset);
 	wire[10] = 1;
 
-	/* Open8030 back-off: a down-step forced by errors blocks the row it left
-	 * for 30 s, doubling each time (up to 16x); a minute spent on a row
-	 * clears that row's level. */
+	/* As stock: a row left for errors (with a good SNR) holds nothing back -
+	 * clean samples take the MCS up again after the row's up time, and errors
+	 * take it down again; no row is blocked. */
 	{
 		struct ar_dev_mcs b; struct ar_dev_mcs_config bc = config(); uint32_t t;
 		start(&b, &bc, &t);
 		samples(&b, &t, 1, 500, 0); samples(&b, &t, 11, 500, 0);
 		assert(b.current == 1 && b.pending);
 		assert(ar_dev_mcs_observe(&b, 5) == AR_DEV_MCS_APPLY_BUFFER && !b.pending);
-		unsigned guard = 0;
-		while (b.current == 1 && guard++ < 50) { samples(&b, &t, 1, 500, 1); }
-		assert(b.current == 0 && b.backoffs == 1 && b.backoff_level[1] == 1);
-		uint32_t blocked = b.blocked_until[1];
-		assert(blocked > t && blocked - t <= 30000 && blocked - t >= 29000);
-		assert(ar_dev_mcs_observe(&b, 1) == AR_DEV_MCS_APPLY_BUFFER);
-		/* Clean and strong, but row 1 is blocked: no promotion for 30 s. */
-		samples(&b, &t, 200, 500, 0);
-		assert(b.current == 0 && b.requests == 3);
-		/* After the block: promoted again. */
-		t = blocked + 1; samples(&b, &t, 30, 500, 0);
-		assert(b.current == 1 && b.pending);
-		assert(ar_dev_mcs_observe(&b, 5) == AR_DEV_MCS_APPLY_BUFFER);
-		guard = 0;
-		while (b.current == 1 && guard++ < 50) { samples(&b, &t, 1, 500, 1); }
-		assert(b.current == 0 && b.backoffs == 2 && b.backoff_level[1] == 2);
-		assert(b.blocked_until[1] - t <= 60000 && b.blocked_until[1] - t >= 59000);
-		/* A minute on row 0 clears row 0's own level only (row 1 keeps its). */
-		assert(ar_dev_mcs_observe(&b, 1) == AR_DEV_MCS_APPLY_BUFFER);
-		b.backoff_level[0] = 3; t += 61000; samples(&b, &t, 10, 500, 0);
-		assert(b.backoff_level[0] == 0 && b.backoff_level[1] == 2);
+		for (int round = 0; round < 3; round++) {
+			unsigned guard = 0;
+			while (b.current == 1 && guard++ < 50) { samples(&b, &t, 1, 500, 1); }
+			assert(b.current == 0 && guard < 50);
+			assert(ar_dev_mcs_observe(&b, 1) == AR_DEV_MCS_APPLY_BUFFER);
+			uint32_t left = t; guard = 0;
+			while (b.current == 0 && guard++ < 100) { samples(&b, &t, 1, 500, 0); }
+			assert(b.current == 1 && t - left < 50);   /* the row's up time (10 ms) and the window */
+			assert(ar_dev_mcs_observe(&b, 5) == AR_DEV_MCS_APPLY_BUFFER);
+		}
 	}
-
+	/* The host's ceiling: no row above it, down from one at once, and gone
+	 * again with 0. */
+	{
+		struct ar_dev_mcs b; struct ar_dev_mcs_config bc = config(); uint32_t t;
+		start(&b, &bc, &t);
+		ar_dev_mcs_set_ceiling(&b, 5);
+		for (int k = 0; k < 200; k++) { samples(&b, &t, 1, 500, 0); if (b.pending) { assert(ar_dev_mcs_observe(&b, bc.rows[b.current].mcs)); } }
+		assert(b.current == 1);   /* row 2 (internal 12) is above 5 */
+		ar_dev_mcs_set_ceiling(&b, 0);
+		unsigned guard = 0;
+		while (b.current == 1 && guard++ < 100) { samples(&b, &t, 1, 500, 0); }
+		assert(b.current == 2 && ar_dev_mcs_observe(&b, 12));
+		ar_dev_mcs_set_ceiling(&b, 1);
+		guard = 0;
+		while (b.current != 0 && guard++ < 20) { samples(&b, &t, 1, 500, 0); if (b.pending) { assert(ar_dev_mcs_observe(&b, bc.rows[b.current].mcs)); } }
+		assert(b.current == 0 && guard < 20);   /* two rows down, a sample or so each */
+	}
 	/* Explicit config -1 becomes internal MCS1: high SNR must not bypass it. */
 	cfg = config(); start(&ctx, &cfg, &now);
 	assert(ctx.current == 0);

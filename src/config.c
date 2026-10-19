@@ -243,6 +243,22 @@ int ar_config_parse(struct ar_config *out, const char *json, size_t length,
 		if (error) { return error; }
 	}
 	if (boolean(policy, "bw_auto.enable", &flag)) { return -22; } if (flag) { return -95; }
+	c.bw_min = 2; c.bw_target = 4;
+	const char *const ends[] = {"bw_auto.range.low", "bw_auto.range.high"};
+	for (unsigned end = 0; end < 2; end++) {
+		if (ar_json_path(policy, ends[end], &value)) { continue; }
+		static const char *const widths[] = {"5", "10", "20", "40"};
+		unsigned i = 0;
+		while (i < 4 && !ar_json_equal(value, widths[i])) { i++; }
+		if (i == 4) { return -22; }
+		*(end ? &c.bw_target : &c.bw_min) = (uint8_t)(2 + i);
+	}
+	if (c.bw_min > c.bw_target) { return -22; }
+	int32_t low, high;
+	if (optional_number(policy, "bw_auto.threshold.low", 0, -2, 22, &low) ||
+	    optional_number(policy, "bw_auto.threshold.high", 0, -2, 22, &high) || low > high) { return -22; }
+	if (!low && !high) { low = 3; high = 6; }
+	c.bw_narrow_mcs = (uint8_t)(low + 2); c.bw_widen_mcs = (uint8_t)(high + 2);
 	if (boolean(basic, "channel.multi_mode.enable", &flag)) { return -22; } if (flag) { return -95; }
 	if (boolean(basic, "channel.rc_hop.enable", &flag)) { return -22; } if (flag) { return -95; }
 	memcpy(p, "DEV4", 4); put32(plan + 12, 76); /* Firmware-only continuous preparation. */

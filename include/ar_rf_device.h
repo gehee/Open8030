@@ -181,6 +181,22 @@ struct ar_rf_ap_info {
 	uint32_t hop_retx_frames, hop_measure, hop_by_power, hop_blind, hop_rollbacks, hop_kept, measured_starts, hop_last;
 };
 const struct ar_rf_ap_info *ar_rf_ap_information(void);
+/* The highest MCS the receive policy may ask for (request 0x0c5a0036, one
+ * byte: the stock MCS number, -2..13, or 0xff for none). Kept until changed. */
+int ar_rf_host_mcs_ceiling(const uint8_t *payload, size_t length);
+/* The frame and the AP's clock on it (both roles; ar_frame_stamp.h): what the
+ * hosts' apps read their radio clock from. flags: 1 AP, 2 the AP's clock
+ * known (an AP always; a ground once it took a stamp on this link), 4 the AP
+ * is Open8030 (ground: stamps on this link). The AP's clock at our latest
+ * IRQ 5 (us, modulo 2^32: ap_us_hi 0), and how long ago that IRQ 5 was on our timer. */
+struct ar_rf_frame_info {
+	uint32_t version, flags, frames, frame_ticks, since_us;
+	uint32_t ap_us_lo, ap_us_hi;
+	uint32_t taken, rejected;
+	int32_t residual_us;
+	uint32_t width, frame_mode, sent;
+};
+const struct ar_rf_frame_info *ar_rf_frame_information(void);
 void ar_rf_note_host_stage(unsigned stage, uint32_t us);
 /* Stock's receive-decoder reset (its "DEC HALT patch"): baseband hold, both
  * engine flush requests until acknowledged, release. 0, or -110 when a flush
@@ -439,4 +455,8 @@ void ar_rf_set_power_bands(const uint8_t (*high)[4], uint32_t edge_khz);   /* AR
 struct ar_hop_config;
 /* An AP's channel policy (see ar_config.h), taken at boot. */
 void ar_rf_set_hop_config(const struct ar_hop_config *hop);
+/* A DEV's broadcast width policy from its configuration (ar_dev_width.h):
+ * narrowest and widest code (2..5), the internal MCS it narrows at or below
+ * and widens above. A zero max keeps 5 to 20 MHz. */
+void ar_rf_set_bandwidth_policy(unsigned min, unsigned max, unsigned narrow_mcs, unsigned widen_mcs);
 #endif

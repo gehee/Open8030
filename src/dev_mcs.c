@@ -72,6 +72,11 @@ unsigned ar_dev_mcs_connect(struct ar_dev_mcs *ctx, unsigned connected)
 	return cancel(ctx);
 }
 
+void ar_dev_mcs_set_ceiling(struct ar_dev_mcs *ctx, unsigned internal_mcs)
+{
+	if (ctx) { ctx->ceiling = internal_mcs < AR_DEV_MCS_NONE ? (uint8_t)internal_mcs : 0; }
+}
+
 unsigned ar_dev_mcs_observe(struct ar_dev_mcs *ctx, uint8_t mcs)
 {
 	if (mcs >= AR_DEV_MCS_NONE) { return AR_DEV_MCS_NOTHING; }
@@ -128,13 +133,17 @@ unsigned ar_dev_mcs_sample(struct ar_dev_mcs *ctx, uint32_t now_ms,
 		if (!explicit) {
 			while (selected + 1 < ctx->config.count && ctx->config.rows[selected + 1].snr_down <= minimum) { selected++; }
 		}
-		ctx->current = selected; ctx->previous = 255; ctx->started = 1; ctx->row_since_ms = now_ms;
+		while (ctx->ceiling && selected && ctx->config.rows[selected].mcs > ctx->ceiling) { selected--; }
+		ctx->current = selected; ctx->previous = 255; ctx->started = 1;
 		return request(ctx, now_ms);
 	}
 	if (!ctx->config.automatic || ctx->pending ||
 	    (uint32_t)(now_ms - ctx->request_ms) < ctx->config.hold_ms) { return AR_DEV_MCS_NOTHING; }
 	const struct ar_dev_mcs_row *current = &ctx->config.rows[ctx->current];
 	const struct ar_dev_mcs_row *next = ctx->current + 1 < ctx->config.count ? current + 1 : NULL;
+	/* The host's ceiling: no row above it. */
+	if (next && ctx->ceiling && next->mcs > ctx->ceiling) { next = NULL; }
+	const int over = ctx->ceiling && ctx->current && current->mcs > ctx->ceiling;
 	unsigned up_snr = next ? next->snr_up : UINT16_MAX;
 	unsigned down_snr = ctx->current ? current->snr_down : 0;
 	unsigned up_ms = next ? next->up_ms : UINT16_MAX;
@@ -147,16 +156,17 @@ unsigned ar_dev_mcs_sample(struct ar_dev_mcs *ctx, uint32_t now_ms,
 	average >>= 3;
 	ctx->average_snr = average; ctx->bad_samples = bad; ctx->recent_bad = recent;
 	int direction = 1;
-	unsigned forced = 0, error_down = 0;
+	unsigned forced = 0;
 	if (!ctx->config.policy) {
 		unsigned up = next ? next->errors_up : 0;
 		unsigned down = ctx->current ? current->errors_down : 255;
 		direction = bad <= up ? 1 : bad < down ? 0 : -1;
-		error_down = direction == -1;
 		if (ctx->current && current->consecutive_down > 0 && recent >= (unsigned)current->consecutive_down) {
 			direction = -1; forced = 1;
 		}
 	}
+	/* Above the host's ceiling (it was lowered): down at once. */
+	if (over) { direction = -1; forced = 1; }
 	/* 21fd74..21fd86: an LDPC down decision bypasses SNR. Otherwise
 	 * low SNR may force down and the middle region suppresses promotion.
 	 * High SNR alone does not override an LDPC neutral decision. */
@@ -173,18 +183,13 @@ unsigned ar_dev_mcs_sample(struct ar_dev_mcs *ctx, uint32_t now_ms,
 	uint32_t elapsed = now_ms - ctx->direction_ms;
 	int step = ctx->direction == 1 && elapsed > up_ms ? 1 :
 		ctx->direction == 2 && (elapsed >= down_ms || forced) ? -1 : 0;
-	if (ctx->current < AR_DEV_MCS_ROWS && (uint32_t)(now_ms - ctx->row_since_ms) > 60000) {
-		ctx->backoff_level[ctx->current] = 0;
-	}
-	if (step > 0 && next && (int32_t)(now_ms - ctx->blocked_until[ctx->current + 1]) < 0) { step = 0; }
+	/* No hold on a row left for errors, as stock: up again after the next
+	 * row's up time of good samples (0.8-1.5 s), down within its down time.
+	 * Open8030 held such a row 30 s, doubling to 8 min, until 2026-10-18: the
+	 * errors of a width switch or a link forming again held the MCS at -1 for
+	 * 30 s at 19 dB, and at 6 for a minute at 21 dB. */
 	if ((step > 0 && !next) || (step < 0 && !ctx->current) || !step) { return AR_DEV_MCS_NOTHING; }
-	if (step < 0 && (error_down || forced) && ctx->current < AR_DEV_MCS_ROWS) {
-		unsigned level = ctx->backoff_level[ctx->current];
-		ctx->blocked_until[ctx->current] = now_ms + (30000u << level);
-		if (level < 4) { ctx->backoff_level[ctx->current]++; }
-		ctx->backoffs++;
-	}
-	ctx->previous = ctx->current; ctx->current += step; ctx->row_since_ms = now_ms;
+	ctx->previous = ctx->current; ctx->current += step;
 	return request(ctx, now_ms);
 }
 
@@ -219,3 +224,4 @@ unsigned ar_dev_mcs_interleaver(const struct ar_dev_mcs *ctx)
 {
 	return ctx->connected && (ctx->fch[1] & 15) ? AR_DEV_MCS_WRITE_FCH : AR_DEV_MCS_NOTHING;
 }
+
