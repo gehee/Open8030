@@ -76,7 +76,7 @@ void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 	__asm__ volatile("csrr %0, mcause" : "=r"(cause));
 	__asm__ volatile("csrr %0, mepc" : "=r"(pc));
 	__asm__ volatile("csrr %0, mtval" : "=r"(value));
-	bus->record_fault(reason, cause, pc, value);
+	if (bus) { bus->record_fault(reason, cause, pc, value); }
 	for (;;) { arch_nop(); }
 }
 static uint8_t transformed[AR_MAX_PAYLOAD];
@@ -110,6 +110,7 @@ static const struct device *const uart = DEVICE_DT_GET(DT_CHOSEN(zephyr_console)
 #endif
 static struct ar_parser parser;
 static uint8_t reply[AR_MAX_FRAME];
+#ifdef CONFIG_SOC_AR8030_BRINGUP
 uint32_t ar_rf_host_ap_time(void);
 int ar_rf_host_mcs_row(const uint8_t row[16]);
 int ar_rf_host_bandwidth(const uint8_t *payload, size_t length);
@@ -128,6 +129,8 @@ void ar_main_loop_statistics(uint32_t out[6])
 	out[0] = loop_stats[0]; out[1] = loop_stats[1]; out[2] = loop_stats[2]; out[3] = loop_stats[3];
 	out[4] = usb->tx_packets; out[5] = usb->tx_queue_high_water;
 }
+
+#endif
 
 static void receive(const struct ar_frame *frame, void *context)
 {
@@ -358,21 +361,6 @@ static void receive(const struct ar_frame *frame, void *context)
 		int status = frame->status || frame->length != 16 ? AR_STATUS_INVALID :
 			ar_rf_host_mcs_row(frame->payload);
 		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid, .status = status};
-		size_t size = ar_encode(reply, sizeof reply, &response);
-		(void)bus->send(reply, size); return;
-	}
-	if (frame->reqid == UINT32_C(0x02000002) || frame->reqid == UINT32_C(0x02000003) ||
-	    frame->reqid == UINT32_C(0x01000001)) {
-		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid};
-		if (frame->status) { response.status = AR_STATUS_INVALID; }
-		else if (frame->reqid == UINT32_C(0x02000002)) {
-			response.status = ar_rf_host_pairing(frame->payload, frame->length);
-		} else if (frame->reqid == UINT32_C(0x02000003)) {
-			response.status = ar_rf_host_peer(frame->payload, frame->length);
-		} else {
-			response.status = frame->length ? AR_STATUS_INVALID : ar_rf_host_pairing_result(transformed);
-			if (!response.status) { response.payload = transformed; response.length = 164; }
-		}
 		size_t size = ar_encode(reply, sizeof reply, &response);
 		(void)bus->send(reply, size); return;
 	}
@@ -663,9 +651,10 @@ static void receive(const struct ar_frame *frame, void *context)
 
 int main(void)
 {
+#ifdef CONFIG_SOC_AR8030_BRINGUP
 	/* Stock 0x2174b0 runs with the caches on: dcache.iall, mhcr |= 0x103e,
 	 * icache.iall, mhcr |= 1 (T-Head: IE bit 0, DE 1, WA 2, WB 3, RS 4,
-	 * BPE 5, bit 12). Nothing here maintains the data cache around DMA
+	 * BPE 5, bit 12). Data cache maintenance around DMA
 	 * is handled by ar_cache.h at every engine hand-off (RF receive buffers,
 	 * DEV transmit packets, USB and SDIO buffers), so both caches, the
 	 * return stack and branch prediction go on. With everything off, copying
@@ -673,7 +662,6 @@ int main(void)
 	__asm__ volatile("fence\n\tfence\n\t.word 0x0020000b\n\tcsrrs zero, 0x7c1, %0\n\t"
 		"fence\n\tfence\n\tfence\n\tfence\n\t.word 0x0100000b\n\tcsrrs zero, 0x7c1, %1\n\tfence\n\tfence.i"
 		:: "r"(0x103eu), "r"(1u) : "memory");
-#ifdef CONFIG_SOC_AR8030_BRINGUP
 	/* Diagnostic polling must not enter an unported CLIC ISR when host-side
 	 * function enable or DMA completion asserts the controller's CPU IRQ. */
 	(void)arch_irq_lock();
