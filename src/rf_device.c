@@ -3182,8 +3182,16 @@ int ar_rf_host_pairing(const uint8_t *data, size_t length)
 	if (receive_operation != 76 || !host_initialized || information.error) { return -11; }
 	if (ap_role) { return ap_host_pairing(data, length); }
 	unsigned was_pairing = binding.enabled;
+	/* A completed bind ends with the bound AP as the peer, as on stock:
+	 * set before the identity below is taken from the peer - left at the
+	 * previous unit, the identity no longer matched the AP just bound and
+	 * the link it had formed dropped. */
+	uint8_t bound[4];
+	const unsigned bound_ok = binding.enabled && binding.complete;
+	if (bound_ok) { memcpy(bound, binding.peer, 4); }
 	int result = ar_binding_set(&binding, data, length);
 	if (result) { return result; }
+	if (!binding.enabled && bound_ok) { memcpy(dev_config.configured_peer, bound, 4); }
 	dev_config.pairing = binding.enabled;
 	memcpy(dev_config.pairing_skip, binding.skip, sizeof binding.skip);
 	if (information.phase == AR_RF_RECEIVING &&
@@ -3215,13 +3223,14 @@ int ar_rf_host_peer(const uint8_t *data, size_t length)
 {
 	if (!data || length != 4) { return -22; }
 	if (receive_operation != 76 || !host_initialized || information.error) { return -11; }
-	/* Stock (DEV) stores the peer and retargets the user-8 identity through
-	 * its own hash (0x2218f4), not the XOR used for pairing here. Until that
-	 * hash is derived, record the peer only: a host may name a stored AP
-	 * MAC at every start (often not the unit in front of it), and an XOR
-	 * identity for it stopped the link. Admission still follows the
-	 * candidate list. */
+	/* Stock (DEV) stores the peer - the AP to associate with, admitted as
+	 * the configured peer whatever the candidate list holds - and
+	 * retargets the user-8 identity through its own hash (0x2218f4). The
+	 * peer is stored the same way here. The identity is not retargeted:
+	 * that hash is not derived yet, an XOR one stopped the link with a
+	 * stock AP, and the AP's own command 6 sets it once linked. */
 	memcpy(peer_requested, data, 4); peer_ignored++;
+	if (!ap_role) { memcpy(dev_config.configured_peer, data, 4); }
 	return 0;
 }
 int ar_rf_host_candidates(const uint8_t *data, size_t length)
