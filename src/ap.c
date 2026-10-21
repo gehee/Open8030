@@ -69,7 +69,13 @@ size_t ar_ap_control(struct ar_ap *ap, uint8_t *out, size_t capacity)
 	c[4] = 1;                   /* slot bitmap: slot 0 */
 	c[6] = c[7] = ap->config.channel;
 	memcpy(c + 8, ap->config.local, 4);
+	/* Slot 0: available (1), or the login under way (token << 8 | 5). Pairing
+	 * adds bit 3 to either: a ground in pairing mode looks for it before it
+	 * logs in, and checks it again at every step of the login - dropped
+	 * there, the ground tore its login down and started over. A ground not
+	 * pairing refuses a slot with it. */
 	uint16_t record = ap->state == AR_AP_LOGIN ? (uint16_t)(ap->token << 8 | 5) : 1;
+	if (ap->config.pairing) { record |= 8; }
 	c[12] = (uint8_t)record; c[13] = record >> 8;
 	if (ap->state == AR_AP_LOGIN) {
 		/* Extension 0: the login record for slot 0. */
@@ -155,6 +161,15 @@ void ar_ap_command(struct ar_ap *ap, const uint8_t *envelope, size_t length, uin
 int ar_ap_poll(struct ar_ap *ap, uint32_t now_ms)
 {
 	if (!ap || ap->state == AR_AP_IDLE) { return 0; }
+	/* A login that never completes - a ground that keeps answering state 1
+	 * because its lock check refuses our record, or a stock ground that
+	 * never acknowledges - would hold the slot for as long as it reported:
+	 * no other ground could be served. Dropped after AR_AP_LOGIN_TIMEOUT_MS;
+	 * it may log in again, with a new token. */
+	if (ap->state == AR_AP_LOGIN && (uint32_t)(now_ms - ap->login_ms) >= AR_AP_LOGIN_TIMEOUT_MS) {
+		drop(ap); ap->login_timeouts++;
+		return 1;
+	}
 	if ((uint32_t)(now_ms - ap->last_report_ms) < ap->config.timeout_ms) { return 0; }
 	drop(ap);
 	return 1;

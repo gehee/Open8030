@@ -133,6 +133,16 @@ int main(void)
 	n = ar_ap_control(&again, ob, sizeof ob);
 	assert(n == 35 && ob[32] == 0 && ob[33] == 1 && ob[34] == 0x50);
 	none.pairing = 1; ar_ap_configure(&again, &none);
+	/* Pairing offers slot 0 with bit 3 (record 9), which a ground in pairing mode needs. */
+	n = ar_ap_control(&again, ob, sizeof ob);
+	assert(n >= 32 && ob[12] == 9 && ob[13] == 0);
+	/* ...and keeps it through the login (record token << 8 | 0xd). */
+	{
+		struct ar_ap p; struct ar_ap_config pc = c; pc.pairing = 1; ar_ap_init(&p, &pc, 0x21);
+		report(r, 1, 8, 15, other); assert(ar_ap_report(&p, r, 16, 2000) == 1 && p.state == AR_AP_LOGIN);
+		n = ar_ap_control(&p, ob, sizeof ob);
+		assert(n >= 32 && ob[12] == 0x0d && ob[13] == 0x21);
+	}
 	report(r, 1, 8, 15, other); assert(ar_ap_report(&again, r, 16, 1200) == 1 && !memcmp(again.ground, other, 4));
 
 	/* Bandwidth request from the ground (port-0 command 9). */
@@ -140,6 +150,16 @@ int main(void)
 	assert(ar_dev_command_encode(bw, sizeof bw, 9, &code, 1) == 0);
 	ar_ap_command(&again, bw, sizeof bw, 1300);
 	assert(again.bandwidth_request == 5);
+	/* A login never acknowledged is dropped after AR_AP_LOGIN_TIMEOUT_MS,
+	 * reports or not. */
+	{
+		struct ar_ap l; ar_ap_init(&l, &c, 3);
+		report(r, 1, 8, 15, gnd_mac); assert(ar_ap_report(&l, r, 16, 5000) == 1 && l.state == AR_AP_LOGIN);
+		for (uint32_t t = 5100; t < 5000 + AR_AP_LOGIN_TIMEOUT_MS; t += 100) {
+			assert(ar_ap_report(&l, r, 16, t) == 0 && ar_ap_poll(&l, t) == 0);
+		}
+		assert(ar_ap_poll(&l, 5000 + AR_AP_LOGIN_TIMEOUT_MS) == 1 && l.state == AR_AP_IDLE && l.login_timeouts == 1);
+	}
 	puts("AP broadcast (stock bytes), login, ACK, compact control, loss and pairing passed");
 	return 0;
 }

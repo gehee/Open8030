@@ -21,6 +21,10 @@
  * login uses a new token, so a ground still locked to the old one lets go. */
 
 #define AR_AP_MAX_GROUNDS 8
+/* A login not acknowledged within this (the ground keeps reporting state 1,
+ * or never acknowledges) is dropped, so the slot is offered again. A login
+ * takes a few frames; two seconds is hundreds. */
+#define AR_AP_LOGIN_TIMEOUT_MS 2000
 struct ar_ap_config {
 	uint8_t local[4];                       /* the AP's own identity */
 	uint8_t grounds[AR_AP_MAX_GROUNDS][4];  /* grounds it serves, extension 2 */
@@ -29,7 +33,7 @@ struct ar_ap_config {
 	uint8_t status;                         /* extension 3 and compact byte 4 (stock 0x50) */
 	uint8_t login_value;                    /* login record byte 1 (stock 0x0f) */
 	uint16_t timeout_ms;                    /* no report for this long: ground gone */
-	uint8_t pairing;                        /* serve any ground that answers (binding) */
+	uint8_t pairing;                        /* binding: slot 0 offered for pairing, any ground served */
 };
 enum ar_ap_state { AR_AP_IDLE = 0, AR_AP_LOGIN = 1, AR_AP_CONNECTED = 2 };
 struct ar_ap {
@@ -39,6 +43,7 @@ struct ar_ap {
 	uint8_t sync[4];
 	uint32_t last_report_ms, login_ms;
 	uint32_t reports, bad_reports, foreign_reports, logins, connects, drops, acks, bad_acks;
+	uint32_t login_timeouts;                /* logins dropped unacknowledged */
 	uint8_t report_state, report_slot, report_channel, report_value;
 	uint8_t bandwidth_request;              /* last port-0 command 9 code + 1, 0 = none */
 };

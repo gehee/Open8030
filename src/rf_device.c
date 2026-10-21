@@ -148,6 +148,7 @@ static unsigned ap_frame_at_sweep;
 static uint8_t ap_channels[AR_RF_MAX_CHANNELS * 4];
 static unsigned ap_channel_count, ap_channel_start;
 static uint32_t ap_chan_pending, ap_chan_at_sweep, ap_chan_hop, ap_chan_deadline_ms;
+static struct ar_ap ap_link;            /* the AP link (defined with its code below) */
 static void ap_retune(unsigned index);
 static int ap_host_channel(const uint8_t *payload, size_t length);
 static void ap_up_measure(uint32_t status);
@@ -183,6 +184,11 @@ static unsigned ap_bw_code = 2, ap_bw_pending, ap_bw_at_sweep;   /* at_sweep = 0
  * short frame lost the link. TTL 31 repeats until cancelled and the PHY
  * block holds one command, so the request is held AP_UPLINK_MCS_MS. */
 static unsigned ap_uplink_mcs_pending, ap_uplink_mcs_max = 0xff;   /* SET 0x1b's top, 0xff: key 0's index */
+/* Command 6 (the identity switch) still to send: the block was busy at the
+ * login (the frame stamp holds it one frame in every 100 ms). */
+static unsigned ap_identity_pending;
+/* The host's channel (SET 6) still to send as command 4: 0x10000 | index. */
+static uint32_t ap_chan_host_pending;
 static uint32_t ap_uplink_mcs_ms;
 #define AP_UPLINK_MCS_MS 100
 static void ap_apply_bandwidth(unsigned code);
@@ -811,6 +817,16 @@ int ar_rf_host_channel_set(unsigned order, const uint8_t *payload, size_t length
 		for (unsigned i = 0; i < payload[0]; i++) { if (payload[1 + i] >= receiver.channel_count) { return -22; } }
 		chan_work_count = payload[0]; memcpy(chan_work, payload + 1, payload[0]);
 		scan_apply_work_list();   /* dropped channels keep their last power */
+		/* The AP with no ground: a list without the channel it is on moves it
+		 * onto the list's first, at the next IRQ 5, as a stock air radio
+		 * does. Pairing relies on it: the air app narrows the list to the
+		 * common channel (5839 MHz) for the bind window, where a ground in
+		 * pairing mode looks, and restores it afterwards. */
+		if (ap_role && ap_link.state != AR_AP_CONNECTED && chan_work_count && !ap_chan_hop) {
+			unsigned on = 0;
+			for (unsigned i = 0; i < chan_work_count && !on; i++) { on = chan_work[i] == receiver.channel_index; }
+			if (!on) { ap_chan_at_sweep = 0x10000 | chan_work[0]; }
+		}
 		return 0;
 	}
 	if (order == 6 && ap_role) { return ap_host_channel(payload, length); }
@@ -1019,8 +1035,12 @@ static void sync_receive(const uint8_t control[7])
 {
 	if ((control[1] & 15) == AR_PHY_STAMP) {
 		/* Open8030's frame stamp: not a stock command (refused there, and never
-		 * cached as the AP's last one). Checked like any block. */
-		if (((control[2] >> 1) & 7) == 4 && control[0] == ar_phy_control_checksum(control)) {
+		 * cached as the AP's last one). Checked like any block, and only on
+		 * our link: a stamp from another AP on the channel (a second
+		 * Open8030 air unit, or one heard during the search) would give the
+		 * host a clock that is not this link's. */
+		if (dev_active && receiver.dev_state == 2 &&
+		    ((control[2] >> 1) & 7) == 4 && control[0] == ar_phy_control_checksum(control)) {
 			const uint64_t us = control[3] | (uint64_t)control[4] << 8 | (uint64_t)control[5] << 16 |
 				(uint64_t)(control[6] & 15) << 24 | (uint64_t)(control[1] >> 4) << 28;
 			(void)ar_frame_stamp_receive(&fstamp, us);
@@ -2217,12 +2237,19 @@ static void ap_link_changed(unsigned previous)
 	if (now == previous) { return; }
 	if (now == AR_AP_LOGIN && !ap_trace.freeze_at) { ap_trace.freeze_at = ap_trace.head + 120; }
 	if (now == AR_AP_CONNECTED) {
+		/* Binding: the ground that logged in is the pairing result (GET 1). */
+		if (binding.enabled) { ar_binding_complete(&binding, 0, ap_link.ground, NULL); }
 		/* Stock after login: command 3 (TTL 31) asks for the ground's
 		 * uplink MCS, then command 6 (TTL 5) moves user 8's identity to the
 		 * AP's hash on both ends. One command at a time: 6 goes first here,
 		 * it decides whether the ground keeps decoding us. */
 		const uint8_t identity[2] = {0x88, ap_identity_hash};
-		if (!ar_phy_control_enqueue(&phy_control, 6, 5, identity, 2, &phy_ops, NULL)) { ap_info.phy_sent++; }
+		/* The block may hold the frame stamp (one frame in 100 ms): then
+		 * from ap_poll as soon as it is free. Left unsent, the identity
+		 * stayed 0 on both ends: the uplink budget halved, and the short
+		 * frame then lost the link. */
+		if (ar_phy_control_enqueue(&phy_control, 6, 5, identity, 2, &phy_ops, NULL)) { ap_identity_pending = 1; }
+		else { ap_identity_pending = 0; ap_info.phy_sent++; }
 		/* Stock on a connected slot: broadcast retransmission on (0xb20 bit
 		 * 30 clear) and its requests taken (0xcf4 bit 21, "retx req
 		 * enabled"). On with no ground connected, it stops the TX engine. */
@@ -2240,7 +2267,7 @@ static void ap_link_changed(unsigned previous)
 		link_event(2, 0);
 	} else if (previous == AR_AP_CONNECTED || now == AR_AP_IDLE) {
 		(void)ar_phy_control_cancel(&phy_control, &phy_ops, NULL);
-		ap_uplink_mcs_pending = 0; ap_chan_pending = 0;
+		ap_uplink_mcs_pending = 0; ap_chan_pending = 0; ap_identity_pending = 0; ap_chan_host_pending = 0;
 		ap_up_connect(0);
 		/* A hop the host asked for still happens; one of ours is dropped. */
 		if (ap_chan_hop && !ap_chan_hop_auto) { ap_chan_at_sweep = ap_chan_hop; }
@@ -2252,11 +2279,11 @@ static void ap_link_changed(unsigned previous)
 		ap_auto_hopping = 0; ar_hop_measure_reset(&ap_measure);
 		ap_set_identity(0);
 		field(0xb201e01, 1); field(0xcf41501, 0);   /* no retransmission without a ground */
-		/* A new link starts at 5 MHz and the first MCS. From 40 MHz the frame
-		 * changes back too: at IRQ 5 (an engine hold from here lands mid-TX). */
+		/* A new link starts at 5 MHz and the first MCS: at IRQ 5, as every
+		 * width change (an engine hold from here lands mid-TX: the broadcast
+		 * stopped for good, with no ground to re-link to). */
 		ap_bw_pending = 0; ap_bw_at_sweep = 0;
-		if (ap_bw_code == 5) { ap_bw_at_sweep = 0x80 | 2; }
-		else if (ap_bw_code != 2) { ap_apply_bandwidth(2); }
+		if (ap_bw_code != 2) { ap_bw_at_sweep = 0x80 | 2; }
 		ap_frame_pending = 0;
 		if (ap_frame_mode) { ap_frame_at_sweep = 0x80; }   /* a new link starts on the standard frame */
 		ap_set_mcs(ap_init_mcs);
@@ -2427,10 +2454,15 @@ static int ap_host_channel(const uint8_t *payload, size_t length)
 	if (length < 2) { return -22; }
 	unsigned index = payload[1];
 	if (index >= receiver.channel_count) { return -6; }
-	if (index == receiver.channel_index && !ap_chan_hop && !ap_chan_at_sweep) { return 0; }
-	if (ap_link.state != AR_AP_CONNECTED) { ap_chan_at_sweep = 0x10000 | index; return 0; }
+	if (index == receiver.channel_index && !ap_chan_hop && !ap_chan_at_sweep) { ap_chan_host_pending = 0; return 0; }
+	if (ap_link.state != AR_AP_CONNECTED) { ap_chan_at_sweep = 0x10000 | index; ap_chan_host_pending = 0; return 0; }
 	if (ap_chan_hop) { return (ap_chan_hop & 0xffff) == index ? 0 : -16; }
-	return ap_hop_start(index, 0);
+	/* The block busy (the frame stamp holds it one frame in 100 ms): the
+	 * request is kept and goes from ap_poll, instead of a -16 the host had
+	 * to come back from. */
+	if (ap_hop_start(index, 0)) { ap_chan_host_pending = 0x10000 | index; }
+	else { ap_chan_host_pending = 0; }
+	return 0;
 }
 
 /* ---- The ground's uplink MCS (stock's slot policy, ap.mcs.slot) --------
@@ -2877,6 +2909,18 @@ static void ap_poll(void)
 	}
 	unsigned previous = ap_link.state;
 	if (ar_ap_poll(&ap_link, elapsed_ms())) { ap_link_changed(previous); }
+	/* Command 6 the login could not send (block busy): now that it is free. */
+	if (ap_identity_pending && ap_link.state == AR_AP_CONNECTED) {
+		const uint8_t identity[2] = {0x88, ap_identity_hash};
+		if (!ar_phy_control_enqueue(&phy_control, 6, 5, identity, 2, &phy_ops, NULL)) {
+			ap_identity_pending = 0; ap_info.phy_sent++;
+		}
+	}
+	/* The host's channel its SET 6 could not send (block busy): the same. */
+	if (ap_chan_host_pending && ap_link.state == AR_AP_CONNECTED && !ap_chan_hop &&
+	    !ap_hop_start(ap_chan_host_pending & 0xffff, 0)) {
+		ap_chan_host_pending = 0;
+	}
 	if (ap_frame_pending && (int32_t)(elapsed_ms() - ap_frame_deadline_ms) >= 0) {
 		ap_frame_at_sweep = ap_frame_pending; ap_frame_pending = 0;
 	}
@@ -2921,7 +2965,9 @@ int ar_rf_host_mcs_ceiling(const uint8_t *payload, size_t length)
 	if (!payload || length != 1) { return -22; }
 	if (payload[0] == 0xff) { ar_dev_mcs_set_ceiling(&dev_mcs, 0); return 0; }
 	const int mcs = (int8_t)payload[0];
-	if (mcs < -2 || mcs > 13) { return -22; }
+	/* Stock -1..13 (internal 1..15). -2 would be internal 0, which reads as
+	 * no ceiling at all: refused rather than lifting it. */
+	if (mcs < -1 || mcs > 13) { return -22; }
 	ar_dev_mcs_set_ceiling(&dev_mcs, (unsigned)(mcs + 2));   /* internal = stock + 2 */
 	return 0;
 }
@@ -3101,10 +3147,40 @@ static void binding_identity(void)
 	field(0xde00008, hash); field(0xdf00008, hash);
 }
 
+/* AP binding, the air unit's bind button: the air host (as the stock air app)
+ * sends SET 2 on, reads GET 1 every 20 ms until the same ground has been
+ * there a few times, sends SET 2 off, then SET 4 with that ground as the
+ * candidate. Meanwhile the idle broadcast offers slot 0 for pairing and any
+ * ground is served; the ground that completes its login is the result. A
+ * ground bound this way stays served when pairing ends, so the link it formed
+ * is not dropped between SET 2 off and SET 4. */
+static int ap_host_pairing(const uint8_t *data, size_t length)
+{
+	uint8_t bound[4];
+	const unsigned was_bound = binding.enabled && binding.complete;
+	if (was_bound) { memcpy(bound, binding.peer, 4); }
+	int result = ar_binding_set(&binding, data, length);
+	if (result) { return result; }
+	struct ar_ap_config config = ap_link.config;
+	config.pairing = (uint8_t)binding.enabled;
+	if (!binding.enabled && was_bound) {
+		unsigned known = 0;
+		for (unsigned i = 0; i < config.ground_count; i++) { known |= !memcmp(config.grounds[i], bound, 4); }
+		if (!known && config.ground_count < AR_AP_MAX_GROUNDS) {
+			memcpy(config.grounds[config.ground_count++], bound, 4);
+		}
+	}
+	unsigned previous = ap_link.state;
+	ar_ap_configure(&ap_link, &config);
+	ap_link_changed(previous);
+	return 0;
+}
+
 int ar_rf_host_pairing(const uint8_t *data, size_t length)
 {
 	if (!data || length != 14) { return -22; }
 	if (receive_operation != 76 || !host_initialized || information.error) { return -11; }
+	if (ap_role) { return ap_host_pairing(data, length); }
 	unsigned was_pairing = binding.enabled;
 	int result = ar_binding_set(&binding, data, length);
 	if (result) { return result; }
@@ -3915,7 +3991,11 @@ void ar_rf_poll(void)
 				 * (18) it was torn under the next header and grounds rejected
 				 * most messages, a TTL-5 identity switch among them. */
 				phy_control.role = 0; phy_control.mode = 0; phy_control.wake = 1;
-				phy_control.callbacks = 0x17e; phy_control.frame_us = receiver.search_frame_us;
+				/* The frame as it is now (the short one, 40 MHz), not the
+				 * one the search was configured with: command 7's lead on
+				 * the AP time was off by up to a millisecond after a switch,
+				 * and the host's AP-clock figures with it. */
+				phy_control.callbacks = 0x17e; phy_control.frame_us = ap_frame_us;
 				/* The frame stamp (when the channel is free): the AP's time at
 				 * the IRQ 5 before this block's header. */
 				phy_control.stamp_us = ar_frame_stamp_value(&fstamp); phy_control.stamp_period_ms = 100;
@@ -3971,24 +4051,37 @@ void ar_rf_poll(void)
 					    !(phy_control.tx[1] >> 4) && !(phy_control.tx[2] & 1)) {
 						ap_bw_at_sweep = 0x80 | ap_bw_pending;
 					}
-					if (ap_bw_at_sweep) {
-						unsigned code = ap_bw_at_sweep & 7;
-						ap_bw_at_sweep = 0;
-						if (code != ap_bw_code) { ap_apply_bandwidth(code); }
-					}
-					if (ap_frame_at_sweep) {
-						unsigned mode = ap_frame_at_sweep & 7;
-						ap_frame_at_sweep = 0; ap_apply_frame_mode(mode);
-					}
-					else if (ap_rx_late || ap_rearm_pending == 3) {
-						ap_rx_late = 0; ap_rearm_pending = 0;
-						ap_info.decoder_reset_result = (uint32_t)ap_rearm_rx(); ap_info.decoder_resets++;
+					/* Each of these holds and flushes the engines. Not with a
+					 * receive DMA in flight: the flush can take its completion
+					 * with it, and a completion lost leaves the receive queue
+					 * one slot ahead of the chip for good (the AP has no
+					 * recovery path). A packet late in the frame is exactly
+					 * that case: the switch waits for the next IRQ 5. */
+					if (receive_pending) { ap_info.rx_pending = receive_pending; }
+					else {
+						if (ap_bw_at_sweep) {
+							unsigned code = ap_bw_at_sweep & 7;
+							ap_bw_at_sweep = 0;
+							if (code != ap_bw_code) { ap_apply_bandwidth(code); }
+						}
+						if (ap_frame_at_sweep) {
+							unsigned mode = ap_frame_at_sweep & 7;
+							ap_frame_at_sweep = 0; ap_apply_frame_mode(mode);
+						}
+						else if (ap_rx_late || ap_rearm_pending == 3) {
+							ap_rx_late = 0; ap_rearm_pending = 0;
+							ap_info.decoder_reset_result = (uint32_t)ap_rearm_rx(); ap_info.decoder_resets++;
+						}
 					}
 					ap_sweep_us = elapsed_us();
 				} else if (bw_at_sweep) {
-					unsigned code = bw_at_sweep & 7;
-					bw_at_sweep = 0;
-					if (code != bw_code) { apply_bandwidth(code); }
+					/* The same guard as the recovery reset's: not over a DMA. */
+					if (receive_pending) { recovery.reset_deferred++; }
+					else {
+						unsigned code = bw_at_sweep & 7;
+						bw_at_sweep = 0;
+						if (code != bw_code) { apply_bandwidth(code); }
+					}
 				}
 				/* Stock IRQ5 (0x21f804) byte-swaps E70 before PHY message
 				 * 0x100. Preserve the raw numeric contract; units unknown. */
