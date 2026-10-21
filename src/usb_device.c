@@ -184,6 +184,7 @@ static unsigned tx_head, tx_count;
 
 static struct ar_usb_stats stats;
 static unsigned configured;       /* SET_CONFIGURATION received, bulk endpoints active */
+static unsigned rx_held;          /* caller owns OUT bytes until next receive */
 static unsigned rx_armed;         /* bulk OUT DMA transfer in flight */
 static unsigned tx_pending;       /* bulk IN DMA transfer in flight */
 static unsigned pending_address;  /* deferred SET_ADDRESS */
@@ -350,7 +351,7 @@ static void handle_setup(const uint8_t *setup)
 
 static void arm_bulk_rx(void)
 {
-	if (!configured || rx_armed) return;
+	if (!configured || rx_armed || rx_held) return;
 	uint32_t pktcnt = AR_USB_BUFFER_SIZE / BULK_MPS;
 	usbwr(DOEPTSIZ(BULK_OUT_EP), (AR_USB_BUFFER_SIZE & DEPTSIZ_XFERSIZE_MASK) | (pktcnt << DEPTSIZ_PKTCNT_SHIFT));
 	ar_cache_flush(receive_buffer, AR_USB_BUFFER_SIZE);
@@ -396,7 +397,7 @@ static void ep0_masks(void)
 void ar_usb_init(void)
 {
 	memset(&stats, 0, sizeof stats);
-	configured = rx_armed = tx_pending = 0;
+	configured = rx_armed = rx_held = tx_pending = 0;
 	tx_head = tx_count = 0;
 	pending_address = 0;
 
@@ -477,6 +478,9 @@ void ar_usb_init(void)
 
 size_t ar_usb_receive(const uint8_t **data)
 {
+	/* The cooperative consumer has finished the previous returned buffer.
+	 * Sending replies during consumption must not release it to DMA. */
+	rx_held = 0;
 	barrier();
 	stats.polls++;
 	uint32_t gintsts = usbreg(GINTSTS);
@@ -530,7 +534,7 @@ size_t ar_usb_receive(const uint8_t **data)
 					*data = receive_buffer;
 					stats.rx_packets++;
 					last_rx_length = length;
-					arm_bulk_rx();
+					rx_held = 1;
 					return length;
 				}
 				stats.invalid_rx++;

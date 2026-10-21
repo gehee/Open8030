@@ -153,10 +153,22 @@ int main(void)
 	uint8_t *out = dma(DOEPDMA(1));
 	assert(out && ((*usb(DOEPTSIZ(1)) & 0x7ffff) == AR_USB_BUFFER_SIZE));
 	memset(out, 0xa5, 100);
+	*usb(DOEPCTL(1)) &= ~(1u << 31); /* hardware clears EPENA on completion */
 	*usb(DOEPTSIZ(1)) = AR_USB_BUFFER_SIZE - 100;
 	*usb(DOEPINT(1)) |= 1; *usb(GINTSTS) |= 1u << 19;
 	assert(ar_usb_receive(&data) == 100 && data == out && data[99] == 0xa5);
-	assert(dma(DOEPDMA(1)) == out);         /* re-armed */
+	/* A queued host packet must not overwrite bytes still being parsed. */
+	assert(!(*usb(DOEPCTL(1)) & (1u << 31)));
+	assert(!ar_usb_send(frames[0], 100)); /* parser callback sends a reply */
+	assert(!(*usb(DOEPCTL(1)) & (1u << 31)) && data[0] == 0xa5);
+	assert(ar_usb_receive(&data) == 0); /* consumer releases the buffer */
+	assert((*usb(DOEPCTL(1)) & (1u << 31)) && dma(DOEPDMA(1)) == out);
+	/* Also release a held buffer correctly when the next poll sees reset. */
+	memset(out, 0x5a, 100);
+	*usb(DOEPCTL(1)) &= ~(1u << 31);
+	*usb(DOEPTSIZ(1)) = AR_USB_BUFFER_SIZE - 100;
+	*usb(DOEPINT(1)) |= 1;
+	assert(ar_usb_receive(&data) == 100 && data[0] == 0x5a);
 
 	/* A bus reset drops the configuration and the queue. */
 	assert(!ar_usb_send(frames[0], 100));

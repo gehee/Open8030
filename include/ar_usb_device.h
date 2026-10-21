@@ -12,6 +12,8 @@ struct ar_usb_stats {
 	uint32_t setup_packets, resets;
 };
 void ar_usb_init(void);
+/* Returned bytes remain valid until the next receive call or reinitialization.
+ * The consumer may send replies before it finishes reading those bytes. */
 size_t ar_usb_receive(const uint8_t **data);
 int ar_usb_send(const uint8_t *data, size_t length);
 unsigned ar_usb_tx_room(void);
