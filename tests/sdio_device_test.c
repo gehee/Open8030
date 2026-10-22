@@ -10,6 +10,7 @@ static unsigned used;
 static uint8_t submitted[16][AR_SDIO_BUFFER_SIZE];
 static size_t submitted_lengths[16];
 static unsigned submissions;
+static unsigned receive_grants;
 static uint32_t *reg(uint32_t address)
 {
 	for (unsigned i = 0; i < used; i++) {
@@ -21,7 +22,11 @@ static uint32_t *reg(uint32_t address)
 }
 uint32_t ar_test_read32(uint32_t address) { return *reg(address); }
 void ar_test_write32(uint32_t address, uint32_t value) { *reg(address) = value; }
-void ar_test_write8(uint32_t address, uint8_t value) { *reg(address) = value; }
+void ar_test_write8(uint32_t address, uint8_t value)
+{
+	*reg(address) = value;
+	if (address == 0x04200160 && value) { receive_grants++; }
+}
 void ar_test_submit(const uint8_t *data, size_t length)
 {
 	assert(submissions < 16 && length <= AR_SDIO_BUFFER_SIZE);
@@ -46,7 +51,18 @@ int main(void)
 	assert(ar_sdio_receive(&received) == 0 && *reg(0x04200160) == 0);
 	assert(*reg(0x04200134) == 0);
 	*reg(0x04200168) = 0xf0;
-	assert(ar_sdio_receive(&received) == 0 && *reg(0x04200160) == 9);
+	assert(ar_sdio_receive(&received) == 0 &&
+	       *reg(0x04200160) == AR_SDIO_BUFFER_SIZE / AR_SDIO_BLOCK);
+	/* The host has consumed the grant, but CMD53 has not completed yet.
+	 * Neither idle-looking mailbox bits nor more polls release DMA ownership. */
+	unsigned grants = receive_grants;
+	uint32_t address = *reg(0x04200128);
+	*reg(0x04200160) = 0;
+	for (unsigned poll = 0; poll < 8; poll++) {
+		assert(ar_sdio_receive(&received) == 0);
+		assert(receive_grants == grants);
+		assert(*reg(0x04200128) == address && !*reg(0x04200160));
+	}
 	*reg(0x04200130) = 19;
 	*reg(0x04200134) = 1;
 	assert(ar_sdio_receive(&received) == 19 && received != NULL);
@@ -54,11 +70,14 @@ int main(void)
 	uint8_t hello[27] = {0xaa};
 	*reg(0xe000bff8) = 0xfffffff0;
 	assert(ar_sdio_send(hello, sizeof hello) == 0);
+	/* A parser callback can reply before it finishes reading this buffer. */
+	assert(receive_grants == grants);
 	assert(*reg(0x0420015c) == 1 && (*reg(0x0420012c) & 0x1fffff) == 512);
 	*reg(0xe000bff8) = 0x90;
 	assert(ar_sdio_active_ticks() == 160); /* Timer wrap during ownership. */
 	*reg(0x04200134) = 2;
 	assert(ar_sdio_receive(&received) == 0);
+	assert(receive_grants == grants + 1); /* Next poll releases the borrow. */
 	assert(!ar_sdio_active_ticks());
 	assert(ar_sdio_statistics()->tx_finished == 1);
 	assert(ar_sdio_statistics()->tx_last_ticks == 160 && ar_sdio_statistics()->tx_max_ticks == 160);
@@ -68,7 +87,7 @@ int main(void)
 	assert(*reg(0x0420015c) == 9 && (*reg(0x0420012c) & 0x1fffff) == 4608);
 	*reg(0x04200134) = 2;
 	ar_sdio_receive(&received);
-	*reg(0x04200130) = 7000;
+	*reg(0x04200130) = AR_SDIO_BUFFER_SIZE + 1;
 	*reg(0x04200134) = 1;
 	assert(ar_sdio_receive(&received) == 0);
 	assert(ar_sdio_statistics()->invalid_rx == 1);

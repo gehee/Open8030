@@ -19,6 +19,8 @@ struct ar_sdio_stats {
 	uint32_t tx_finished, tx_last_ticks, tx_max_ticks, tx_wire_bytes;
 };
 void ar_sdio_init(void);
+/* A nonempty result borrows the input buffer until the next receive call.
+ * Sending replies during that interval does not release the buffer to DMA. */
 size_t ar_sdio_receive(const uint8_t **data);
 int ar_sdio_send(const uint8_t *data, size_t length);
 unsigned ar_sdio_tx_room(void);

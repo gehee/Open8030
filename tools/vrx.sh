@@ -44,6 +44,9 @@ test ! -e "$STAGE/native-left-running"
 test ! -e "$STAGE/keep-running"
 
 test "$(sha256sum "$STAGE/candidate.img" | cut -d ' ' -f 1)" = cffba18794ce681e0423d640c020a240fb46711a2a0105f59bcba2001f081cb7
+# Firmware requests can reuse an older payload by name across driver reloads.
+# Give each RAM session a unique name, not just a unique search directory.
+FW_NAME="${STAGE##*/}.img"
 test "$(sha256sum "$STAGE/bb_config_gnd.json" | cut -d ' ' -f 1)" = 5cf0cd31645d4786c6b04399c6c609386d427ffc4c6d7f6e42d81e3e770c2a74
 test "$(sha256sum /usrdata/fpv/boot_ar8030/bb_demo_gnd_3v3.img | cut -d ' ' -f 1)" = dc58247910af564376350404383c5c411cbec21663873fba24e70c61a3584e3c
 GND=$(pidof ar_ldy_gnd)
@@ -71,6 +74,7 @@ test "$(sha256sum /mod/ar_scaler.ko | cut -d ' ' -f 1)" = c79c029fa18316da927474
 test "$(sha256sum /mod/ar_npu.ko | cut -d ' ' -f 1)" = d8b6ff7339913910ec4cea47cf6445bba409283ccfb18a67e445ec2e0c344feb
 cat /sys/bus/sdio/devices/*/uevent | busybox grep -q '^SDIO_ID=4152:8031$'
 mkdir "$STAGE/start-lock"
+ln "$STAGE/candidate.img" "$STAGE/$FW_NAME"
 sha256sum /usrdata/fpv/boot_ar8030/bb_demo_gnd_3v3.img > "$STAGE/stock.sha256"
 cat /proc/sys/kernel/random/boot_id > "$STAGE/boot.id"
 printf 'active\n' > "$STAGE/in-test"
@@ -104,7 +108,7 @@ printf 0 > /sys/class/gpio/gpio3/value
 sleep 0.2
 printf 1 > /sys/class/gpio/gpio3/value
 sleep 0.7
-insmod /usrdata/fpv/boot_ar8030/artosyn_sdio.ko fw_name=candidate.img cfg_name=bb_config_gnd.json
+insmod /usrdata/fpv/boot_ar8030/artosyn_sdio.ko fw_name="$FW_NAME" cfg_name=bb_config_gnd.json
 sleep 3
 cat /sys/bus/sdio/devices/*/uevent
 if ! cat /sys/bus/sdio/devices/*/uevent | busybox grep -q '^SDIO_ID=4152:8031$'; then

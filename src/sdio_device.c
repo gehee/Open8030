@@ -41,7 +41,7 @@ static uint8_t function_cis[128] __attribute__((aligned(128)));
 static size_t transmit_lengths[AR_SDIO_TX_DEPTH];
 static unsigned tx_head, tx_count;
 static struct ar_sdio_stats stats;
-static unsigned ready, rx_armed, tx_pending;
+static unsigned ready, rx_armed, rx_borrowed, tx_pending;
 static uint32_t tx_started;
 #ifdef AR_SDIO_CIS_DIAGNOSTICS
 static uint32_t observed_events;
@@ -95,7 +95,7 @@ static void control_byte(uint32_t address, uint8_t value)
 
 static void arm_receive(void)
 {
-	if (!ready || rx_armed || tx_count == AR_SDIO_TX_DEPTH) { return; }
+	if (!ready || rx_armed || rx_borrowed || tx_count == AR_SDIO_TX_DEPTH) { return; }
 	barrier();
 	ar_cache_flush(receive_buffer, AR_SDIO_BUFFER_SIZE);
 	write32(SDIO_BASE + RX_ADDR, pointer(receive_buffer));
@@ -136,7 +136,7 @@ static void finish_transmit(void)
 void ar_sdio_init(void)
 {
 	memset(&stats, 0, sizeof stats);
-	ready = rx_armed = tx_pending = 0;
+	ready = rx_armed = rx_borrowed = tx_pending = 0;
 	tx_head = tx_count = 0;
 #ifdef AR_SDIO_STOCK_MEMORY_ATTRIBUTES
 	/* Observed 18.21.10 CPU attribute table; experimental, board-specific. */
@@ -221,6 +221,10 @@ void ar_sdio_init(void)
 
 size_t ar_sdio_receive(const uint8_t **data)
 {
+	/* The caller has finished the previous descriptor before polling again.
+	 * Reply callbacks may send in between, but must not return its buffer to
+	 * DMA while the parser still consumes the remaining frames or padding. */
+	rx_borrowed = 0;
 #ifdef AR_SDIO_POLL_PAUSE
 	/* Experimental alternative to the slower instrumented polling loop. */
 	for (unsigned i = 0; i < 40; i++) { short_delay(); }
@@ -274,14 +278,15 @@ size_t ar_sdio_receive(const uint8_t **data)
 		    read32(SDIO_BASE + RX_ADDR) == pointer(receive_buffer)) {
 			ar_cache_invalidate(receive_buffer, AR_SDIO_BUFFER_SIZE);
 			*data = receive_buffer;
+			rx_borrowed = 1;
 			stats.rx_packets++;
 			return length;
 		}
 		stats.invalid_rx++;
 	}
-	if (rx_armed && read32(SDIO_BASE + RX_BLOCKS) == 0 && !(pending & 8)) {
-		rx_armed = 0;
-	}
+	/* A consumed grant does not retire the DMA descriptor. Only completion
+	 * or error releases ownership; rewriting RX_ADDR/RX_BLOCKS while CMD53
+	 * is still running can race the transfer. */
 	arm_receive();
 	return 0;
 }

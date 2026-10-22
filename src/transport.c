@@ -13,9 +13,9 @@ static const struct ar_transport sdio_transport = {
 	.record_progress = ar_sdio_record_progress,
 	.tx_depth        = AR_SDIO_TX_DEPTH,
 	.block           = AR_SDIO_BLOCK,
-	/* Two blocks balance draining against RF latency; one block overflowed
-	 * the host queue under video load. */
-	.chunk           = 2 * AR_SDIO_BLOCK - AR_OVERHEAD,
+	/* Four blocks amortize host descriptor overhead during video bursts.
+	 * RF is polled between copying, framing and submitting each packet. */
+	.chunk           = 4 * AR_SDIO_BLOCK - AR_OVERHEAD,
 };
 
 static const struct ar_transport usb_transport = {

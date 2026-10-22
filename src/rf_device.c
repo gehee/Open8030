@@ -4590,6 +4590,7 @@ static int prepare_saved_host(void)
 	 * host's current candidate list belongs to configuration, not that state. */
 	uint8_t candidates[AR_DEV_MAX_CANDIDATES][4];
 	size_t count = dev_config.candidate_count;
+	struct ar_ap_config saved_ap = ap_link.config;
 	memcpy(candidates, dev_candidates, count * 4);
 	int result = configure_monitor(host_config.frequency, host_config.milliseconds,
 		host_config.identity, 76, host_config.channels, host_config.length, host_config.deferred,
@@ -4598,7 +4599,14 @@ static int prepare_saved_host(void)
 		memcpy(dev_candidates, candidates, count * 4); dev_config.candidate_count = count;
 		dev_config.pairing = binding.enabled;
 		memcpy(dev_config.pairing_skip, binding.skip, sizeof binding.skip);
-		if (binding.enabled) { binding_identity(); }
+		if (ap_role) {
+			/* AP preparation creates an empty admission list. Preserve the
+			 * host's grounds (including a just-bound peer) across restart,
+			 * but advertise the channel the rebuilt radio actually uses. */
+			saved_ap.channel = ap_link.config.channel;
+			saved_ap.pairing = (uint8_t)binding.enabled;
+			ar_ap_configure(&ap_link, &saved_ap);
+		} else if (binding.enabled) { binding_identity(); }
 	}
 	return result;
 }

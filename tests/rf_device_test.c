@@ -1888,6 +1888,28 @@ int main(void)
 	memcpy(loader_power.calibration[15],search_plan+24,2);
 	memcpy(loader_power.calibration[17]+2,search_plan+26,2);
 	struct ar_power_config saved_power = loader_power;
+	/* An AP restart must still advertise the grounds supplied by the host,
+	 * without requiring another SET candidates before they can log in. */
+	{
+		uint8_t ap_plan[sizeof search_plan];
+		memcpy(ap_plan, search_plan, sizeof ap_plan); memcpy(ap_plan, "AP04", 4);
+		struct ar_power_config ap_power = saved_power; ap_power.dev_role = 0;
+		assert(!ar_rf_prepare_config(5770000,4,ap_plan,sizeof ap_plan,0,&ap_power));
+		uint8_t grounds[402] = {0,2,0x11,0x22,0x33,0x44,0x55,0x66,0x77,0x88};
+		assert(!ar_rf_host_candidates(grounds,sizeof grounds));
+		assert(!ar_rf_host_control(0,0));
+		for (unsigned cycle = 0; cycle < 3; cycle++) {
+			*reg(0x0a110f70) = 8u << 12; *reg(0x0a110f5c) = 128u << 16;
+			*reg(0xe080117c) |= 1; ar_rf_poll();
+			const struct ar_rf_ap_info *ap = ar_rf_ap_information();
+			struct ar_mac_frame frame;
+			assert(!ar_mac_decode(ap->last_packet,sizeof ap->last_packet,&frame));
+			assert(frame.outband_length >= 41 && frame.outband[32] == 2);
+			assert(!memcmp(frame.outband + 33,grounds + 2,8));
+			assert(!ar_rf_host_control(1,0));
+			if (cycle < 2) { assert(!ar_rf_host_control(0,0)); }
+		}
+	}
 	before_writes = writes;
 	assert(ar_rf_prepare_config(5770000,4,search_plan,sizeof search_plan,1,NULL)==-22);
 	loader_power.valid &= ~(1u<<15);

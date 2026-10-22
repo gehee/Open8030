@@ -7,14 +7,17 @@
  * This is a polling implementation; no calls may run concurrently. */
 #define AR_SOCKET_RX_PORTS 4u
 #ifdef AR_ROLE_AP
-/* An AP sends the stream (video) and takes little back from its ground. */
-#define AR_SOCKET_RX_CAPACITY 8192u
+/* The stock camera pipelines five retained writes. Reserve those input
+ * descriptors even while earlier completions wait for the host to drain.
+ * The AP return queues need less space (the tested host opens 2048 bytes). */
+#define AR_SOCKET_RX_CAPACITY 4096u
 #define AR_SOCKET_TX_CAPACITY 32768u
+#define AR_SOCKET_TX_PENDING 5u
 #else
 #define AR_SOCKET_RX_CAPACITY 56320u
 #define AR_SOCKET_TX_CAPACITY 4096u
-#endif
 #define AR_SOCKET_TX_PENDING 2u
+#endif
 struct ar_socket_write {
 	uint8_t bytes[AR_MAX_PAYLOAD - 8];
 	uint64_t position;
