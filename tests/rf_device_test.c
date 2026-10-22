@@ -9,6 +9,7 @@ void ar_main_loop_statistics(uint32_t out[6]) { for (unsigned i = 0; i < 6; i++)
 
 static struct { uint32_t address, value; } registers[1024];
 static unsigned used, writes;
+static unsigned engine_resets;
 static unsigned compensation_writes, board_prepare_writes;
 static uint64_t ticks;
 static unsigned emulate_otp;
@@ -120,6 +121,7 @@ uint32_t ar_rf_test_read(uint32_t address)
 }
 void ar_rf_test_write(uint32_t address, uint32_t value)
 {
+	if (address == 0x0a11080c && (value & ~*reg(address) & 12)) { engine_resets++; }
 	if (address == 0x0a110008 || address == 0x0a110058 || address == 0x0a11005c || address == 0x0a110080 || address == 0x0a110084) { board_prepare_writes++; }
 	if (address == 0x0a110480 || address == 0x0a11048c ||
 	    address == 0x0a1104a0 || address == 0x0a1104a4 || address == 0x0a1104a8) {
@@ -205,8 +207,10 @@ static void frame_header(void) { *reg(0x0a110f00) = 0x1096; irq(14); }
  * which runs the PHY control slot's countdown. */
 static void uplink_frame(void)
 {
+	irq(11);
 	ticks += 6 * 40000ull; *reg(0x0a110f70) = 0; irq(19);
 	*reg(0x0a110f68) = 0; irq(18);
+	irq(11);
 }
 /* A PHY command from the AP: [checksum, ttl<<4|command, len<<1|ttl>>4, payload]. */
 static void ap_command(unsigned command, unsigned ttl, const uint8_t *payload, unsigned length)
@@ -235,6 +239,36 @@ static int32_t distance_of(unsigned slots, unsigned slot)
 }
 static void open8030_linked_tests(void)
 {
+	/* Host TX-only path control must not disable RX diversity. The direction
+	 * byte is a mask, not a boolean; zero is a no-op. */
+	const uint32_t path_addresses[] = {0x0a110000, 0x0a110c00, 0x0a110a20, 0x0a110a2c};
+	uint32_t path_saved[4];
+	for (unsigned i = 0; i < 4; i++) { path_saved[i] = *reg(path_addresses[i]); }
+	*reg(path_addresses[0]) = 0x2201007c; *reg(path_addresses[1]) = 0x4cbeff56;
+	*reg(path_addresses[2]) = 0x4003004a; *reg(path_addresses[3]) = 0;
+	uint8_t path_request[8] = {0xcb,0,0,0,1,1,0,0};
+	assert(!ar_rf_host_project(path_request, sizeof path_request));
+	assert(*reg(path_addresses[0]) == 0x22010074);
+	assert(*reg(path_addresses[1]) == 0x4cbeff56);
+	assert(*reg(path_addresses[2]) == 0x4003004a && !*reg(path_addresses[3]));
+	unsigned path_writes = writes;
+	path_request[5] = 0;
+	assert(!ar_rf_host_project(path_request, sizeof path_request) && writes == path_writes);
+	path_request[5] = 4;
+	assert(ar_rf_host_project(path_request, sizeof path_request) == -22 && writes == path_writes);
+	path_request[5] = 2;
+	assert(!ar_rf_host_project(path_request, sizeof path_request));
+	assert(*reg(path_addresses[0]) == 0x22010054);
+	assert(*reg(path_addresses[1]) == 0x4c3eff54);
+	assert(*reg(path_addresses[2]) == 0x400300ca && *reg(path_addresses[3]) == 0xfff);
+	path_request[6] = 1;
+	assert(!ar_rf_host_project(path_request, sizeof path_request));
+	assert(*reg(path_addresses[0]) == 0x22010074 && *reg(path_addresses[1]) == 0x4c3eff54);
+	path_request[5] = 3;
+	assert(!ar_rf_host_project(path_request, sizeof path_request));
+	assert(*reg(path_addresses[0]) == 0x2201007c);
+	for (unsigned i = 0; i < 4; i++) { *reg(path_addresses[i]) = path_saved[i]; }
+
 	const struct ar_rf_rx_info *rx = ar_rf_receive_information();
 	assert(rx->dev_state == 2 && rx->assigned_slot == 0);
 	ar_rf_set_event_callback(receive_event, event_data);   /* off in this part of main() */
@@ -288,17 +322,72 @@ static void open8030_linked_tests(void)
 	assert(rx->channel_index == to && channel_events && channel_event[2] == to && channel_event[3] == from);
 	assert(rx->dev_state == 2);
 
-	/* AP command 4: the AP moves the link (index in bytes 1..2). */
-	uint8_t move[3] = {0xc0, (uint8_t)from, 0};
+	/* An AP uplink-only move must preserve the downlink PLL and channel. */
+	uint32_t downlink = *reg(0x0a110904), downlink_tail = *reg(0x0a110908);
+	uint8_t move[3] = {0x50, (uint8_t)from, 0};
+	ap_command(4, 1, move, 3);
+	assert(rx->channel_index == to && channel_event[1] == 0);
+	assert(*reg(0x0a110904) == downlink && *reg(0x0a110908) == downlink_tail);
+	const struct ar_command_program *program = ar_rf_command_information();
+	assert(program->entries[0].frequency == rx->channels[to].frequency_khz);
+	assert(program->entries[2].frequency == rx->channels[from].frequency_khz);
+	uint8_t status[300], frequency[4];
+	assert(!ar_rf_host_status(0x101, status));
+	put32(frequency, rx->channels[from].frequency_khz); assert(!memcmp(status + 20, frequency, 4));
+	put32(frequency, rx->channels[to].frequency_khz); assert(!memcmp(status + 224, frequency, 4));
+	move[1] = (uint8_t)to; ap_command(4, 1, move, 3);
+	assert(program->entries[2].frequency == rx->channels[to].frequency_khz);
+	uint32_t uplink = *reg(0x0a110910), uplink_tail = *reg(0x0a110914);
+	move[1] = (uint8_t)from;
+	/* Mode-0 ignores the mode-1/3 arm. A real RX command moves RX only. */
+	move[0] = 0x80; ap_command(4, 1, move, 3);
+	assert(rx->channel_index == to);
+	move[0] = 0x20;
 	ap_command(4, 1, move, 3);
 	assert(rx->channel_index == from && channel_event[2] == from && rx->dev_state == 2);
+	assert(*reg(0x0a110910) == uplink && *reg(0x0a110914) == uplink_tail);
+	assert(program->entries[0].frequency == rx->channels[from].frequency_khz);
+	assert(program->entries[2].frequency == rx->channels[to].frequency_khz);
+	move[0] = 0x50; ap_command(4, 1, move, 3); /* Restore both for later fixtures. */
 
 	/* AP command 5: the AP changes the broadcast width (code in bits 7:5). */
 	uint8_t width[3] = {0, 4 << 5, 0};
+	{
+		unsigned samples = ar_rf_mcs_information()->samples;
+		uint32_t fbc = *reg(0x0a110fbc), errors = *reg(0x0a110f28);
+		ap_command(5, 3, width, 3);
+		*reg(0x0a110fbc) = 8u << 20; *reg(0x0a110f28) = 1;
+		/* The first announcement precedes application. Even these early
+		 * transition errors must be excluded from the adaptation window. */
+		for (unsigned i = 0; i < 3; i++) {
+			ticks += 40000; frame_header(); irq(12);
+		}
+		assert(((*reg(0x0a1109e0) >> 8) & 7) == 2);
+		assert(ar_rf_mcs_information()->samples == samples);
+		*reg(0x0a110fbc) = fbc; *reg(0x0a110f28) = errors;
+	}
 	ap_command(5, 1, width, 3);
 	/* ... applied at the frame's IRQ 5, as the AP does. */
 	irq(5);
 	assert(((*reg(0x0a1109e0) >> 8) & 7) == 4 && bandwidth_events && bandwidth_event[2] == 4);
+	uint8_t accepted_width[3] = {0, 1, 4};
+	assert(!ar_rf_host_bandwidth(accepted_width, sizeof accepted_width));
+	/* Width-transition errors must not initiate a coding change while the
+	 * peer is changing its TX profile. Measurements resume after settling. */
+	{
+		unsigned samples = ar_rf_mcs_information()->samples;
+		unsigned requests = ar_rf_mcs_information()->requests;
+		uint32_t fbc = *reg(0x0a110fbc), errors = *reg(0x0a110f28);
+		*reg(0x0a110fbc) = 8u << 20; *reg(0x0a110f28) = 1;
+		for (unsigned i = 0; i < 8; i++) {
+			ticks += 40000; frame_header(); irq(12);
+		}
+		assert(ar_rf_mcs_information()->samples == samples);
+		assert(ar_rf_mcs_information()->requests == requests);
+		ticks += 501 * 40000ull; frame_header(); irq(12);
+		assert(ar_rf_mcs_information()->samples == samples + 1);
+		*reg(0x0a110fbc) = fbc; *reg(0x0a110f28) = errors;
+	}
 
 	/* Frame mode: SET 16 validates, a mode-2 request goes out as command 8
 	 * and is applied at the frame header after it expires: the uplink slot
@@ -318,6 +407,30 @@ static void open8030_linked_tests(void)
 	uint8_t standard[4] = {0};
 	ap_command(8, 1, standard, 4); frame_header();
 	assert((*reg(0x0a110a00) & 0xffff) == 0x0da3 && ((*reg(0x0a110b00) >> 18) & 7) == 2);
+
+	/* A frame change must not reset an RX producer whose DMA completion
+	 * has not arrived. The pending change applies after ownership retires. */
+	unsigned saved_inject = inject_valid, saved_receive = inject_receive;
+	inject_receive = 0; inject_valid = 0; delay_dma = 1;
+	*reg(0x0a110f88) = 1; *reg(0x0a110f90) = 1;
+	irq(16);
+	unsigned resets = engine_resets;
+	uint8_t short_frame[4] = {2 << 4};
+	ap_command(8, 1, short_frame, 4); frame_header();
+	assert(engine_resets == resets && (*reg(0x0a110a00) & 0xffff) == 0x0da3);
+	delay_dma = 0; irq(13); frame_header();
+	assert(engine_resets > resets && (*reg(0x0a110a00) & 0xffff) == 0x07a3);
+	ap_command(8, 1, standard, 4); frame_header();
+	assert((*reg(0x0a110a00) & 0xffff) == 0x0da3);
+	/* A deferred bandwidth change stays aligned to IRQ 5 after DMA retires. */
+	delay_dma = 1; irq(16); resets = engine_resets;
+	width[1] = 2 << 5; ap_command(5, 1, width, 3); irq(5);
+	assert(engine_resets == resets && ((*reg(0x0a1109e0) >> 8) & 7) == 4);
+	delay_dma = 0; irq(13);
+	assert(engine_resets == resets && ((*reg(0x0a1109e0) >> 8) & 7) == 4);
+	irq(5);
+	assert(engine_resets > resets && ((*reg(0x0a1109e0) >> 8) & 7) == 2);
+	inject_valid = saved_inject; inject_receive = saved_receive;
 
 	/* SET 22: the receiver's bandwidth target (dir RX = 1, code <= 5). */
 	uint8_t bw[3] = {0, 1, 4};
@@ -369,7 +482,8 @@ static void open8030_linked_tests(void)
 	assert(ar_rf_host_link_info(NULL, 1, link_out) == -22);
 	int link = ar_rf_host_link_info(mcs_in, 1, link_out);
 	assert(link == 0 || link == -1);
-	if (!link) { assert(link_out[9] == rx->channel_index && link_out[16] == 4); }
+	/* The AP applied 5 MHz above; SET 22 only requested 20 MHz afterward. */
+	if (!link) { assert(link_out[9] == rx->channel_index && link_out[16] == 2); }
 	ar_rf_set_event_callback(NULL, NULL);
 }
 
@@ -1198,7 +1312,7 @@ int main(void)
 	assert(ar_rf_monitor_plan(5770000, 100, 4, 67, mcs_plan, sizeof mcs_plan) == -22);
 	mcs_plan[44] = 0;
 	assert(writes == before_writes);
-	assert(sizeof(struct ar_rf_mcs_info) == 256);
+	assert(sizeof(struct ar_rf_mcs_info) == 264);
 	for (unsigned operation = 65; operation <= 77; operation++) {
 	event_count = 0; memset(event_data, 0, sizeof event_data);
 	ar_rf_set_event_callback(receive_event, event_data);
@@ -1219,6 +1333,7 @@ int main(void)
 	memcpy(candidate_request + 2, mcs_plan + 12, 8);
 	if (operation >= 76) {
 		if (operation == 77) {
+			mcs_plan[40] = 1; mcs_plan[41] = 0; /* Bounded coding-request timeout. */
 			assert(ar_rf_prepare_host(5770000, 0, 4, mcs_plan, sizeof mcs_plan) == -22);
 			assert(ar_rf_monitor_plan(5770000, 0, 4, 77, mcs_plan, sizeof mcs_plan) == -22);
 			assert(ar_rf_prepare_host_continuous(5770000, 4, mcs_plan, sizeof mcs_plan) == 0);
@@ -1253,7 +1368,9 @@ int main(void)
 		for (unsigned slot = 1; slot < 8; slot++) { assert(host_status[252 + slot * 6] == 3 && host_status[253 + slot * 6] == 25); }
 		const uint8_t freq[4] = {0x10,0x0b,0x58,0};
 		for (unsigned user = 0; user < 10; user++) {
-			assert(!memcmp(host_status + 20 + 24*user, freq, 4) && !memcmp(host_status + 32 + 24*user, freq, 4));
+			uint8_t parked[4]; put32(parked, 2100000);
+			assert(!memcmp(host_status + 20 + 24*user, user == 0 ? freq : parked, 4));
+			assert(!memcmp(host_status + 32 + 24*user, user == 8 ? freq : parked, 4));
 			assert(host_status[24 + 24*user] == 25);
 		}
 		assert(ar_rf_host_status(0x100, host_status) == 0);
@@ -1385,10 +1502,27 @@ int main(void)
 		uint32_t expected0, expected1; memcpy(&expected0, command, 4); memcpy(&expected1, command + 4, 4);
 		assert(*reg(0x0a110b8c) == expected0 && *reg(0x0a110b90) == expected1);
 		mcs = ar_rf_mcs_information(); assert(mcs->fch_writes == 1 && mcs->advertisements == 1);
+		if (operation == 77) {
+			unsigned resets = mcs->rx_resets, completions = ar_rf_receive_information()->dma_completions;
+			unsigned saved_valid = inject_valid, saved_receive = inject_receive;
+			inject_valid = inject_receive = 0; delay_dma = 1;
+			*reg(0x0a110f88) = 1; *reg(0x0a110f90) = 32; irq(16);
+			ticks += 2 * 40000;
+			for (unsigned i = 0; i < 19; i++) { irq(19); }
+			mcs = ar_rf_mcs_information();
+			assert(mcs->timeouts >= 2 && mcs->rx_resets == resets);
+			assert(mcs->reset_pending && mcs->reset_deferred >= 2);
+			assert(ar_rf_receive_information()->dma_completions == completions);
+			irq(13); delay_dma = 0;
+			assert(ar_rf_receive_information()->dma_completions == completions + 1);
+			assert(mcs->rx_resets == resets + 1 && !mcs->reset_pending);
+			inject_valid = saved_valid; inject_receive = saved_receive;
+		}
+		unsigned writes_before_ack = mcs->fch_writes, cancels_before_ack = mcs->cancellations;
 		*reg(0x0a110f00) = 0x3080; *reg(0xe0801168) |= 1; ar_rf_poll();
 		mcs = ar_rf_mcs_information();
 		assert(mcs->acknowledgements == 1 && !(mcs->state & 8) && mcs->buffer_applies == 1);
-		assert(mcs->observed_counts[5] == 1 && mcs->fch_writes == 2 && mcs->cancellations == 1);
+		assert(mcs->observed_counts[5] == 1 && mcs->fch_writes == writes_before_ack + 1 && mcs->cancellations == cancels_before_ack + 1);
 		if (operation >= 75) {
 			assert(event_count == 4 && event_ids[3] == 1);
 			assert(!memcmp(event_data[3], (uint8_t[]){0,1,5,25}, 4));
@@ -2032,6 +2166,7 @@ int main(void)
 	assert(!ar_rf_host_peer(pair_advert+8,4));
 	assert(!ar_rf_stop_host());
 	assert(!ar_rf_host_control(0,0));
+	assert(!ar_rf_host_status(0,host_status) && !memcmp(host_status+254,pair_advert+8,4));
 	/* Restore the fixture's peer/candidates for subsequent failure tests. */
 	assert(!ar_rf_host_peer(search_plan+8,4));
 	candidates[1]=1;

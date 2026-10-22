@@ -10,6 +10,22 @@ WINDOW=${3:-300}
 case "$STAGE" in /tmp/ar8030-zephyr-*) ;; *) exit 2 ;; esac
 case "${STAGE#/tmp/}" in *[!A-Za-z0-9_-]*) exit 2 ;; esac
 
+reset_media() {
+    # Call only after all media processes have exited. Reloading SYS/VB alone
+    # leaves decoder UserPools in OSAL's allocator and eventually exhausts it.
+    # Remove its remaining module users before reloading the stock allocator
+    # with the matched /etc/init.d/start.sh memory layout. Never force removal.
+    for MODULE in ar_framebuffer ar_sys ar_vb ar_npu ar_scaler ar_osal; do
+        if test -d /sys/module/$MODULE; then rmmod "$MODULE" || return 1; fi
+    done
+    insmod /mod/ar_osal.ko anony=1 mmz_allocator=hisi mmz=anonymous,0,0x30000000,0x10000000:sram,0,0x00100000,0x00100000 || return 1
+    insmod /mod/ar_vb.ko || return 1
+    insmod /mod/ar_sys.ko mpp_service=lib || return 1
+    insmod /mod/ar_scaler.ko || return 1
+    insmod /mod/ar_npu.ko || return 1
+    printf 'STACK_MEDIA_ALLOCATOR_RELOADED\n'
+}
+
 start() {
 MODE=autonomous
 WINDOW=${WINDOW:-300}
@@ -27,7 +43,7 @@ test ! -e "$STAGE/restored"
 test ! -e "$STAGE/native-left-running"
 test ! -e "$STAGE/keep-running"
 
-test "$(sha256sum "$STAGE/candidate.img" | cut -d ' ' -f 1)" = 17bee3ca64fb97a239c1145cfe069ec5faa1a7d9e07eced1851cdd3cf3093d63
+test "$(sha256sum "$STAGE/candidate.img" | cut -d ' ' -f 1)" = cffba18794ce681e0423d640c020a240fb46711a2a0105f59bcba2001f081cb7
 test "$(sha256sum "$STAGE/bb_config_gnd.json" | cut -d ' ' -f 1)" = 5cf0cd31645d4786c6b04399c6c609386d427ffc4c6d7f6e42d81e3e770c2a74
 test "$(sha256sum /usrdata/fpv/boot_ar8030/bb_demo_gnd_3v3.img | cut -d ' ' -f 1)" = dc58247910af564376350404383c5c411cbec21663873fba24e70c61a3584e3c
 GND=$(pidof ar_ldy_gnd)
@@ -50,6 +66,9 @@ test "$(sha256sum /usrdata/fpv/ar_ldy_gnd | cut -d ' ' -f 1)" = 243c11864d266cae
 test "$(sha256sum /usrdata/fpv/daemon_sdio | cut -d ' ' -f 1)" = 63f16bb229a4091e3d5fc00537135a2f8bb692a3042ff27bde8009dd1bf5cefc
 test "$(sha256sum /mod/ar_vb.ko | cut -d ' ' -f 1)" = 361a7dc11ebe261c6b9a3e5909ef8864f8645d1d1514df7c01ee48e41f110601
 test "$(sha256sum /mod/ar_sys.ko | cut -d ' ' -f 1)" = 89f96f44987b3c65dbd8e69fa8a04c0738516a7fd4457563f638fa60ade673ee
+test "$(sha256sum /mod/ar_osal.ko | cut -d ' ' -f 1)" = f5844ee36d66dc27980799c021926e2cd116bbdb60689bd7bf098322248808c7
+test "$(sha256sum /mod/ar_scaler.ko | cut -d ' ' -f 1)" = c79c029fa18316da927474192a75bac9826060472747c60c68d300e69c77c65d
+test "$(sha256sum /mod/ar_npu.ko | cut -d ' ' -f 1)" = d8b6ff7339913910ec4cea47cf6445bba409283ccfb18a67e445ec2e0c344feb
 cat /sys/bus/sdio/devices/*/uevent | busybox grep -q '^SDIO_ID=4152:8031$'
 mkdir "$STAGE/start-lock"
 sha256sum /usrdata/fpv/boot_ar8030/bb_demo_gnd_3v3.img > "$STAGE/stock.sha256"
@@ -78,16 +97,7 @@ done
 if pidof ar_ldy_gnd >/dev/null || pidof daemon_sdio >/dev/null || pidof GlassesUI >/dev/null; then
     printf 'STACK_STOP_FAILED\n'; exit 1
 fi
-# The original backend already calls SYS_Exit/VB_Exit during startup. Release
-# the old UI's framebuffer allocations before those stock cleanup calls.
-if test -d /sys/module/ar_framebuffer; then rmmod ar_framebuffer; fi
-# Reset stale media-driver allocation state after the owning processes exit.
-# These are the original modules and the original /etc/init.d/start.sh option.
-rmmod ar_sys
-rmmod ar_vb
-insmod /mod/ar_vb.ko
-insmod /mod/ar_sys.ko mpp_service=lib
-printf 'STACK_MEDIA_DRIVERS_RELOADED\n'
+reset_media
 rmmod artosyn_sdio
 printf '%s' "$STAGE" > /sys/module/firmware_class/parameters/path
 printf 0 > /sys/class/gpio/gpio3/value
@@ -188,18 +198,7 @@ done
 if pidof ar_ldy_gnd >/dev/null || pidof daemon_sdio >/dev/null || pidof GlassesUI >/dev/null; then
     printf 'RESTORE_STACK_STOP_FAILED\n'; exit 1
 fi
-if test -d /sys/module/ar_framebuffer; then
-    if ! rmmod ar_framebuffer; then printf 'RESTORE_FRAMEBUFFER_UNLOAD_FAILED\n'; exit 1; fi
-fi
-if test -d /sys/module/ar_sys; then
-    if ! rmmod ar_sys; then printf 'RESTORE_MEDIA_SYS_UNLOAD_FAILED\n'; exit 1; fi
-fi
-if test -d /sys/module/ar_vb; then
-    if ! rmmod ar_vb; then printf 'RESTORE_MEDIA_VB_UNLOAD_FAILED\n'; exit 1; fi
-fi
-if ! insmod /mod/ar_vb.ko || ! insmod /mod/ar_sys.ko mpp_service=lib; then
-    printf 'RESTORE_MEDIA_LOAD_FAILED\n'; exit 1
-fi
+if ! reset_media; then printf 'RESTORE_MEDIA_RESET_FAILED\n'; exit 1; fi
 printf /usrdata/fpv/boot_ar8030 > /sys/module/firmware_class/parameters/path
 if test -d /sys/module/artosyn_sdio; then
     if ! rmmod artosyn_sdio; then printf 'RESTORE_UNLOAD_FAILED\n'; exit 1; fi

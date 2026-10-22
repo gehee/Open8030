@@ -34,6 +34,8 @@ struct ar_rf_mcs_info {
 	uint32_t fch_writes, buffer_applies, rx_resets, reset_errors, fch_words[2];
 	uint32_t first_request_ms, first_ack_ms, first_observed_mcs, last_header;
 	uint32_t sync_mmio, reserved[4], observed_counts[25], unknown_headers, padding[6];
+	/* Appended to preserve the existing 256-byte diagnostic prefix. */
+	uint32_t reset_deferred, reset_pending;
 };
 const struct ar_rf_mcs_info *ar_rf_mcs_information(void);
 /* Host requests for the DEV link: SET 36 MCS row, SET 22 bandwidth,
@@ -458,5 +460,5 @@ void ar_rf_set_hop_config(const struct ar_hop_config *hop);
 /* A DEV's broadcast width policy from its configuration (ar_dev_width.h):
  * narrowest and widest code (2..5), the internal MCS it narrows at or below
  * and widens above. A zero max keeps 5 to 20 MHz. */
-void ar_rf_set_bandwidth_policy(unsigned min, unsigned max, unsigned narrow_mcs, unsigned widen_mcs);
+void ar_rf_set_bandwidth_policy(unsigned automatic, unsigned min, unsigned max, unsigned narrow_mcs, unsigned widen_mcs);
 #endif

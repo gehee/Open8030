@@ -48,6 +48,7 @@ enum ar_dev_lock_result {
 };
 struct ar_dev_lock_context {
 	uint8_t peer[4], selected_slot, assigned_slot, token;
+	uint8_t transmit_channel; /* Admitted uplink, independent of receive channel. */
 };
 struct ar_dev_login {
 	uint8_t slot, token, value, ap_state, sync[4];

@@ -126,7 +126,7 @@ int main(void)
 	changed("\"init_chan\":-1", "\"init_chan\":2", 0);
 	/* The width target: bw_auto.range.high, 20 MHz without one. */
 	assert(!dev_changed("\"init_chan\":-1", "\"init_chan\":-1") && dev_parsed.bw_target == 4);
-	assert(dev_parsed.bw_min == 2 && dev_parsed.bw_narrow_mcs == 5 && dev_parsed.bw_widen_mcs == 8);
+	assert(!dev_parsed.bw_automatic && dev_parsed.bw_min == 2 && dev_parsed.bw_narrow_mcs == 5 && dev_parsed.bw_widen_mcs == 8);
 	assert(!dev_changed("\"bw_auto\":{\"enable\":false}", "\"bw_auto\":{\"enable\":false,"
 		"\"range\":{\"low\":\"10\",\"high\":\"40\"},\"threshold\":{\"low\":2,\"high\":9}}") &&
 		dev_parsed.bw_min == 3 && dev_parsed.bw_target == 5 && dev_parsed.bw_narrow_mcs == 4 && dev_parsed.bw_widen_mcs == 11);
@@ -142,7 +142,7 @@ int main(void)
 	changed("\"hold_time\":101", "\"hold_time\":65536", -22);
 	changed("\"hold_time\":101", "\"hold_time\":101,\"hold_time\":102", -22);
 	changed("\"mac\":\"12345678\"", "\"mac\":\"1234567z\"", -22);
-	changed("\"bw_auto\":{\"enable\":false}", "\"bw_auto\":{\"enable\":true}", -95);
+	assert(!dev_changed("\"bw_auto\":{\"enable\":false}", "\"bw_auto\":{\"enable\":true}") && dev_parsed.bw_automatic);
 	changed("\"4A,\"", "\"4A,garbage\"", -22);
 	/* A malformed unused row cannot become a future unchecked power setting. */
 	changed("\"25dbm\":", "\"14dbm\":[\"40\",\"10\",\"10\",\"10\"],\"25dbm\":", -22);

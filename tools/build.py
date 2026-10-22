@@ -298,5 +298,7 @@ def build_image(profile, output, cflags="", zephyr=None, toolchain=None, python=
     bootstrap = compile_bootstrap(prefix, directory / "bootstrap")
     image = make_image((runtime / "zephyr/zephyr.bin").read_bytes(), bootstrap)
     parse_image(image)
-    Path(output).write_bytes(image)
+    output = Path(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_bytes(image)
     print(f"{output}: {len(image)} bytes, sha256 {digest(image)}")

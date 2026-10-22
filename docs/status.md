@@ -1,12 +1,13 @@
 # Firmware status
 
 Open8030 targets AR8030-based video receivers and, in the AP role, their
-transmitters. Hardware validation covers the Ascent VRX (DEV, over USB) with matched
-18.21.10 board inputs, and two air units (AP, over SDIO).
+transmitters. The pinned baseline is validated on the regular Ascent VRX
+(DEV, over SDIO) with matched 18.21.10 board inputs and a stock transmitter.
+USB receiver and AP hardware operation have not been revalidated for this baseline.
 Other AR8030 variants remain unverified; the supplied loading helpers target the
 tested Ascent VRX configuration.
 
-## Air units (AP role)
+## Contributor-reported air-unit results (AP role)
 
 The AP image (`-DAR_ROLE_AP -DAR_FACTORY_OPTIONAL`) runs on two air-unit boards.
 Their two stock radio images boot the chip identically - the same pin setup, pads and I/O
@@ -23,7 +24,9 @@ changes.
 
 ## Button binding
 
-The stage-234 image is the current experimental baseline.
+The current experimental image and its validation scope are pinned in
+[`baseline.json`](../baseline.json). The binding results below describe the
+earlier stage-234 baseline.
 
 Open8030 implements DEV mode-0/slot-0 binding commands and radio
 transitions. The stage-233 trial completed physical button binding through the

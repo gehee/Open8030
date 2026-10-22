@@ -35,8 +35,9 @@ static uint8_t common_cis[128] __attribute__((aligned(128)));
 static uint8_t progress_cis[128] __attribute__((aligned(128)));
 static unsigned progress_bank;
 static uint8_t function_cis[128] __attribute__((aligned(128)));
-static uint8_t receive_buffer[AR_SDIO_BUFFER_SIZE] __attribute__((aligned(512)));
-static uint8_t transmit_buffers[AR_SDIO_TX_DEPTH][AR_SDIO_BUFFER_SIZE] __attribute__((aligned(512)));
+#include "ar_transport_storage.h"
+#define receive_buffer ar_transport_dma.sdio.receive
+#define transmit_buffers ar_transport_dma.sdio.transmit
 static size_t transmit_lengths[AR_SDIO_TX_DEPTH];
 static unsigned tx_head, tx_count;
 static struct ar_sdio_stats stats;

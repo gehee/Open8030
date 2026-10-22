@@ -62,8 +62,11 @@
  * 0x4030d0 dispatcher consumes group 0x0c locally; group 0x01 is forwarded.
  * These aliases are not vendor commands. Never alias configuration/start. */
 #define AR_DAEMON_DIAGNOSTIC_BASE UINT32_C(0x015a0000)
+/* Explicit SET alias for the volatile MCS test ceiling; not a vendor SET. */
+#define AR_DAEMON_MCS_CEILING UINT32_C(0x025a0036)
 static inline uint32_t ar_diagnostic_request_id(uint32_t request)
 {
+	if (request == AR_DAEMON_MCS_CEILING) { return AR_REQ_RF_MCS_CEILING; }
 	if ((request & UINT32_C(0xffff0000)) == AR_DAEMON_DIAGNOSTIC_BASE) {
 		switch (request & 0xffff) {
 		case 0: case 0x17: case 0x1a: case 0x1b: case 0x1c: case 0x1d:

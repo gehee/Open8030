@@ -174,6 +174,7 @@ enum ar_dev_lock_result ar_dev_lock_evaluate(const struct ar_dev_idle_config *co
 	memset(login, 0, sizeof *login);
 	if (!config || !lock || !control || !control->data || control->length < 32 ||
 	    lock->selected_slot >= 8 || lock->assigned_slot > 8 ||
+	    lock->transmit_channel >= config->channel_count ||
 	    !config->channel_count || config->receive_channel >= config->channel_count) {
 		return AR_DEV_LOCK_BAD_CONFIG;
 	}
@@ -182,7 +183,7 @@ enum ar_dev_lock_result ar_dev_lock_evaluate(const struct ar_dev_idle_config *co
 	if (config->mode || control->mode ||
 	    control->slot_bitmap != config->slot_bitmap ||
 	    control->receive_channel != config->receive_channel ||
-	    control->transmit_channel != config->receive_channel ||
+	    control->transmit_channel != lock->transmit_channel ||
 	    ((control->data[3] >> 5) & 1) != config->relay ||
 	    pairing_match(config, control, 0, 8) < 0) { return AR_DEV_LOCK_PROFILE; }
 	/* 0x228b12 compares against the admitted peer once the node is locked;

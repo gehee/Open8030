@@ -242,7 +242,8 @@ int ar_config_parse(struct ar_config *out, const char *json, size_t length,
 		int error = equal(row, i & 1 ? "rx_mode" : "tx_mode", i & 1 ? "2T2R_STBC" : i == 0 ? "2TX" : "2TX_STBC");
 		if (error) { return error; }
 	}
-	if (boolean(policy, "bw_auto.enable", &flag)) { return -22; } if (flag) { return -95; }
+	if (boolean(policy, "bw_auto.enable", &flag)) { return -22; }
+	c.bw_automatic = (uint8_t)flag;
 	c.bw_min = 2; c.bw_target = 4;
 	const char *const ends[] = {"bw_auto.range.low", "bw_auto.range.high"};
 	for (unsigned end = 0; end < 2; end++) {

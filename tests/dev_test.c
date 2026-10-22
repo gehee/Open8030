@@ -20,7 +20,7 @@ static void lock_tests(void)
 	uint8_t packet[113] = {32,1,0,0x40,1,0,2,2,1,2,3,4,1};
 	struct ar_dev_idle_config config = {.local = {5,6,7,8}, .receive_channel = 2,
 		.channel_count = 4, .slot_bitmap = 1};
-	struct ar_dev_lock_context lock = {.peer = {1,2,3,4}, .assigned_slot = 8};
+	struct ar_dev_lock_context lock = {.peer = {1,2,3,4}, .assigned_slot = 8, .transmit_channel = 2};
 	struct ar_dev_login login, empty = {0};
 	struct ar_dev_control control = decode(packet);
 	assert(ar_dev_lock_evaluate(&config, &lock, &control, &login) == AR_DEV_LOCK_WAIT_LOGIN);
@@ -77,6 +77,11 @@ static void lock_tests(void)
 	packet[12] = 5; packet[8] ^= 1;
 	packet[8] ^= 1; packet[7] = 3; control = decode(packet);
 	assert(ar_dev_lock_evaluate(&config, &lock, &control, &login) == AR_DEV_LOCK_PROFILE);
+	lock.transmit_channel = 3;
+	assert(ar_dev_lock_evaluate(&config, &lock, &control, &login) == AR_DEV_LOCK_ASSIGNMENT);
+	lock.transmit_channel = 4;
+	assert(ar_dev_lock_evaluate(&config, &lock, &control, &login) == AR_DEV_LOCK_BAD_CONFIG);
+	lock.transmit_channel = 2;
 	packet[7] = 2; packet[3] = 1; control = decode(packet);
 	assert(ar_dev_lock_evaluate(&config, &lock, &control, &login) == AR_DEV_LOCK_PROFILE);
 	packet[3] = 0; packet[32] = 0; packet[0] = 33; control = decode(packet);

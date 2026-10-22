@@ -84,7 +84,8 @@ int main(void)
 	assert(n == sizeof stock_login && !memcmp(ob, stock_login, n));
 	/* The DEV's lock check finds its assignment: slot 0, our token, AP state 2, sync 0. */
 	assert(ar_dev_control_decode(ob, n, &control) == 0);
-	struct ar_dev_lock_context lock = {.selected_slot = 0, .assigned_slot = 8};
+	struct ar_dev_lock_context lock = {.selected_slot = 0, .assigned_slot = 8,
+		.transmit_channel = acquisition.transmit_channel};
 	memcpy(lock.peer, ap_mac, 4);
 	struct ar_dev_login login;
 	assert(ar_dev_lock_evaluate(&dev, &lock, &control, &login) == AR_DEV_LOCK_ASSIGNMENT);

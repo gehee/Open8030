@@ -55,6 +55,8 @@ static uint8_t receive_buffers[4][49152] __attribute__((aligned(512)));
  * queues them. With one, a block whose event came before the last block's
  * DMA was taken (a busy poll loop) was dropped. */
 static unsigned receive_head, receive_pending, receive_length, receive_user;
+static unsigned dev_transmit_channel;
+static uint32_t tuned_frequency[12][2];
 static uint32_t receive_metadata;
 static struct { uint32_t length, user, metadata; } receive_queue[4];
 static uint64_t receive_started;
@@ -205,6 +207,7 @@ static uint32_t ap_sweep_us;
 static int automatic_recovery(void) { return receive_operation == 76 && !receive_milliseconds && !ap_role; }
 static int start_prepared_receive(void);
 static void stop_receive(void);
+static int failure(int code);
 static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t identity_hash,
 	unsigned operation, const uint8_t *channels, size_t length, unsigned deferred,
 	const struct ar_power_config *power);
@@ -270,7 +273,7 @@ const struct ar_rf_tx_mcs_info *ar_rf_tx_mcs_information(void)
 	return &tx_mcs_info;
 }
 static struct { uint32_t commands, applied, rejected, last, sent; } chan_info;
-static void tune_context_plls(uint64_t pll);
+static void tune_context_plls(uint64_t pll, uint32_t frequency);
 static void ap_receive(const struct ar_mac_frame *frame);
 static uint32_t bw_retry_ms;
 static unsigned bw_code = 2, bw_state, bw_request_pending, bw_settle_step, chain_snr_fresh, bw_target = 2;
@@ -279,6 +282,7 @@ static struct ar_width_config bw_policy = {.min = 2, .max = 4, .narrow_mcs = 5,
 	.narrow_ms = 200, .widen_ms = 1000, .settle_ms = 500};
 static uint8_t bw_widen_mcs = 8;   /* internal: the row whose snr_up widening keeps */
 static struct ar_width_state bw_width;
+static unsigned bw_automatic, bw_manual = 2;
 static void bw_policy_rows(void);
 /* Open8030's frame stamps (ar_frame_stamp.h): our IRQ 5s on both roles, the
  * AP's clock on a ground. */
@@ -286,6 +290,8 @@ static struct ar_frame_stamp fstamp;
 static struct ar_rf_frame_info frame_stamp_info;
 static uint32_t phy_last_invalid, phy_last_mac_invalid;
 static uint32_t bw_deadline_ms, bw_settle_us;
+static uint32_t bw_mcs_resume_ms;
+static unsigned bw_mcs_settling;
 static uint8_t dev_bw_request[5];
 static struct { uint32_t requests, sent, applied, announced, commands, last, ttl_mask, wide_ok, wide_bad, wide_last_ok, wide_last_bad; } bw_info;
 static unsigned frame_mode, frame_pending;   /* 0 standard, 2 short (TDD frame mode, SET 16); pending = 0x80 | mode */
@@ -530,10 +536,21 @@ static const struct ar_interleaver_ops tx_step_ops = {
 
 static int hold_engines(void);
 static void release_engines(void);
+static void bandwidth_mcs_settle(uint32_t lead_ms)
+{
+	bw_mcs_resume_ms = elapsed_ms() + lead_ms + bw_policy.settle_ms;
+	bw_mcs_settling = 1;
+	dev_mcs.ready = dev_mcs.index = dev_mcs.direction = 0;
+}
 static void apply_bandwidth(unsigned code)
 {
 	unsigned previous = bw_code;
 	if (code > 5) { return; }
+	/* Changing or restarting the receive producer while its DMA is owned
+	 * can remove the completion that shutdown needs to drain the buffer. */
+	if (receive_pending || dev_tx.owned) { bw_at_sweep = 0x80 | code; return; }
+	int result = hold_engines();
+	if (result) { stop_receive(); (void)failure(result); return; }
 	/* 0x238960 (received): mute RX8 (0x22ce78(8,1): 0x9e4 bit 24) and hold
 	 * its path (0xcfc bit 23 for buffer user 10, 0xbf8 bit 7 for user 8)
 	 * before the profile change; the deferred step 0x238842 releases them
@@ -565,8 +582,9 @@ static void apply_bandwidth(unsigned code)
 	 * does: 40 MHz changes the frame (the broadcast window; stock tears the
 	 * link down here instead and searches again, ~1 s), and 5 -> 20 without
 	 * it lost the link every time (bench, 2026-10-19). */
-	(void)hold_engines(); release_engines();
+	release_engines();
 	bw_settle_step = 1; bw_settle_us = elapsed_us();
+	bandwidth_mcs_settle(0);
 	/* Diagnostics: the frame registers at the switch (sync reserved[3..5]). */
 	sync_info.reserved[3] = read32(BB + 0x970);
 	sync_info.reserved[4] = (read32(BB + 0xa00) & 0xffff) | read32(BB + 0x984) << 16;
@@ -578,38 +596,53 @@ static void apply_bandwidth(unsigned code)
 	publish_event(12, data, sizeof data);
 }
 
-/* PHY command 4, length 3: the AP moves the link to another channel
- * (0x231cc6, received side 0x231fd4): payload [0] = slot in bits 3:0 with
- * bits 7:6 set, [1..2] = channel index into the configured list (low byte;
- * 0x22b0fc). Retune both PLL banks at the TTL and report event 2
- * [slot, 0, new index, old index]. */
+/* Channel commands index the validated 5-GHz catalog. PLL banks and
+ * preparation metadata must change together, only in the named direction. */
 static void dev_mcs_apply(unsigned action);
-static int retune_channel(unsigned index, unsigned slot, unsigned direction)
+static void serial_word(unsigned offset, uint64_t word);
+static int retune_user(unsigned index, unsigned user, unsigned direction)
 {
 	uint64_t pll;
 	if (index >= receiver.channel_count || ar_rf_pll_word(receiver.channels[index].frequency_khz, &pll)) { return -22; }
-	unsigned previous = receiver.channel_index;
-	tune_context_plls(pll);
-	power_select_band(receiver.channels[index].frequency_khz);
-	field(0xa900010, receiver.channels[index].frequency_khz / 2000);
-	receiver.channel_index = index; dev_config.receive_channel = index;
-	receiver.frequency_khz = receiver.channels[index].frequency_khz;
-	receiver.channels[index].visits++;
+	/* Supported mode-0 paths: uplink TX0, broadcast TX8 and downlink RX8.
+	 * A direction-specific command must not move any other PLL bank. */
+	unsigned offset = direction ? 0x905 : user == 0 ? 0x910 : 0x900;
+	uint32_t frequency = receiver.channels[index].frequency_khz;
+	serial_word(offset, pll);
+	field(((0x9a4 + user * 8) << 16) | (direction ? 0x1903 : 0x1d03), 4);
+	tuned_frequency[user][direction] = frequency;
+	if (commands_ready) {
+		(void)ar_command_update(&command_program,1,user,direction,1,2,0);
+		(void)ar_command_update(&command_program,1,user,direction,3,frequency,0);
+	}
+	if (direction) {
+		field(0xa900010, frequency / 2000);
+		receiver.channel_index = index; dev_config.receive_channel = index;
+		receiver.frequency_khz = frequency; receiver.channels[index].visits++;
+	} else if (!user) { dev_transmit_channel = index; power_select_band(frequency); }
+	return 0;
+}
+static int retune_channel(unsigned index, unsigned slot, unsigned direction)
+{
+	unsigned previous = direction ? receiver.channel_index : dev_transmit_channel;
+	int result = retune_user(index, direction ? 8 : 0, direction);
+	if (result) { return result; }
 	chan_info.applied++;
 	const uint8_t data[] = {(uint8_t)slot, (uint8_t)direction, (uint8_t)index, (uint8_t)previous};
 	publish_event(2, data, sizeof data);
 	return 0;
 }
-/* Command 4 from the AP (stock handler 0x231cc6, node side, remote origin):
- * byte 0 = flags | slot nibble (must be 0), flag 0x40 retunes the node's
- * own TX user, 0x10 the CS user, 0x20 the broadcast RX user, 0x80 is the
- * mode-1/3 hop. Mode 0 keeps every user on one channel, so any flag
- * retunes both PLL banks here. */
+/* Received command 4 has independent direction flags even in mode 0:
+ * 0x40 moves our slot TX, 0x10 broadcast TX, 0x20 broadcast RX. The 0x80
+ * arm applies only to modes 1/3; it must not move mode-0 reception. */
 static void sync_channel(const uint8_t control[7])
 {
-	unsigned index = control[4] | (unsigned)control[5] << 8;
-	chan_info.commands++; chan_info.last = control[3] | (uint32_t)control[4] << 8 | (uint32_t)control[5] << 16;
-	if (!(control[3] & 0xf0) || (control[3] & 15) || retune_channel(index, 0, 0)) { chan_info.rejected++; }
+	unsigned index = control[4] | (unsigned)control[5] << 8, flags = control[3];
+	chan_info.commands++; chan_info.last = flags | (uint32_t)control[4] << 8 | (uint32_t)control[5] << 16;
+	if (!(flags & 0xf0) || (flags & 15) || index >= receiver.channel_count) { chan_info.rejected++; return; }
+	if (flags & 0x40) { (void)retune_channel(index, 0, 0); }
+	if (flags & 0x10) { (void)retune_user(index, 8, 0); }
+	if (flags & 0x20) { (void)retune_channel(index, 0, 1); }
 }
 /* A host channel set on the node (stock: SET 6 dir RX -> 0x221c48 case 1
  * -> message 0x108 {1, index} -> 0x2314xx builds command 4
@@ -684,6 +717,11 @@ static void apply_frame_mode(unsigned mode)
 	if (mode != 0 && mode != 2) { return; }
 	frame_info.last = mode;
 	if (mode == frame_mode) { return; }
+	/* The frame restart resets both engines. Keep the old profile intact
+	 * until every borrowed RX and submitted TX buffer has retired. */
+	if (receive_pending || dev_tx.owned) { frame_pending = 0x80 | mode; return; }
+	int result = hold_engines();
+	if (result) { stop_receive(); (void)failure(result); return; }
 	uint32_t word = read32(BB + 0xb00);
 	unsigned code = (word >> 12) & 15, length = code / 3;
 	code %= 3;
@@ -700,7 +738,7 @@ static void apply_frame_mode(unsigned mode)
 	/* The running sequence keeps the old slot until the engines are re-armed:
 	 * without this every frame event stopped (TX, headers) and the AP, which
 	 * had switched, dropped the link ~2 s later. */
-	(void)hold_engines(); release_engines();
+	release_engines();
 	frame_mode = mode; frame_info.applied++;
 	receiver.search_frame_us = dev_frame_microseconds();
 }
@@ -870,7 +908,7 @@ static void bandwidth_poll(void)
 		uint32_t age = elapsed_us() - bw_settle_us;
 		uint32_t frame = receiver.search_frame_us ? receiver.search_frame_us : 5634;
 		if (bw_settle_step == 1 && age >= frame) { field(0x9e41801, 0); bw_settle_step = 2; }
-		else if (bw_settle_step == 2 && age >= 2 * frame) {
+		else if (bw_settle_step == 2 && age >= 2 * frame && !receive_pending) {
 			field(0xcfc1701, 0); field(0xbf80701, 0);
 			field(0xd081001, 1); field(0xd081001, 0);
 			bw_settle_step = 0;
@@ -878,7 +916,7 @@ static void bandwidth_poll(void)
 	}
 	/* A switch done (command 5 applied, the receiver released): look again. */
 	if (bw_state == 2 && !bw_settle_step && !bw_at_sweep) { bw_state = 0; bw_info.requests = 0; }
-	if (bw_state == 0 && dev_active && receiver.dev_state == 2 && receiver.assigned_slot == 0 &&
+	if (bw_automatic && bw_state == 0 && dev_active && receiver.dev_state == 2 && receiver.assigned_slot == 0 &&
 	    !bw_settle_step && !bw_at_sweep && dev_mcs.current < dev_mcs.config.count) {
 		/* A stock AP drops and re-forms the link at every step to or from
 		 * 40 MHz: up to 20 until a frame stamp says the AP is Open8030 (one
@@ -910,6 +948,10 @@ static void bandwidth_poll(void)
 			(void)ar_dev_command_encode(dev_bw_request, sizeof dev_bw_request, 9, &code, 1);
 			bw_request_pending = 1; bw_info.requests++;
 			bw_state = 1; bw_deadline_ms = now + 2000;
+			/* The AP can pause its producer before announcing the new width.
+			 * Do not turn that pause into a concurrent coding downgrade. This
+			 * guard expires even if the AP never answers the request. */
+			bandwidth_mcs_settle(0);
 		}
 	} else if (bw_state == 1 && (int32_t)(now - bw_deadline_ms) >= 0) {
 		/* No command 5 from the AP: ask again later (poll state 0 limits it). */
@@ -1057,6 +1099,11 @@ static void sync_receive(const uint8_t control[7])
 		sync_info.rejected++; return;
 	}
 	unsigned command = control[1] & 15;
+	if (command == 5 && control[3] == 0 && (control[4] >> 5) <= 5 &&
+	    (control[4] >> 5) != bw_code) {
+		unsigned life = (control[1] >> 4) | (control[2] & 1) << 4;
+		if (life) { bandwidth_mcs_settle(life * receiver.search_frame_us / 1000 + 4); }
+	}
 	sync_info.accepted++; memcpy(sync_info.last_control,phy_control.rx,7);
 	if (receive_operation >= 71) {
 		struct ar_rf_command_observation *item = &traffic_info.commands[command];
@@ -1415,7 +1462,7 @@ static void serial_word(unsigned offset, uint64_t word)
 		update(BB + (address & ~3u), 0xffu << shift, (uint32_t)bytes[byte] << shift);
 	}
 }
-static void tune_context_plls(uint64_t pll)
+static void tune_context_plls(uint64_t pll, uint32_t frequency)
 {
 	/* The 40-bit values use nonuniform subword placement, not a five-byte
 	 * stride. Decode the offset AND bit shift of the corroborated field map. */
@@ -1434,6 +1481,10 @@ static void tune_context_plls(uint64_t pll)
 	for (unsigned user = 0; user < 12; user++) {
 		serial_word(shadows[user], user == 8 || user >= 10 ? pll : park);
 		serial_word(other_shadows[user], user == 0 || user >= 10 ? pll : park);
+		/* Search starts both active directions together; linked commands
+		 * subsequently change only the bank named by the peer. */
+		tuned_frequency[user][1] = user == 8 || user >= 10 ? frequency : 2100000;
+		tuned_frequency[user][0] = user == 0 || user >= 10 ? frequency : 2100000;
 	}
 	if (commands_ready && receive_operation == 76) { tune_measurement(); }
 }
@@ -1443,7 +1494,7 @@ static void configure_receive_context(uint64_t pll)
 	/* Both direction banks must follow the selected channel, including the
 	 * slot banks selected after admission. Keep tuning separate from profile
 	 * setup so search cannot overwrite PHY state or DMA ownership. */
-	tune_context_plls(pll);
+	tune_context_plls(pll, receiver.frequency_khz);
 	for (unsigned user = 0; user < 12; user++) {
 		uint32_t phy = (0x9a0 + user * 8) << 16;
 		unsigned broadcast = user == 8, search = user >= 10;
@@ -1600,9 +1651,10 @@ static void dev_admit(const struct ar_dev_control *control)
 	struct ar_dev_acquisition plan;
 	receiver.admission_attempts++;
 	int result = ar_dev_idle_evaluate(&dev_config, control, &plan);
-	/* Full retuning/profile negotiation is not yet implemented. The tested
-	 * acquisition baseline uses the same frequency in both directions. */
-	if (!result && plan.transmit_channel != plan.receive_channel) { result = AR_MAC_UNSUPPORTED; }
+	/* The AP advertises the return channel independently of its downlink. */
+	if (!result && plan.transmit_channel != dev_transmit_channel) {
+		result = retune_user(plan.transmit_channel, 0, 0);
+	}
 	receiver.last_admission_result = (uint32_t)result;
 	if (result) { receiver.admission_rejects++; return; }
 	receiver.acquisition_ready = 1;
@@ -1681,14 +1733,22 @@ static struct ar_dev_mcs *dev_mcs_context(void)
 	memcpy(dev_mcs.fch,phy_control.tx,7);
 	return &dev_mcs;
 }
+static void dev_mcs_reset_rx(void)
+{
+	if (!mcs_info.reset_pending || receive_pending) { return; }
+	mcs_info.reset_pending = 0;
+	/* A timed-out coding request must not destroy the producer while it
+	 * still owes the CPU a DMA completion. Coalesce requests until drained. */
+	field(0x8000101, 1); field(0x80c0201, 1);
+	if (wait_bits(BB + 0xfa8, 0x100, 0x100, 2000)) { mcs_info.reset_errors++; }
+	field(0x80c0201, 0); field(0x8000101, 0); mcs_info.rx_resets++;
+}
 static void dev_mcs_apply(unsigned action)
 {
 	if (action & AR_DEV_MCS_RESET_RX) {
-		/* 23015e -> 22ab4c -> 22a9dc(2). Native waits are bounded and
-		 * record failure rather than entering the vendor fatal-reset path. */
-		field(0x8000101, 1); field(0x80c0201, 1);
-		if (wait_bits(BB + 0xfa8, 0x100, 0x100, 2000)) { mcs_info.reset_errors++; }
-		field(0x80c0201, 0); field(0x8000101, 0); mcs_info.rx_resets++;
+		mcs_info.reset_pending = 1;
+		mcs_info.reset_deferred += !!receive_pending;
+		dev_mcs_reset_rx();
 	}
 	phy_configure();
 	if (action & AR_DEV_MCS_SYNC_ON) {
@@ -1777,7 +1837,17 @@ static void dev_measure_eop(uint32_t status)
 		uint32_t total = (uint32_t)errors + refused;
 		uint16_t policy_errors = total > 65535 ? 65535 : (uint16_t)total;
 		phy.sample[9] = policy_snr; phy.sample[10] = policy_snr >> 8; phy.sample[11] = (uint8_t)policy_errors;
-		dev_mcs_apply(ar_dev_mcs_sample(dev_mcs_context(), (uint32_t)(sample_ticks / 40000), policy_snr, policy_errors));
+		uint32_t now_ms = (uint32_t)(sample_ticks / 40000);
+		if (bw_mcs_settling && (int32_t)(now_ms - bw_mcs_resume_ms) >= 0) { bw_mcs_settling = 0; }
+		if (bw_at_sweep || bw_settle_step || bw_mcs_settling) {
+			/* Muting/restarting RX during a width change produces errors that
+			 * do not describe the settled link. Discard that sample window and
+			 * its pending direction; preserve any already-issued MCS request.
+			 * Resume with eight fresh samples after the width settling time. */
+			dev_mcs.ready = dev_mcs.index = dev_mcs.direction = 0;
+		} else {
+			dev_mcs_apply(ar_dev_mcs_sample(dev_mcs_context(), now_ms, policy_snr, policy_errors));
+		}
 		if (!mcs_info.first_request_ms && dev_mcs.requests) { mcs_info.first_request_ms = dev_mcs.request_ms; }
 	}
 }
@@ -1939,7 +2009,8 @@ static void dev_observe_lock(const struct ar_dev_control *control)
 		receiver.last_login_elapsed_us = elapsed;
 	}
 	struct ar_dev_lock_context lock = {.selected_slot = 0,
-		.assigned_slot = receiver.assigned_slot, .token = receiver.dev_token};
+		.assigned_slot = receiver.assigned_slot, .token = receiver.dev_token,
+		.transmit_channel = dev_transmit_channel};
 	memcpy(lock.peer, receiver.accepted_peer, 4);
 	/* A normal state-2 broadcast need not carry another login extension.
 	 * A changed token/profile stops TX before delivery. Normal continuous
@@ -1948,7 +2019,7 @@ static void dev_observe_lock(const struct ar_dev_control *control)
 		if (memcmp(control->peer, lock.peer, 4)) { return; }
 		if (control->mode || control->slot_bitmap != dev_config.slot_bitmap ||
 		    control->receive_channel != dev_config.receive_channel ||
-		    control->transmit_channel != dev_config.receive_channel ||
+		    control->transmit_channel != dev_transmit_channel ||
 		    (control->slots[receiver.assigned_slot] >> 8) != receiver.dev_token ||
 		    ((control->slots[receiver.assigned_slot] >> 1) & 3) != 2) {
 			dev_invalidate();
@@ -2172,6 +2243,7 @@ static void receive_complete(void)
 	}
 	receive_head = (receive_head + 1) & 3;
 	receive_pending--;
+	dev_mcs_reset_rx();
 }
 
 /* ---- AP role (AP04 plan): the air unit's side of the link ------------------
@@ -2399,6 +2471,8 @@ static void ap_tune(uint64_t pll, uint32_t frequency)
 		 * it, only user 9 is parked. */
 		serial_word(first[user], user < 9 ? pll : park);
 		serial_word(other[user], user == 8 ? pll : park);
+		tuned_frequency[user][1] = user < 9 ? frequency : 2100000;
+		tuned_frequency[user][0] = user == 8 ? frequency : 2100000;
 		field((uint32_t)(0xa80 + (user / 2) * 4) << 16 | (user & 1 ? 0x1010 : 0x0010),
 			user < 9 ? frequency / 2000 : 0x041a);
 	}
@@ -3028,8 +3102,7 @@ int ar_rf_host_status(uint16_t users, uint8_t output[300])
 	if (receive_operation < 67 || information.phase < AR_RF_PSRAM || information.error ||
 	    !receiver.channel_count || dev_config.mode || dev_config.slot_bitmap != 1) { return -11; }
 	/* GET_STATUS 0x245de8: DEV role, mode0, no external sync, slot0.
-	 * DEV4 supports a single fixed frequency, programmed into both PLL banks
-	 * for all users; it does not implement incoming frequency reassignment. */
+	 * Report the programmed frequency separately for each direction. */
 	memset(output, 0, 300);
 	output[0] = 1; output[3] = 1; output[4] = output[5] = 1;
 	memcpy(output + 6, dev_config.local, 4);
@@ -3060,7 +3133,8 @@ int ar_rf_host_status(uint16_t users, uint8_t output[300])
 			rx[4] = base + 1; rx[3] = selector == base + 3; rx[2] = interleave != base;
 		} else if (selector != 0) { return -95; }
 		for (unsigned b = 0; b < 4; b++) {
-			tx[8+b] = rx[8+b] = receiver.frequency_khz >> (8*b);
+			tx[8+b] = tuned_frequency[user][0] >> (8*b);
+			rx[8+b] = tuned_frequency[user][1] >> (8*b);
 		}
 	}
 	/* Deterministic unavailable entries replace original unused stack bytes.
@@ -3191,7 +3265,10 @@ int ar_rf_host_pairing(const uint8_t *data, size_t length)
 	if (bound_ok) { memcpy(bound, binding.peer, 4); }
 	int result = ar_binding_set(&binding, data, length);
 	if (result) { return result; }
-	if (!binding.enabled && bound_ok) { memcpy(dev_config.configured_peer, bound, 4); }
+	if (!binding.enabled && bound_ok) {
+		memcpy(dev_config.configured_peer, bound, 4);
+		memcpy(host_config.channels + 8, bound, 4);
+	}
 	dev_config.pairing = binding.enabled;
 	memcpy(dev_config.pairing_skip, binding.skip, sizeof binding.skip);
 	if (information.phase == AR_RF_RECEIVING &&
@@ -3230,7 +3307,11 @@ int ar_rf_host_peer(const uint8_t *data, size_t length)
 	 * that hash is not derived yet, an XOR one stopped the link with a
 	 * stock AP, and the AP's own command 6 sets it once linked. */
 	memcpy(peer_requested, data, 4); peer_ignored++;
-	if (!ap_role) { memcpy(dev_config.configured_peer, data, 4); }
+	if (!ap_role) {
+		memcpy(dev_config.configured_peer, data, 4);
+		/* Recovery and stop/start rebuild from the saved loader plan. */
+		memcpy(host_config.channels + 8, data, 4);
+	}
 	return 0;
 }
 int ar_rf_host_candidates(const uint8_t *data, size_t length)
@@ -3302,6 +3383,7 @@ static void tune_measurement(void)
 	if (ar_tune_apply(11,1,frequency,scan_plls[channel],0,&config,NULL,&ops,NULL)) {
 		scan_info.errors++; return;
 	}
+	tuned_frequency[11][1] = frequency;
 	scan_info.frequency_khz = frequency; scan_info.tunes++;
 }
 static void scan_drop_pending(void)
@@ -3426,7 +3508,7 @@ static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t 
 		memcpy(dev_config.configured_peer, channels + 8, 4);
 		memcpy(dev_candidates, channels + 12, 8);
 		dev_config.candidates = dev_candidates; dev_config.candidate_count = channels[20];
-		dev_config.receive_channel = index; dev_config.channel_count = count;
+		dev_config.receive_channel = index; dev_transmit_channel = index; dev_config.channel_count = count;
 		dev_config.slot_bitmap = 1;
 		dev_status_a = channels[22]; dev_status_b = channels[23];
 		if (operation >= 58) { memcpy(tx_gain, channels + 24, 4); }
@@ -3490,9 +3572,19 @@ static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t 
 	memset(&tx_mcs_info, 0, sizeof tx_mcs_info); tx_mcs_info.current = 1;
 	memset(&tx_interleaver,0,sizeof tx_interleaver);
 	memset(&tx_history_info,0,sizeof tx_history_info);
+	/* A recovery starts a new producer session. Do not carry commands,
+	 * quality samples or counter deltas across the reset. Engines are held
+	 * here, so release any abandoned bandwidth-transition holds now. */
+	if (bw_settle_step) {
+		field(0x9e41801, 0); field(0xcfc1701, 0); field(0xbf80701, 0);
+	}
+	memset(&dev_cmd, 0, sizeof dev_cmd);
+	quality_head = quality_count = chain_snr_fresh = 0;
+	phy_last_invalid = phy_last_mac_invalid = 0;
 	/* Operations 41/42 below program the configured 5 MHz receive profile. */
 	bw_code = 2; bw_state = 0; bw_request_pending = 0; bw_settle_step = 0; bw_at_sweep = 0;
-	bw_target = 2; ar_width_reset(&bw_width);
+	bw_mcs_settling = 0;
+	bw_target = bw_automatic ? 2 : bw_manual; ar_width_reset(&bw_width);
 	bw_info.requests = 0;   /* per link: each new link widens again from 5 MHz */
 	memset(&mcs_info, 0, sizeof mcs_info); mcs_info.first_observed_mcs = 25;
 	if (operation < 67) { memset(&dev_mcs, 0, sizeof dev_mcs); mcs_sync_mmio = 0; }
@@ -4149,6 +4241,7 @@ void ar_rf_poll(void)
 			}
 			else if (index == 14) {
 				if (frame_pending) { unsigned m = frame_pending & 7; frame_pending = 0; apply_frame_mode(m); }
+				if (information.phase != AR_RF_RECEIVING) { return; }
 				uint32_t old = read32(BB + 0xbb0);
 				field(0xbb00701, 0); receiver.fch_last = read32(BB + 0xf00);
 				field(0xbb00701, (old >> 7) & 1);
@@ -4373,7 +4466,7 @@ void ar_rf_poll(void)
 				result = hold_engines();
 				if (!result) {
 					irq_ack(5); irq_ack(7);
-					if (normal_search) { tune_context_plls(search_pll); }
+					if (normal_search) { tune_context_plls(search_pll, receiver.channels[next].frequency_khz); }
 					else { serial_word(receive_operation == 40 ? 0x90a : 0x905, search_pll); }
 					if (receive_operation != 40) {
 						field(0xa900010, receiver.channels[next].frequency_khz / 2000);
@@ -4394,7 +4487,7 @@ void ar_rf_poll(void)
 				receiver.search_restarts++;
 				if (receiver.channel_count) {
 					receiver.channel_index = next;
-					if (receive_operation >= 54) { dev_config.receive_channel = next; }
+					if (receive_operation >= 54) { dev_config.receive_channel = next; dev_transmit_channel = next; }
 					receiver.channel_wraps += wrap;
 					receiver.frequency_khz = receiver.channels[next].frequency_khz;
 					if (commands_ready) {
@@ -4584,11 +4677,12 @@ static void bw_policy_rows(void)
 /* 40 MHz (code 5) needs the frame switch both ends make together, not on
  * this line: a wider configuration or request stops at 20 MHz. */
 #define BW_WIDEST 4u
-void ar_rf_set_bandwidth_policy(unsigned min, unsigned max, unsigned narrow_mcs, unsigned widen_mcs)
+void ar_rf_set_bandwidth_policy(unsigned automatic, unsigned min, unsigned max, unsigned narrow_mcs, unsigned widen_mcs)
 {
 	if (max < 2 || max > 5 || min < 2 || min > max) { return; }
 	if (max > BW_WIDEST) { max = BW_WIDEST; }
 	if (min > max) { min = max; }
+	bw_automatic = !!automatic; bw_manual = bw_target = 2;
 	bw_policy.min = (uint8_t)min; bw_policy.max = (uint8_t)max;
 	bw_policy.narrow_mcs = (uint8_t)narrow_mcs; bw_widen_mcs = (uint8_t)widen_mcs;
 	bw_policy_rows();
@@ -4599,8 +4693,9 @@ int ar_rf_host_bandwidth(const uint8_t *payload, size_t length)
 	if (payload[1] != 1 || payload[2] > 5) { return -95; }
 	if (!dev_active || receiver.dev_state != 2) { return -7; }
 	/* The widest the receiver may run; the policy decides below it. */
-	if (payload[2] < bw_policy.min) { return -22; }
+	if (payload[2] < 2 || (bw_automatic && payload[2] < bw_policy.min)) { return -22; }
 	bw_policy.max = payload[2] > BW_WIDEST ? BW_WIDEST : payload[2]; ar_width_reset(&bw_width);
+	if (!bw_automatic) { bw_manual = bw_target = bw_policy.max; }
 	if (bw_state != 1) { bw_info.requests = 0; bw_state = 0; }
 	return 0;
 }
@@ -4667,14 +4762,22 @@ static void reapply_power(unsigned user)
 {
 	if (power_ready && user < AR_POWER_USERS && power_level[user] != 0xff) { (void)apply_power(user, power_level[user]); }
 }
-/* RF path B (PRJ_CMD_RF_PATH_CTRL path 1): its TX/RX enables and the path
- * weights, as a stock unit holds them on (DEV) and off (AP on the bench). */
-static void rf_path_b(unsigned enable)
+/* RF path B (PRJ_CMD_RF_PATH_CTRL path 1). The direction is a mask:
+ * bit 0 selects TX, bit 1 selects RX. In particular, the ground host's
+ * {1,1,0} disables only TX B; RX B and its combining weights must survive.
+ * Stock disabling RX also removes B from combining; re-enabling the chain
+ * alone does not restore that receive-mode configuration. */
+static void rf_path_b(unsigned directions, unsigned enable)
 {
-	field(0x0000301, enable); field(0x0000501, enable);
-	field(0xc000101, enable); field(0xc001701, enable);
-	field(0xa200701, !enable);
-	field(0xa2c000c, enable ? 0 : 0xfff); field(0xa2c100c, 0);
+	if (directions & 1) { field(0x0000301, enable); }
+	if (directions & 2) {
+		field(0x0000501, enable);
+		if (!enable) {
+			field(0xc000101, 0); field(0xc001701, 0);
+			field(0xa200701, 1);
+			field(0xa2c000c, 0xfff); field(0xa2c100c, 0);
+		}
+	}
 }
 /* PRJ_CMD_SET_GPIO (stock prj_rpc_set_gpio), one word: [2:0] bank (A-D),
  * [6:3] pin, [8:7] 0 input / 1 output / 2 function only, [16:9] the pin's
@@ -4732,14 +4835,15 @@ static void adc_poll(void)
 	if (mv > 0) { adc.mv[adc.channel] = mv; adc.samples++; }
 }
 /* SET 0xc8, the project dispatch: [0] sub-command, arguments from [4].
- * 0xcb path control {path, direction, enable}, 0x0e GPIO, 0x8a/0x8b ADC. */
+ * 0xcb path control {path, direction mask (TX=1, RX=2), enable}, 0x0e GPIO, 0x8a/0x8b ADC. */
 int ar_rf_host_project(const uint8_t *in, size_t length)
 {
 	if (!in || length < 8) { return -22; }
 	switch (in[0]) {
 	case 0xcb:
 		if (in[4] != 1) { return -95; }       /* path A stays on */
-		rf_path_b(!!in[6]);
+		if (in[5] & ~3u) { return -22; }
+		rf_path_b(in[5], !!in[6]);
 		return 0;
 	case 0x0e:
 		return set_gpio(in[4] | (uint32_t)in[5] << 8 | (uint32_t)in[6] << 16 | (uint32_t)in[7] << 24);
@@ -4866,9 +4970,9 @@ int ar_rf_host_link_info(const uint8_t *in, size_t length, uint8_t out[216])
 	out[2] = (uint8_t)ratio; out[3] = ratio >> 8; out[4] = (uint8_t)ratio; out[5] = ratio >> 8;
 	out[6] = (uint8_t)(ga / quality_count); out[7] = (uint8_t)(gb / quality_count);
 	out[8] = (uint8_t)(receiver.dev_state == 2 ? tx_mcs_info.current : 25);
-	out[9] = (uint8_t)receiver.channel_index;
+	out[9] = (uint8_t)dev_transmit_channel;
 	out[10] = power_level[0] != 0xff ? power_level[0] : 0;
-	for (unsigned b = 0; b < 4; b++) { out[12 + b] = (uint8_t)(receiver.frequency_khz >> (8 * b)); }
+	for (unsigned b = 0; b < 4; b++) { out[12 + b] = (uint8_t)(tuned_frequency[0][0] >> (8 * b)); }
 	out[16] = (uint8_t)bw_code;
 	return 0;
 }

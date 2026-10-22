@@ -229,5 +229,33 @@ class WorkflowTests(unittest.TestCase):
                 remote.upload.assert_not_called()
 
 
+class MediaResetTests(unittest.TestCase):
+    def reset_with(self, commands):
+        script = (ROOT / 'tools/vrx.sh').read_text()
+        body = script.split('reset_media() {', 1)[1].split('\n}\n', 1)[0]
+        # Execute the real function with simulated loaded modules and commands;
+        # never call the host's module loader during this test.
+        return subprocess.run(['sh', '-c', 'test() { return 0; }\n' + commands +
+                               '\nreset_media() {' + body + '\n}\nreset_media'],
+                              text=True, capture_output=True, timeout=5)
+
+    def test_busy_module_stops_before_allocator_reload(self):
+        result = self.reset_with('''
+rmmod() { printf 'remove %s\n' "$1"; [ "$1" != ar_vb ]; }
+insmod() { printf 'load %s\n' "$1"; }
+''')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn('remove ar_osal', result.stdout)
+        self.assertNotIn('load ', result.stdout)
+
+    def test_allocator_load_failure_stops_dependent_loads(self):
+        result = self.reset_with('''
+rmmod() { return 0; }
+insmod() { printf 'load %s\n' "$1"; return 1; }
+''')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.splitlines(), ['load /mod/ar_osal.ko'])
+
+
 if __name__ == '__main__':
     unittest.main()

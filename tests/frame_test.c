@@ -140,6 +140,9 @@ int main(void)
 	for (unsigned i = 0x10; i <= 0x16; i++) {
 		assert(ar_diagnostic_request_id(AR_DAEMON_DIAGNOSTIC_BASE | i) == (AR_DAEMON_DIAGNOSTIC_BASE | i));
 	}
+	assert(ar_diagnostic_request_id(AR_DAEMON_MCS_CEILING) == AR_REQ_RF_MCS_CEILING);
+	assert(ar_diagnostic_request_id(UINT32_C(0x015a0036)) == UINT32_C(0x015a0036));
+	assert(ar_diagnostic_request_id(UINT32_C(0x025a0034)) == UINT32_C(0x025a0034));
 	frame.length = AR_MAX_PAYLOAD + 1;
 	assert(ar_encode(wire, sizeof wire, &frame) == 0);
 

@@ -7,6 +7,7 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 TESTS = {
+    'copy': ('', [], []),
     'frame': ('frame dispatch', [], []),
     'command': ('command', [], []),
     'scan': ('scan', [], []),
@@ -35,8 +36,8 @@ TESTS = {
     'tune': ('tune', [], []),
     'socket_rx': ('socket_rx', [], []),
     'socket_shutdown': ('socket_shutdown', [], []),
-    'sdio_device': ('sdio_device', ['AR_SDIO_SIMULATED', 'AR_SDIO_STOCK_MEMORY_ATTRIBUTES=1'], []),
-    'usb_device': ('usb_device', ['AR_USB_SIMULATED'], []),
+    'sdio_device': ('sdio_device transport_storage', ['AR_SDIO_SIMULATED', 'AR_SDIO_STOCK_MEMORY_ATTRIBUTES=1'], []),
+    'usb_device': ('usb_device transport_storage', ['AR_USB_SIMULATED'], []),
     'mac': ('mac', [], []),
     'dev': ('dev mac', [], []),
     'binding': ('binding', [], []),

@@ -177,8 +177,9 @@ static void usbclr(uint32_t offset, uint32_t bits) { usbwr(offset, usbreg(offset
 static uint8_t ep0_buf[EP0_MPS] __attribute__((aligned(32)));
 static uint8_t ep0_tx_buf[EP0_MPS] __attribute__((aligned(32)));
 static uint8_t setup_buf[64] __attribute__((aligned(32)));   /* up to 3 back-to-back SETUPs */
-static uint8_t receive_buffer[AR_USB_BUFFER_SIZE] __attribute__((aligned(512)));
-static uint8_t transmit_buffers[AR_USB_TX_DEPTH][AR_USB_BUFFER_SIZE] __attribute__((aligned(512)));
+#include "ar_transport_storage.h"
+#define receive_buffer ar_transport_dma.usb.receive
+#define transmit_buffers ar_transport_dma.usb.transmit
 static size_t transmit_lengths[AR_USB_TX_DEPTH];
 static unsigned tx_head, tx_count;
 
