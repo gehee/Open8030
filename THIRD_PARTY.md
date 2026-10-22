@@ -22,7 +22,7 @@ and empty configuration space are generated from source; packaging does not
 require a stock firmware image. A source checkout alone does not supply the
 private inputs needed to reproduce the RF video image.
 
-The v0.1.0 binary release includes `LICENSES.txt` with the Open8030 license, Zephyr
+Binary releases include `LICENSES.txt` with the Open8030 license, Zephyr
 license and source notices (including its MIT/BSD libc components), and the GCC
 runtime license/exception. Keep that file with redistributed release firmware.
 

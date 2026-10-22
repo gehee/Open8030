@@ -2,8 +2,8 @@
   "baseline": "working-video",
   "target": "VRX/GND Ascent VRX; matched 18.21.10 inputs",
   "runtime": {
-    "bytes": 115236,
-    "sha256": "c56dbdcea6295164576030298500798de6b518e56a292cd5d5f56e81b2a7583a",
+    "bytes": 115332,
+    "sha256": "a1f97401c05b8764b205acb62289cbdd67b3f6f95a0c419b58b641908066f12d",
     "load_address": "0x204000"
   },
   "ram": {
@@ -20,7 +20,7 @@
   },
   "container": {
     "bytes": 133632,
-    "sha256": "cffba18794ce681e0423d640c020a240fb46711a2a0105f59bcba2001f081cb7",
+    "sha256": "30e45c6aadb16049581f7de3f256781027eff4186b47f4a84814db6117d75c9a",
     "payload_alignment": 512
   },
   "original_stock_sha256": "dc58247910af564376350404383c5c411cbec21663873fba24e70c61a3584e3c",
@@ -28,11 +28,11 @@
   "scope": "Experimental Ascent VRX 18.21.10 native video baseline; private inputs not distributed",
   "generated_container": {
     "bytes": 133632,
-    "sha256": "cffba18794ce681e0423d640c020a240fb46711a2a0105f59bcba2001f081cb7",
+    "sha256": "30e45c6aadb16049581f7de3f256781027eff4186b47f4a84814db6117d75c9a",
     "payload_alignment": 512,
     "configuration": "zero-filled 16 KiB; external loader JSON required",
     "hardware_verified": true,
-    "verification_scope": "Regular Ascent VRX 18.21.10 over SDIO, DEV mode0/slot0 with stock Ascent Lite VTX 18.21.10. Direct HDMI-to-USB video verified at manual 5/10/20 MHz and automatic width selection, after a stock VTX power cycle, two radio stop/start cycles, and three warm firmware loads with intervening stock restores. No modulation-request timeouts in those regression runs. USB VRX Pro and AP hardware operation are not validated by this baseline. Intermittent picture artifacts, long-run reliability and interference behavior remain limitations.",
+    "verification_scope": "Regular Ascent VRX 18.21.10 over SDIO, DEV mode0/slot0 with Open8030 AP on an Ascent Lite VTX board 482. Release images are byte-identical to the final hardware-tested pair: visible HDMI-to-USB camera scene, 299.71 seconds with all 293 sampled link states connected, 605177547 delivered bytes, 7988 receiver queue bytes dropped, and one AP queue-full plus two out-of-order rejections that recovered without intervention. AP radio stop/start recovered automatically; DEV radio stop/start passed on the preceding DEV image with the same DEV runtime behavior. No claim of lossless operation, range, interference tolerance, 35+ Mbps, USB VRX Pro support, or complete telemetry/RC parity.",
     "verified_utc_date": "2026-10-22"
   }
 }

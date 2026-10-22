@@ -1,11 +1,19 @@
 # Firmware status
 
 Open8030 targets AR8030-based video receivers and, in the AP role, their
-transmitters. The pinned baseline is validated on the regular Ascent VRX
-(DEV, over SDIO) with matched 18.21.10 board inputs and a stock transmitter.
-USB receiver and AP hardware operation have not been revalidated for this baseline.
-Other AR8030 variants remain unverified; the supplied loading helpers target the
-tested Ascent VRX configuration.
+transmitters. The v0.2.0 release is validated on the regular Ascent VRX
+(DEV, over SDIO) and an Ascent Lite VTX board 482 (AP, over SDIO), both running
+Open8030 with matched 18.21.10 inputs. Its final five-minute bench test delivered
+605 MB with all 293 sampled link states connected and a visible camera scene
+captured through an HDMI-to-USB adapter. It recorded 7,988 receiver queue bytes
+dropped and brief AP write rejections; transport recovered without intervention.
+This is not a lossless, range, interference, 35+ Mbps or full telemetry/RC claim.
+
+Radio stop/start recovery was verified on both roles; the AP fix preserves its
+receiver admission list across restart. The public loading helper supports the
+VRX only. The VTX image requires a board-specific RAM loader. USB receivers and
+other AR8030 variants remain unverified by this release. Older results below
+refer to their named baselines, not additional validation of the release images.
 
 ## Contributor-reported air-unit results (AP role)
 
@@ -73,7 +81,8 @@ candidate removal and readmission.
 Flash identification and read-only factory-offset lookup are integrated into
 boot. Only the zero-offset fallback has hardware coverage; valid factory-record
 read parity remains unverified. Power calibration covers initial user-0 settings.
-Caches and interrupts remain disabled for cooperative polling.
+The current runtime enables instruction/data caches; CPU interrupt delivery remains
+masked while the cooperative loop polls peripheral events.
 
 The container built without a stock image and the combined `run` command were
 tested on 2026-10-14. The development baseline adds DEV-side AP-time synchronization

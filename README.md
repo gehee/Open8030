@@ -9,15 +9,19 @@ profiles and loading procedures. See [status and remaining work](docs/status.md)
 
 ## Run the prebuilt firmware
 
-The [v0.1.0 experimental release](https://github.com/mh1412/Open8030/releases/tag/v0.1.0)
-includes the tested Ascent VRX image. On Linux with Python 3.12+, Git, curl and
-OpenSSH installed:
+The [v0.2.0 experimental release](https://github.com/mh1412/Open8030/releases/tag/v0.2.0)
+includes separate Ascent VRX (`open8030.img`) and experimental Ascent Lite
+VTX/AP (`open8030-vtx.img`) images. The commands below are for the **VRX only**.
+The VTX asset requires a board-specific RAM-loading procedure; the VRX helper
+does not support it. See the release notes for compatibility and validation limits.
+
+On Linux with Python 3.12+, Git, curl and OpenSSH installed:
 
 ```sh
-git clone --branch v0.1.0 https://github.com/mh1412/Open8030.git
+git clone --branch v0.2.0 https://github.com/mh1412/Open8030.git
 cd Open8030
 mkdir -p .local
-curl -fL https://github.com/mh1412/Open8030/releases/download/v0.1.0/open8030.img \
+curl -fL https://github.com/mh1412/Open8030/releases/download/v0.2.0/open8030.img \
   -o .local/open8030.img
 ./open8030 run YOUR_VRX_IP
 ```

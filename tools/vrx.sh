@@ -43,7 +43,7 @@ test ! -e "$STAGE/restored"
 test ! -e "$STAGE/native-left-running"
 test ! -e "$STAGE/keep-running"
 
-test "$(sha256sum "$STAGE/candidate.img" | cut -d ' ' -f 1)" = cffba18794ce681e0423d640c020a240fb46711a2a0105f59bcba2001f081cb7
+test "$(sha256sum "$STAGE/candidate.img" | cut -d ' ' -f 1)" = 30e45c6aadb16049581f7de3f256781027eff4186b47f4a84814db6117d75c9a
 # Firmware requests can reuse an older payload by name across driver reloads.
 # Give each RAM session a unique name, not just a unique search directory.
 FW_NAME="${STAGE##*/}.img"
