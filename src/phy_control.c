@@ -53,7 +53,8 @@ int ar_phy_control_enqueue(struct ar_phy_control *state, unsigned command,
 int ar_phy_control_tick(struct ar_phy_control *state, uint64_t now_ms,
 	const struct ar_phy_control_ops *ops, void *context)
 {
-	if (!valid(state,ops) || ((state->tx[1] & 15) > 9 && (state->tx[1] & 15) != AR_PHY_STAMP) ||
+	if (!valid(state,ops) || ((state->tx[1] & 15) > 9 && (state->tx[1] & 15) != AR_PHY_STAMP &&
+	    (state->tx[1] & 15) != AR_PHY_RETRIES) ||
 	    ((state->tx[2] >> 1) & 7) > 4) { return -22; }
 	ops->lock(context);
 	unsigned command = state->tx[1] & 15, life = ttl(state->tx);
@@ -62,8 +63,21 @@ int ar_phy_control_tick(struct ar_phy_control *state, uint64_t now_ms,
 		if (state->role) { goto done; }
 		if (!state->time_valid && now_ms-state->time_value < period) {
 			/* Between the AP time's messages: Open8030's frame stamp, packed
-			 * as command 7's ms (32 bits). */
-			if (!state->stamp_period_ms || now_ms - state->stamp_ms < state->stamp_period_ms) { goto done; }
+			 * as command 7's ms (32 bits); its resend map every few frames
+			 * when no stamp is due. */
+			const int stamp_due = state->stamp_period_ms && now_ms - state->stamp_ms >= state->stamp_period_ms;
+			if (!stamp_due && state->retry_every &&
+			    (uint8_t)(state->retry_frame - state->retry_sent_frame) >= state->retry_every) {
+				state->retry_sent_frame = state->retry_frame;
+				wake(state,255,ops,context);
+				for (unsigned i = 0; i < 3; i++) { state->tx[3+i] = (uint8_t)(state->retry_map >> (8*i)); }
+				state->tx[6] = state->retry_frame & 15;
+				state->tx[1] = (uint8_t)((state->retry_frame >> 4) << 4 | AR_PHY_RETRIES);
+				state->tx[2] = (state->tx[2] & 0xf0) | 8;
+				checksum(state); ops->write(state->tx,context);
+				goto done;
+			}
+			if (!stamp_due) { goto done; }
 			state->stamp_ms = (uint32_t)now_ms; state->stamps++;
 			wake(state,255,ops,context);
 			const uint32_t stamp = (uint32_t)state->stamp_us;
@@ -84,8 +98,8 @@ int ar_phy_control_tick(struct ar_phy_control *state, uint64_t now_ms,
 		state->tx[1] = (remote >> 28) << 4 | 7;
 		state->tx[2] = (state->tx[2] & 0xf0) | 8;
 		checksum(state); ops->write(state->tx,context);
-	} else if (command == 7 || command == AR_PHY_STAMP || life == 31) {
-		if (command == 7 || command == AR_PHY_STAMP) { clear(state,ops,context); }
+	} else if (command == 7 || command == AR_PHY_STAMP || command == AR_PHY_RETRIES || life == 31) {
+		if (command == 7 || command == AR_PHY_STAMP || command == AR_PHY_RETRIES) { clear(state,ops,context); }
 		checksum(state); ops->write(state->tx,context);
 	} else if (life) {
 		checksum(state); ops->write(state->tx,context);

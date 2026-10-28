@@ -491,6 +491,36 @@ static void open8030_linked_tests(void)
 		ticks = a + frame; irq(5);
 		assert(engine_resets > resets && ((*reg(0x0a1109e0) >> 8) & 7) == 2);
 	}
+	/* The AP's resend maps (command 11): 12 frames, two bits each, newest
+	 * first, placed on our frames (the newest: the frame that ended at our
+	 * IRQ 5 before the latest); a map again or an older one changes nothing,
+	 * frames no map covered are not known. */
+	{
+		const struct ar_rf_frame_info *fi = ar_rf_frame_information();
+		const uint32_t b0 = fi->retries, k0 = fi->retry_known_frames, s0 = fi->retry_stalls;
+		/* newest 1 block, then 0, 2, none confirmed (3); index 0x25 */
+		uint8_t r[4] = {0xe1, 0, 0, 5};
+		ap_command(11, 2, r, 4); fi = ar_rf_frame_information();
+		assert(fi->retry_frame == fi->frames - 1 && fi->retries == b0 + 3 && fi->retry_stalls == s0 + 1);
+		assert(fi->retry_known_frames == k0 + 12 && (fi->retry_map[0] & 0xffffff) == 0xe1 && fi->retry_known[0] == 0xfff);
+		ap_command(11, 2, r, 4); fi = ar_rf_frame_information();         /* the same map again */
+		assert(fi->retry_known_frames == k0 + 12 && fi->retries == b0 + 3);
+		/* six frames on: index 0x2b, the oldest new one 1 block; the older six overlap */
+		for (unsigned i = 0; i < 6; i++) { irq(5); }
+		r[0] = 0; r[1] = 0x04; r[2] = 0; r[3] = 0xb;   /* entry 5 = 1, entries 6..11 as before */
+		ap_command(11, 2, r, 4); fi = ar_rf_frame_information();
+		assert(fi->retry_frame == fi->frames - 1 && fi->retry_known_frames == k0 + 18 && fi->retries == b0 + 4);
+		assert(((fi->retry_map[0] >> 10) & 3) == 1 && ((fi->retry_map[0] >> 12) & 3) == 1 && ((fi->retry_map[0] >> 18) & 3) == 3);
+		assert(fi->retry_known[0] == 0x3ffff);
+		/* thirty frames on (the channel busy): 12 known, the 18 before them not */
+		for (unsigned i = 0; i < 30; i++) { irq(5); }
+		r[0] = r[1] = r[2] = 0; r[3] = 0x9;               /* index 0x49 */
+		ap_command(11, 4, r, 4); fi = ar_rf_frame_information();
+		assert(fi->retry_known_frames == k0 + 30 && fi->retries == b0 + 4);
+		assert((fi->retry_known[0] & 0x3fffffff) == 0xfff && (fi->retry_known[0] >> 30) == 3 && (fi->retry_known[1] & 0xffff) == 0xffff);
+		/* The per-frame quality: the newest header's frame, known. */
+		assert(fi->q_frame && (fi->q_word[0] >> 30 & 1) && fi->q_frame <= fi->frames + 1);
+	}
 	inject_valid = saved_inject; inject_receive = saved_receive;
 
 	/* SET 22: the receiver's bandwidth target (dir RX = 1, code <= 5). */

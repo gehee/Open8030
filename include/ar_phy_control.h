@@ -17,6 +17,12 @@ struct ar_phy_control {
 	uint64_t stamp_us;
 	uint32_t stamp_ms, stamps;
 	uint16_t stamp_period_ms;
+	/* Open8030's resend map (command 11, ar_frame_stamp.h): two bits a frame,
+	 * the newest in bits 1:0, and that frame's index; sent once retry_every
+	 * frames passed since the last one and the channel is free, never ahead
+	 * of a stamp that is due (retry_every 0: none). */
+	uint32_t retry_map;
+	uint8_t retry_frame, retry_sent_frame, retry_every;
 };
 struct ar_phy_control_ops {
 	void (*lock)(void *context);

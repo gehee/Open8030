@@ -298,6 +298,10 @@ static struct ar_rf_phy_info phy;
  * make the reply fail). */
 struct quality_sample { uint16_t snr; uint8_t gain_a, gain_b, errored; uint32_t ms; };
 static struct quality_sample quality_ring[8];
+/* Per frame of ours (the frames' count, & 255), as its header came: the
+ * frame info's q_word (ar_rf_device.h), for the host's per-frame log. */
+static uint32_t fq_word[256], fq_newest;
+static uint8_t fq_have;
 static unsigned quality_head, quality_count;
 static struct ar_rf_phy_trace phy_trace;
 static uint32_t phy_poll_tick;
@@ -379,6 +383,18 @@ static void bw_policy_rows(void);
  * AP's clock on a ground. */
 static struct ar_frame_stamp fstamp;
 static struct ar_rf_frame_info frame_stamp_info;
+/* The AP's resend maps (AR_PHY_RETRIES) on a ground, per frame of ours (the
+ * frames' count; & 255): 0..2 blocks sent again, 3 none confirmed, 0xff not
+ * known. retry_newest: our frame of the newest known; retry_last_ap: the AP's
+ * index of the last map on this link (retry_link). Totals since start. */
+static uint8_t retry_ring[256], retry_last_ap, retry_link, retry_have;
+static uint32_t retry_newest, retry_blocks, retry_known_frames, retry_stalls;
+/* AP: blocks sent again in this frame (its HARQ request ids at IRQ 18),
+ * whether one came at all, and the map of the frames before (two bits each,
+ * the newest low) with the newest's index. */
+static unsigned ap_frame_resent, ap_frame_fed;
+static uint32_t ap_retry_map;
+static uint8_t ap_retry_frame;
 static uint32_t phy_last_invalid, phy_last_mac_invalid;
 static uint32_t bw_deadline_ms, bw_settle_us;
 static uint32_t bw_mcs_resume_ms;
@@ -1371,6 +1387,38 @@ static void sync_receive(const uint8_t control[7])
 		}
 		return;
 	}
+	if ((control[1] & 15) == AR_PHY_RETRIES) {
+		/* Open8030's resend map: the AP's last 12 frames (on our link, checked). */
+		if (dev_active && receiver.dev_state == 2 && fstamp.frames &&
+		    ((control[2] >> 1) & 7) == 4 && control[0] == ar_phy_control_checksum(control)) {
+			const uint32_t map = control[3] | (uint32_t)control[4] << 8 | (uint32_t)control[5] << 16;
+			const uint8_t index = (uint8_t)((control[6] & 15) | (control[1] >> 4) << 4);
+			/* Its newest: the frame that ended at our IRQ 5 before the latest. */
+			const uint32_t newest = fstamp.frames - 1;
+			unsigned take = AR_RETRY_FRAMES;
+			if (retry_link) {
+				const uint8_t more = (uint8_t)(index - retry_last_ap);
+				if (!more || more > 128) { return; }              /* the same map again, or an older one */
+				if (more < take) { take = more; }
+			}
+			if (retry_have && (int32_t)(newest - retry_newest) <= 0) { return; }
+			retry_last_ap = index; retry_link = 1;
+			if (!retry_have) { memset(retry_ring, 0xff, sizeof retry_ring); }
+			else {
+				/* Frames no map covered (the channel busy longer): not known. */
+				const uint32_t gap = newest - take - retry_newest;
+				for (uint32_t f = 1; (int32_t)gap > 0 && f <= gap && f <= 256; f++) { retry_ring[(retry_newest + f) & 255] = 0xff; }
+			}
+			for (unsigned k = 0; k < take; k++) {
+				const unsigned v = (map >> (2 * k)) & 3;
+				retry_ring[(newest - k) & 255] = (uint8_t)v;
+				retry_known_frames++;
+				if (v == 3) { retry_stalls++; } else { retry_blocks += v; }
+			}
+			retry_newest = newest; retry_have = 1;
+		}
+		return;
+	}
 	/* Runtime provisioning currently admits only mode0 and local position0.
 	 * Broader mode3/retransmission state ownership remains unintegrated. */
 	struct ar_phy_receive receive = {.slot=receiver.assigned_slot,.dev_state=receiver.dev_state};
@@ -2077,6 +2125,21 @@ static void dev_mcs_apply(unsigned action)
 	}
 }
 
+/* The SNR register's halfword in dB x 10 (100 log10(x / 36); log2 from the top
+ * bit and a 16-step table of log2(1 + i/16) x 1024, interpolated: within
+ * 0.05 dB). */
+static int snr_db10(uint32_t raw)
+{
+	static const uint16_t frac[17] = {0, 90, 174, 254, 330, 402, 470, 536, 599, 659, 717, 773,
+		827, 879, 929, 977, 1024};
+	if (!raw) { return -1000; }
+	unsigned top = 31u - (unsigned)__builtin_clz(raw);
+	uint32_t m = top >= 12 ? raw >> (top - 12) : raw << (12 - top);
+	unsigned i = (m >> 8) & 15, rest = m & 255;
+	uint32_t log2_1024 = top * 1024u + frac[i] + ((uint32_t)(frac[i + 1] - frac[i]) * rest >> 8);
+	return (int)((log2_1024 * 30103u / 1024u + 500u) / 1000u) - 156;
+}
+
 static void dev_measure_eop(uint32_t status)
 {
 	/* 0x2210cc maps raw user9 to logical8; each FCH clears the EOP guard.
@@ -2125,6 +2188,22 @@ static void dev_measure_eop(uint32_t status)
 	quality_ring[quality_head] = (struct quality_sample){(uint16_t)phy.raw_snr, phy.sample[6], phy.sample[7],
 		(uint8_t)(errors != 0), (uint32_t)(sample_ticks / 40000)};
 	quality_head = (quality_head + 1) & 7; if (quality_count < 8) { quality_count++; }
+	{
+		/* The frame this header is in ends at the next IRQ 5 (frame n ends
+		 * at IRQ 5 number n). Frames between with no header: not known. */
+		const uint32_t n = fstamp.frames + 1;
+		if (fq_have && (int32_t)(n - fq_newest) > 0) {
+			for (uint32_t f = fq_newest + 1; f != n && f - fq_newest <= 256; f++) { fq_word[f & 255] = 0; }
+		}
+		if (!fq_have || (int32_t)(n - fq_newest) >= 0) {
+			int db10 = snr_db10((uint16_t)phy.raw_snr); if (db10 < 0) { db10 = 0; }
+			const unsigned q = (unsigned)db10 * 4 / 10 > 254 ? 254u : (unsigned)db10 * 4 / 10;
+			const unsigned mcs = dev_mcs.current < dev_mcs.config.count ? dev_mcs.config.rows[dev_mcs.current].mcs & 15 : 0;
+			fq_word[n & 255] = q | (uint32_t)phy.sample[6] << 8 | (uint32_t)phy.sample[7] << 16 | mcs << 24 |
+				(uint32_t)((bw_code - 2) & 3) << 28 | 1u << 30 | (uint32_t)(errors != 0) << 31;
+			fq_newest = n; fq_have = 1;
+		}
+	}
 	if (receive_operation >= 67) {
 		/* Policy inputs. SNR: the EA0 halfword as it is (stock's self.snr reads
 		 * twice this on the bench, so the stock rows' thresholds hold ~3 dB more
@@ -2201,7 +2280,7 @@ static void dev_invalidate(void)
 		recovery.invalidations++; request_recovery(2); return;
 	}
 	if (receive_operation >= 67) { dev_mcs_apply(ar_dev_mcs_connect(dev_mcs_context(), 0)); }
-	ar_frame_stamp_reset(&fstamp);
+	ar_frame_stamp_reset(&fstamp); retry_link = 0;
 	field(0x8000201, 1); field(0xcf41501, 0);
 	link_event(0, receiver.dev_state);
 	dev_active = 0; receiver.dev_state = 0; receiver.assigned_slot = 8; bw_state = 0; bw_info.requests = 0;
@@ -2373,7 +2452,7 @@ static void dev_observe_lock(const struct ar_dev_control *control)
 		ar_binding_complete(&binding, login.slot, receiver.accepted_peer, sample);
 	}
 	if (receive_operation >= 67) { dev_mcs_apply(ar_dev_mcs_connect(dev_mcs_context(), 1)); }
-	ar_frame_stamp_reset(&fstamp);
+	ar_frame_stamp_reset(&fstamp); retry_link = 0;
 }
 
 static void dev_preencode(void)
@@ -3003,6 +3082,13 @@ void ar_rf_set_hop_config(const struct ar_hop_config *hop)
 }
 static void ap_hop_feed(uint8_t first, uint8_t second)
 {
+	/* The frame's count for the resend map: each id that is not one or two
+	 * past the newest seen is a block sent again (as the measure counts). */
+	if (ap_measure.newest != 255) {
+		ap_frame_resent += ((unsigned)(first - ap_measure.newest) & 15u) - 1u >= 2u;
+		if (second != 255) { ap_frame_resent += ((unsigned)(second - ap_measure.newest) & 15u) - 1u >= 2u; }
+	}
+	ap_frame_fed = 1;
 	if (ar_hop_measure_feed(&ap_measure, first, second)) { ap_info.hop_retx_frames++; }
 	ap_hop_evaluate = 1;
 }
@@ -3479,6 +3565,18 @@ const struct ar_rf_frame_info *ar_rf_frame_information(void)
 	info->width = ap_role ? ap_bw_code : bw_code;
 	info->frame_mode = ap_role ? ap_frame_mode : frame_mode;
 	info->sent = phy_control.stamps;
+	info->retries = ap_role ? ap_info.hop_retx_frames : retry_blocks;
+	info->retry_frame = retry_have ? retry_newest : 0;
+	info->retry_known_frames = retry_known_frames; info->retry_stalls = retry_stalls;
+	memset(info->retry_map, 0, sizeof info->retry_map); memset(info->retry_known, 0, sizeof info->retry_known);
+	info->q_frame = fq_have ? fq_newest : 0;
+	for (unsigned k = 0; k < 64; k++) { info->q_word[k] = fq_have ? fq_word[(fq_newest - k) & 255] : 0; }
+	for (unsigned k = 0; retry_have && k < 64; k++) {
+		const uint8_t v = retry_ring[(retry_newest - k) & 255];
+		if (v == 0xff) { continue; }
+		info->retry_known[k / 32] |= 1u << (k % 32);
+		info->retry_map[k / 16] |= (uint32_t)v << (2 * (k % 16));
+	}
 	return info;
 }
 
@@ -4524,6 +4622,8 @@ void ar_rf_poll(void)
 				/* The frame stamp (when the channel is free): the AP's time at
 				 * the IRQ 5 before this block's header. */
 				phy_control.stamp_us = ar_frame_stamp_value(&fstamp); phy_control.stamp_period_ms = 100;
+				/* And the resend map every 6 frames (12 in each). */
+				phy_control.retry_map = ap_retry_map; phy_control.retry_frame = ap_retry_frame; phy_control.retry_every = 6;
 				(void)ar_phy_control_tick(&phy_control,timer_ticks()/40000,&phy_ops,NULL);
 #ifdef AR_BW_TRACE
 				if (ap_trace_17) { ap_trace_item(12 + ap_trace_17, timer_ticks() - ap_trace_switch); if (++ap_trace_17 > 8) { ap_trace_17 = 0; } }
@@ -4618,6 +4718,14 @@ void ar_rf_poll(void)
 						memcpy(ap_tf_ring[ap_tf_head], v, sizeof v); ap_tf_head = (ap_tf_head + 1) & 3;
 						ap_tf_7 = ap_tf_7u8 = ap_tf_11 = ap_tf_18u8 = ap_tf_13 = ap_tf_gap = 0; ap_tf_req = 0xff;
 #endif
+						/* The resend map: this frame's blocks sent again, or 3 with
+						 * a ground and no HARQ request at all (nothing confirmed). */
+						{
+							unsigned v = ap_frame_resent > 2 ? 2 : ap_frame_resent;
+							if (connected && !ap_frame_fed) { v = 3; }
+							ap_retry_map = ap_retry_map << 2 | v; ap_retry_frame++;
+							ap_frame_resent = 0; ap_frame_fed = 0;
+						}
 						/* The stall guard (ap_frame_17 above). */
 						if (connected && !ap_frame_17) {
 							ap_stall_frames++;

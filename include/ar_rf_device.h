@@ -197,6 +197,24 @@ struct ar_rf_frame_info {
 	uint32_t taken, rejected;
 	int32_t residual_us;
 	uint32_t width, frame_mode, sent;
+	/* Blocks sent again (AP: frames that sent one, its channel choice's
+	 * count; ground: blocks, from the AP's resend maps, since start), then
+	 * two fields kept 0 (steady mode, its steps down: kestrel-gnd reads this
+	 * layout). */
+	uint32_t retries, steady, retry_steps;
+	/* Ground: the AP's resend maps per frame of ours. retry_frame: our frame
+	 * (frames' count: the one that ended at that IRQ 5) of the newest known;
+	 * retry_map: 64 frames back from it, two bits each (frame retry_frame - k
+	 * in word k / 16, bits 2 (k % 16) + 1..0: 0..2 blocks sent again, 3 none
+	 * confirmed); retry_known: one bit each, set where the map knows it;
+	 * frames known and stalled ones since start. */
+	uint32_t retry_frame, retry_known_frames, retry_stalls;
+	uint32_t retry_map[4], retry_known[2];
+	/* Ground: each of our last 64 frames as its header was received -
+	 * q_word[k] is frame q_frame - k: [7:0] SNR in quarter dB, [15:8] and
+	 * [23:16] the two paths' AGC gain, [27:24] the MCS (internal), [29:28] the
+	 * width code - 2, [30] set when known, [31] the decoder's error flag. */
+	uint32_t q_frame, q_word[64];
 };
 const struct ar_rf_frame_info *ar_rf_frame_information(void);
 void ar_rf_note_host_stage(unsigned stage, uint32_t us);

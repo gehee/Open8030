@@ -103,6 +103,33 @@ int main(void)
 	assert(ar_phy_control_tick(&state, 5170, &ops, &state) == 0 && writes == 4);   /* not before 100 ms */
 	writes = 0; state.role = 1; state.stamp_ms = 0;
 	assert(ar_phy_control_tick(&state, 9000, &ops, &state) == 0 && writes == 0);
-	puts("PHY control queue, TTL, cancellation, timer and frame stamp tests passed");
+	/* Open8030 resend maps (command 11): once retry_every frames passed since
+	 * the last, never ahead of a stamp that is due; 24 bits of map, the
+	 * newest frame's index split as the stamps split theirs; one tick in the
+	 * slot, then cleared; never from a ground. */
+	memset(&state, 0, sizeof state); writes = 0;
+	state.time_period_ms = 1000; state.stamp_period_ms = 100; state.retry_every = 6;
+	state.retry_map = 0xa5123456; state.retry_frame = 5;
+	assert(ar_phy_control_tick(&state, 5000, &ops, &state) == 0 && writes == 1 && (packets[0][1] & 15) == 7);
+	assert(ar_phy_control_tick(&state, 5010, &ops, &state) == 0 && writes == 2 && !(state.tx[1] & 15));
+	assert(ar_phy_control_tick(&state, 5020, &ops, &state) == 0 && writes == 3 && (packets[2][1] & 15) == 10);  /* the stamp first */
+	assert(ar_phy_control_tick(&state, 5030, &ops, &state) == 0 && writes == 4 && !(state.tx[1] & 15));
+	assert(ar_phy_control_tick(&state, 5040, &ops, &state) == 0 && writes == 4);   /* 5 frames: not yet */
+	state.retry_frame = 0x26;
+	assert(ar_phy_control_tick(&state, 5050, &ops, &state) == 0 && writes == 5);
+	assert(packets[4][1] == (0x20 | 11) && ((packets[4][2] >> 1) & 7) == 4 && packets[4][6] == 6);
+	assert(packets[4][3] == 0x56 && packets[4][4] == 0x34 && packets[4][5] == 0x12);
+	assert(packets[4][0] == ar_phy_control_checksum(packets[4]) && state.retry_sent_frame == 0x26);
+	assert(ar_phy_control_tick(&state, 5060, &ops, &state) == 0 && writes == 6 && !(state.tx[1] & 15));
+	state.retry_frame = 0x2b;
+	assert(ar_phy_control_tick(&state, 5070, &ops, &state) == 0 && writes == 6);   /* 5 frames on */
+	writes = 0; state.retry_frame = 0x2c;
+	assert(ar_phy_control_tick(&state, 5120, &ops, &state) == 0 && writes == 1 && (packets[0][1] & 15) == 10);  /* a due stamp first */
+	assert(ar_phy_control_tick(&state, 5130, &ops, &state) == 0 && writes == 2);
+	assert(ar_phy_control_tick(&state, 5140, &ops, &state) == 0 && writes == 3 && packets[2][1] == (0x20 | 11) && packets[2][6] == 0xc);
+	assert(ar_phy_control_tick(&state, 5150, &ops, &state) == 0 && writes == 4 && !(state.tx[1] & 15));
+	writes = 0; state.role = 1; state.retry_frame = 0x60;
+	assert(ar_phy_control_tick(&state, 5600, &ops, &state) == 0 && writes == 0);
+	puts("PHY control queue, TTL, cancellation, timer, frame stamp and resend map tests passed");
 	return 0;
 }

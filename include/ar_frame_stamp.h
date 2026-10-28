@@ -17,6 +17,17 @@
  * the ground's latest. Both ends then read the AP's clock at their own latest
  * IRQ 5 - the same moment of the same frame, give or take the IRQs' jitter. */
 #define AR_PHY_STAMP 10u
+/* Open8030's resend map (AP to ground), every 6 frames: per frame, newest
+ * first, how many blocks the AP sent again in it (0..2) or 3 for none
+ * confirmed at all (no HARQ request: the broadcast stalled) - 12 frames in
+ * payload bytes 0..2 (two bits each, the newest in bits 1:0) - and the newest
+ * frame's index, 8 bits: the low nibble in byte 3's low nibble, the high one
+ * in the TTL nibble, as the stamps pack theirs. The newest is the frame that
+ * ended at the AP's IRQ 5 before the one the ground has seen last (as a
+ * stamp's moment). A block sent again costs its slice a frame or more: the
+ * radio part's latency tail. */
+#define AR_PHY_RETRIES 11u
+#define AR_RETRY_FRAMES 12u
 #define AR_FRAME_STAMP_MASK ((UINT64_C(1) << 32) - 1)
 struct ar_frame_stamp {
 	uint64_t irq5[2];          /* our timer (40 MHz ticks) at the latest IRQ 5 and the one before */
