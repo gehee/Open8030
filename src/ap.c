@@ -35,6 +35,9 @@ static void drop(struct ar_ap *ap)
 {
 	ap->state = AR_AP_IDLE; ap->drops++;
 	memset(ap->ground, 0, 4);
+	/* That ground's width: a new link starts at 5 MHz until it asks (kept,
+	 * a link lost at 40 MHz went back to 40 at the next login). */
+	ap->bandwidth_request = 0;
 	/* A new token for the next login: a ground still holding this one sees
 	 * the change and lets go instead of keeping a stale lock. */
 	ap->token = (uint8_t)(ap->token + 1) ? (uint8_t)(ap->token + 1) : 1;

@@ -398,6 +398,10 @@ static void open8030_linked_tests(void)
 	mode[0] = 0; assert(!ar_rf_host_frame_mode(mode, 1));          /* already standard */
 	assert((*reg(0x0a110a00) & 0xffff) == 0x0da3);
 	mode[0] = 2; assert(!ar_rf_host_frame_mode(mode, 1));
+	/* The command slot busy (with this request itself here, at link-up with
+	 * the width request): accepted and sent as the slot frees, not refused
+	 * with -16 - the host does not ask again. */
+	assert(!ar_rf_host_frame_mode(mode, 1));
 	for (unsigned f = 0; f < 20 && (*reg(0x0a110a00) & 0xffff) != 0x07a3; f++) {
 		uplink_frame(); frame_header();
 	}
@@ -430,6 +434,63 @@ static void open8030_linked_tests(void)
 	assert(engine_resets == resets && ((*reg(0x0a1109e0) >> 8) & 7) == 4);
 	irq(5);
 	assert(engine_resets > resets && ((*reg(0x0a1109e0) >> 8) & 7) == 2);
+	/* Across 40 MHz the frame changes with the width, so a frame late is a
+	 * different frame from the AP's. The frame's last packet, its DMA done
+	 * but its IRQ 13 behind IRQ 5 in the poll pass, is finished first, not
+	 * waited a frame for. */
+	width[1] = 5 << 5; resets = engine_resets;
+	/* The AP writes each header's TTL a frame ahead and moves at the first
+	 * IRQ 5 after the TTL-2 header (its TTL-1 header goes out on the new
+	 * width): TTL - 1 frames after the IRQ 5 before the header, on our
+	 * timer. Not at the IRQ 5 before it; a late IRQ 5 still counts. */
+	{
+		uint64_t frame = (uint64_t)rx->search_frame_us * 40, phase = frame / 2, a = ticks + 2 * frame;
+		ticks = a - frame; irq(5);
+		ticks = a - frame + phase; ap_command(5, 3, width, 3);
+		ticks = a; irq(5);                                   /* the IRQ 5 before TTL 2's header */
+		ticks = a + phase; ap_command(5, 2, width, 3);
+		assert(engine_resets == resets && ((*reg(0x0a1109e0) >> 8) & 7) == 2);
+		ticks = a + frame + frame / 4;                       /* the next, its IRQ 5 handled late */
+	}
+	*reg(0x0a110f88) = 1; *reg(0x0a110f90) = 1; irq(16);
+	assert(*reg(0xe0801164) & 1);                       /* IRQ 13 waits for the next pass */
+	*reg(0xe0801000u + (5 + 76) * 4) |= 1; ar_rf_poll();
+	assert(engine_resets > resets && ((*reg(0x0a1109e0) >> 8) & 7) == 5 && bandwidth_event[2] == 5);
+	assert(*reg(0x0a110970) >> 16 == 0x09c4 && !(*reg(0xe0801164) & 1));
+	/* Across 40 MHz the receiver is back from the re-arm, unmuted and
+	 * released (the AP's first burst comes ~2.6 ms later, nothing of the
+	 * old width after it). */
+	assert(!(*reg(0x0a1109e4) >> 24 & 1) && !(*reg(0x0a110cfc) >> 23 & 1) && !(*reg(0x0a110bf8) >> 7 & 1));
+	/* Back across 40 with an uplink packet whose TX end never came: it is
+	 * retired, the switch is not put off. */
+	*reg(0x0a110f70) = 0; *reg(0x0a110f5c) = 64 << 16; irq(19);
+	assert(rx->tx_owned);
+	width[1] = 4 << 5; ap_command(5, 1, width, 3); irq(5);
+	assert(((*reg(0x0a1109e0) >> 8) & 7) == 4 && !rx->tx_owned && *reg(0x0a110970) >> 16 == 0x1250);
+	width[1] = 2 << 5; ap_command(5, 1, width, 3); irq(5);
+	assert(((*reg(0x0a1109e0) >> 8) & 7) == 2);
+	/* With the AP's frame stamps (an Open8030 AP) 5/10/20 is timed too: on
+	 * stock timing the ground moved a frame or two after the AP. */
+	{
+		irq(5); irq(5);
+		uint8_t stamp[4] = {1, 2, 3, 4}; ap_command(10, 0, stamp, 4);
+		uint64_t frame = (uint64_t)rx->search_frame_us * 40, phase = frame / 2, a = ticks + 2 * frame;
+		width[1] = 4 << 5; resets = engine_resets;
+		ticks = a; irq(5);
+		ticks = a + phase; ap_command(5, 2, width, 3);
+		assert(engine_resets == resets && ((*reg(0x0a1109e0) >> 8) & 7) == 2);
+		ticks = a + frame; irq(5);
+		assert(engine_resets > resets && ((*reg(0x0a1109e0) >> 8) & 7) == 4);
+		assert(!(*reg(0x0a1109e4) >> 24 & 1) && !(*reg(0x0a110cfc) >> 23 & 1) && !(*reg(0x0a110bf8) >> 7 & 1));
+		/* A TTL-3 header handled behind the next IRQ 5 (one poll pass), and
+		 * the TTL-2 one lost: its frame began at the IRQ 5 before. */
+		width[1] = 2 << 5; resets = engine_resets; a = ticks + 2 * frame;
+		ticks = a - frame; irq(5);
+		ticks = a; *reg(0xe0801000u + (5 + 76) * 4) |= 1; ap_command(5, 3, width, 3);
+		assert(engine_resets == resets);
+		ticks = a + frame; irq(5);
+		assert(engine_resets > resets && ((*reg(0x0a1109e0) >> 8) & 7) == 2);
+	}
 	inject_valid = saved_inject; inject_receive = saved_receive;
 
 	/* SET 22: the receiver's bandwidth target (dir RX = 1, code <= 5). */

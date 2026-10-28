@@ -151,6 +151,11 @@ int main(void)
 	assert(ar_dev_command_encode(bw, sizeof bw, 9, &code, 1) == 0);
 	ar_ap_command(&again, bw, sizeof bw, 1300);
 	assert(again.bandwidth_request == 5);
+	/* ... forgotten with the link. */
+	{
+		struct ar_ap w = again;
+		assert(ar_ap_poll(&w, 1300 + c.timeout_ms) == 1 && w.state == AR_AP_IDLE && !w.bandwidth_request);
+	}
 	/* A login never acknowledged is dropped after AR_AP_LOGIN_TIMEOUT_MS,
 	 * reports or not. */
 	{
