@@ -359,7 +359,19 @@ static void ap_receive(const struct ar_mac_frame *frame);
 static uint32_t bw_retry_ms;
 static unsigned bw_code = 2, bw_state, bw_request_pending, bw_settle_step, chain_snr_fresh, bw_target = 2;
 /* The receiver's width policy (dev_width.c): bw_target is what it asks for. */
-static struct ar_width_config bw_policy = {.min = 2, .max = 4, .narrow_mcs = 5,
+/* 40 MHz only where MCS 8 holds: down to 20 under 16 dB (36 x 10^1.6: SNR
+ * register units; MCS 8 leaves at 17), back at 19.5 dB read on 20 MHz (36 x
+ * 10^1.95; 40 MHz reads only ~0.5 dB under 20, so ~19 there: flight
+ * 2026-10-29 40 MHz MCS 8 sent a block again for 1% of frames at 19-20 dB;
+ * 21.5 held a 19-20 dB link at 20 MHz for the whole flight). Flights 2026-10-28 per frame: 40 MHz under
+ * MCS 8 is no faster than 20 at MCS 6 and sends more again (40 MHz MCS 5 /
+ * 6 at 14-16 dB: 9-23% of frames; 20 MHz MCS 6 at 16-18: 3-6%); widened at
+ * 18 dB read on 20 it sat at 40 MHz MCS 3-6. The rows' own 8.3 dB held 40
+ * MHz to the far end. Under 20 MHz straight to 20 once MCS 6 holds, whatever
+ * the SNR (dev_width.c): flight 2026-10-29 read ~15 dB on 5 MHz, 17-18 on 20,
+ * and a relink sat 13 s at 5 MHz waiting for 15.2. */
+static struct ar_width_config bw_policy = {.min = 2, .max = 4, .narrow_mcs = 5, .climb_mcs = 8,
+	.narrow_snr_40 = 1433, .widen_snr_40 = 3209,
 	.narrow_ms = 200, .widen_ms = 1000, .settle_ms = 500};
 /* At 40 MHz no MCS above 8: over it a block in ten or more was sent again at
  * any SNR on the bench (sweep with 0xbac clear, 2026-10-27: MCS 10 2.2 and
@@ -367,8 +379,27 @@ static struct ar_width_config bw_policy = {.min = 2, .max = 4, .narrow_mcs = 5,
  * latency each. The host's ceiling holds under it. */
 #define CEILING_40 (8u + 2u)   /* internal = stock + 2 */
 static unsigned host_ceiling;   /* internal MCS the host asked for (0: none) */
+/* At 20 and 40 MHz MCS 8 down under 17 dB and up from 6 at 18.5 (the rows:
+ * 14.2 and 15.2). Flights 2026-10-28 per frame, MCS 8: at 40 MHz 1-2% of
+ * frames sent a block again at 22-24 dB, 4.5-5% at 18-21, 13% at 16, 25% at
+ * 14; at 20 MHz 4.6% at 18, 12% at 16, 37% at 14 (MCS 6 there 3% at 16, 7% at
+ * 14). The row's own values back on 10 and 5 MHz (no data). */
+#define MCS8_WIDE_DOWN 1805u   /* 36 x 10^1.7 */
+#define MCS8_WIDE_UP 2550u     /* 36 x 10^1.85 */
+static uint16_t mcs8_down, mcs8_up;   /* the row's own values (0: not seen) */
+static void mcs_rows_for_width(void)
+{
+	for (unsigned i = 0; i < dev_mcs.config.count && i < AR_DEV_MCS_ROWS; i++) {
+		struct ar_dev_mcs_row *row = &dev_mcs.config.rows[i];
+		if (row->mcs != CEILING_40) { continue; }
+		if (row->snr_down != MCS8_WIDE_DOWN || row->snr_up != MCS8_WIDE_UP) { mcs8_down = row->snr_down; mcs8_up = row->snr_up; }
+		if (bw_code >= 4) { row->snr_down = MCS8_WIDE_DOWN; row->snr_up = MCS8_WIDE_UP; }
+		else if (mcs8_down) { row->snr_down = mcs8_down; row->snr_up = mcs8_up; }
+	}
+}
 static void apply_ceiling(void)
 {
+	mcs_rows_for_width();
 	unsigned c = host_ceiling;
 #ifndef AR_NO_CEILING_40   /* test builds: every MCS at 40 MHz (how far the link goes) */
 	if (bw_code == 5 && (!c || c > CEILING_40)) { c = CEILING_40; }

@@ -64,6 +64,38 @@ int main(void)
 	capped.min = 3;
 	assert(ar_width_decide(&capped, &s, 2, 2, 10, t) == 3);
 	assert(ar_width_decide(NULL, &s, 4, 12, 9000, 0) == 4 && ar_width_decide(&c, &s, 6, 12, 9000, 0) == 6);
-	puts("DEV width policy: jump to 40 MHz, one step per fade (no cascade), no hold-off, interference guard, bounds passed");
+	/* 40 MHz its own: down to 20 under 571 (not only under 241), back only
+	 * from 2271 read on 20 MHz (1196 would do for 10 -> 20), 4542 on 10. */
+	struct ar_width_config w = c; w.narrow_snr_40 = 571; w.widen_snr_40 = 2271;
+	ar_width_reset(&s); t = 0;
+	assert(run(&w, &s, 5, 8, 600, &t, 3000) == 5);
+	assert(run(&w, &s, 5, 8, 560, &t, 3000) == 4);
+	assert(run(&w, &s, 4, 8, 560, &t, 3000) == 4);        /* 20 MHz: its own 241 */
+	assert(run(&w, &s, 4, 8, 2200, &t, 5000) == 4);       /* under 2271: stays at 20 */
+	assert(run(&w, &s, 4, 8, 2300, &t, 5000) == 5);
+	ar_width_reset(&s); t = 0;
+	assert(run(&w, &s, 3, 8, 3000, &t, 5000) == 4);       /* 10 MHz: 20 yes, 40 not yet */
+	ar_width_reset(&s); t = 0;
+	assert(run(&w, &s, 3, 8, 4600, &t, 5000) == 5);
+	/* Climb: under 20 MHz straight to 20 once MCS 6 (internal 8) holds,
+	 * whatever the SNR (1000: under 1196, no step by the SNR), after the
+	 * settle and widen_ms; not into 40, not under climb_mcs, not past max. */
+	struct ar_width_config k = w; k.climb_mcs = 8;
+	ar_width_reset(&s); t = 0; from = t;
+	assert(run(&w, &s, 2, 8, 1000, &t, 5000) == 2);       /* without it: stays at 5 MHz */
+	ar_width_reset(&s); t = 0; from = t;
+	assert(run(&k, &s, 2, 8, 1000, &t, 5000) == 4 && t - from >= 2500 && t - from < 2600);
+	ar_width_reset(&s); t = 0;
+	assert(run(&k, &s, 3, 7, 1000, &t, 5000) == 3);       /* MCS 5: no climb */
+	ar_width_reset(&s); t = 0;
+	assert(run(&k, &s, 4, 8, 1000, &t, 5000) == 4);       /* at 20: the 40 MHz rule only */
+	ar_width_reset(&s); t = 0;
+	assert(run(&k, &s, 2, 8, 9500, &t, 5000) == 5);       /* a strong SNR (2271 x 4) still goes to 40 */
+	struct ar_width_config k3 = k; k3.max = 3;
+	ar_width_reset(&s); t = 0;
+	assert(run(&k3, &s, 2, 8, 1000, &t, 5000) == 3);      /* capped at 10 */
+	ar_width_reset(&s); t = 0;
+	assert(run(&k, &s, 3, 8, 200, &t, 5000) == 2);        /* weak: narrowing wins */
+	puts("DEV width policy: jump to 40 MHz, one step per fade (no cascade), no hold-off, interference guard, bounds, 40 MHz thresholds, climb to 20 passed");
 	return 0;
 }
