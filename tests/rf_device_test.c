@@ -411,6 +411,11 @@ static void open8030_linked_tests(void)
 	uint8_t standard[4] = {0};
 	ap_command(8, 1, standard, 4); frame_header();
 	assert((*reg(0x0a110a00) & 0xffff) == 0x0da3 && ((*reg(0x0a110b00) >> 18) & 7) == 2);
+	/* Command 8 sub-type 6 (a power request: 18 dBm, down) is no frame
+	 * switch, though its first byte's upper nibble reads as mode 2. */
+	uint8_t power_request[4] = {0x26, 0x21, 0, 0};
+	ap_command(8, 1, power_request, 4); frame_header(); frame_header();
+	assert((*reg(0x0a110a00) & 0xffff) == 0x0da3 && ((*reg(0x0a110b00) >> 18) & 7) == 2);
 
 	/* A frame change must not reset an RX producer whose DMA completion
 	 * has not arrived. The pending change applies after ownership retires. */

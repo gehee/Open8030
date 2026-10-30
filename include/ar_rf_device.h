@@ -465,6 +465,9 @@ uint32_t ar_rf_host_ap_time(void);
 int ar_rf_host_registers(unsigned offset, unsigned length, uint8_t output[256]);
 typedef void (*ar_rf_event_callback)(unsigned id, const uint8_t *data, size_t length, void *context);
 void ar_rf_set_event_callback(ar_rf_event_callback callback, void *context);
+/* Event 14 with the TX power as it is now: our own, and on a DEV the AP's
+ * as it last announced it (each only if known). */
+void ar_rf_power_events(void);
 void ar_rf_poll(void);
 int ar_rf_read_registers(unsigned offset, unsigned length, uint8_t *output);
 struct ar_power_config;

@@ -8,7 +8,9 @@ void ar_events_init(struct ar_events *events) { memset(events, 0, sizeof *events
 
 size_t ar_event_size(unsigned id)
 {
-	static const uint16_t sizes[] = {3, 4, 4, 322, 0, 0, 256, 4, 1024, 12, 1024, 1024, 4, 136};
+	/* 14 is ours: TX power {slot, 0 the peer's (announced) / 1 our own,
+	 * dBm now, dBm before; 0 = not known}. */
+	static const uint16_t sizes[] = {3, 4, 4, 322, 0, 0, 256, 4, 1024, 12, 1024, 1024, 4, 136, 4};
 	return id < sizeof sizes / sizeof sizes[0] ? sizes[id] : 0;
 }
 

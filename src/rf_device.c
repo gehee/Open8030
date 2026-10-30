@@ -17,6 +17,7 @@
 #include "ar_command.h"
 #include "ar_scan.h"
 #include "ar_scan_scores.h"
+#include "ar_pwr_auto.h"
 #include "ar_tune.h"
 #include "ar_power_control.h"
 #include "ar_tx_mcs.h"
@@ -169,6 +170,19 @@ static uint8_t ap_hop_evaluate, ap_chan_hop_auto;
 static uint8_t ap_auto_from, ap_auto_hopping, ap_measured_start;
 static uint32_t ap_blind_ms, ap_auto_hop_ms;
 static uint32_t ap_frame_deadline_ms;
+/* Automatic TX power (ar_pwr_auto): the DEV asks the AP for its video
+ * power from how it hears it (SET 9 {1, max, min} turns that on); the AP
+ * applies such requests inside its host's range (SET 9 {2, max, min}, min
+ * below max), and goes back to max when the link drops. A request arrives
+ * in every header until its TTL runs out: applied once, at the last. */
+static struct ar_pwr_auto pwr_auto;
+static uint8_t pwr_auto_ready, ap_pwr_min, ap_pwr_max, ap_pwr_announce, dev_peer_dbm;
+static uint32_t ap_pwr_pending, ap_pwr_deadline_ms;
+static struct ar_pwr_auto *pwr_auto_context(void)
+{
+	if (!pwr_auto_ready) { ar_pwr_auto_init(&pwr_auto); pwr_auto_ready = 1; }
+	return &pwr_auto;
+}
 static void ap_apply_frame_mode(unsigned mode);
 static void ap_trace_mark(unsigned source, uint32_t a, uint32_t b, uint32_t c);
 /* The broadcast's HARQ, as a DEV runs its own (0x22c6ec): the packet IDs the
@@ -272,6 +286,7 @@ static uint32_t ap_uplink_mcs_ms;
 #define AP_UPLINK_MCS_MS 100
 static void ap_apply_bandwidth(unsigned code);
 static int apply_power(unsigned user, unsigned level);
+static uint8_t power_level[AR_POWER_USERS];   /* defined with the power state below */
 static void ap_set_mcs(unsigned mcs);
 static uint32_t ap_sweep_us;
 /* Test builds: the same interrupt trace on a DEV, frozen 140 interrupts after
@@ -990,7 +1005,7 @@ static void dev_command_done(unsigned command, const uint8_t *payload)
 	if (command == 4) {
 		unsigned index = payload[1] | (unsigned)payload[2] << 8;
 		if (retune_channel(index, 0, 1)) { chan_info.rejected++; }
-	} else if (command == 8) {
+	} else if (command == 8 && !(payload[0] & 15)) {   /* sub-type 0: the frame mode */
 		frame_pending = 0x80 | ((payload[0] >> 4) & 7);   /* at the next frame header */
 	}
 }
@@ -1322,6 +1337,28 @@ static void sync_tx_mcs(const uint8_t control[7])
 	if (u->active) { tx_mcs_info.downgrades++; }
 	else { tx_mcs_applied(mcs); }
 }
+/* The AP's TX power as it announced it (0: not known, the link down):
+ * event 14 on a change, and the power loop steps from it. */
+static void dev_peer_power(uint8_t dbm)
+{
+	if (dbm) { ar_pwr_auto_peer(pwr_auto_context(), dbm); }
+	if (dbm == dev_peer_dbm) { return; }
+	const uint8_t data[] = {0, 0, dbm, dev_peer_dbm};
+	dev_peer_dbm = dbm;
+	publish_event(14, data, sizeof data);
+}
+void ar_rf_power_events(void)
+{
+	const unsigned own = power_level[ap_role ? 8 : 0];
+	if (own != 0xff) {
+		const uint8_t data[] = {0, 1, (uint8_t)own, (uint8_t)own};
+		publish_event(14, data, sizeof data);
+	}
+	if (!ap_role && dev_peer_dbm) {
+		const uint8_t data[] = {0, 0, dev_peer_dbm, dev_peer_dbm};
+		publish_event(14, data, sizeof data);
+	}
+}
 static void sync_apply(void)
 {
 	const uint8_t *control = sync_info.last_control;
@@ -1330,6 +1367,15 @@ static void sync_apply(void)
 	if (receive_operation >= 72 && (control[1] & 15) == 5) { sync_bandwidth(control); return; }
 	if (receive_operation >= 72 && (control[1] & 15) == 4) { sync_channel(control); return; }
 	if (receive_operation >= 72 && (control[1] & 15) == 8) {
+		/* The sync message: sub-type 0 the frame mode; others (6, a power
+		 * request from an AP, which this DEV does not take) are no frame. */
+		if ((control[3] & 15) == AR_PWR_AUTO_ANNOUNCE) {
+			uint8_t dbm;
+			uint32_t word = control[3] | (uint32_t)control[4] << 8 | (uint32_t)control[5] << 16 | (uint32_t)control[6] << 24;
+			if (!ar_pwr_auto_parse_announce(word, &dbm)) { dev_peer_power(dbm); }
+			return;
+		}
+		if (control[3] & 15) { sync_info.unsupported++; return; }
 		frame_info.from_ap++; frame_pending = 0x80 | ((control[3] >> 4) & 7); return;
 	}
 	if ((control[1] & 15) != 6) { sync_info.unsupported++; return; }
@@ -2156,21 +2202,6 @@ static void dev_mcs_apply(unsigned action)
 	}
 }
 
-/* The SNR register's halfword in dB x 10 (100 log10(x / 36); log2 from the top
- * bit and a 16-step table of log2(1 + i/16) x 1024, interpolated: within
- * 0.05 dB). */
-static int snr_db10(uint32_t raw)
-{
-	static const uint16_t frac[17] = {0, 90, 174, 254, 330, 402, 470, 536, 599, 659, 717, 773,
-		827, 879, 929, 977, 1024};
-	if (!raw) { return -1000; }
-	unsigned top = 31u - (unsigned)__builtin_clz(raw);
-	uint32_t m = top >= 12 ? raw >> (top - 12) : raw << (12 - top);
-	unsigned i = (m >> 8) & 15, rest = m & 255;
-	uint32_t log2_1024 = top * 1024u + frac[i] + ((uint32_t)(frac[i + 1] - frac[i]) * rest >> 8);
-	return (int)((log2_1024 * 30103u / 1024u + 500u) / 1000u) - 156;
-}
-
 static void dev_measure_eop(uint32_t status)
 {
 	/* 0x2210cc maps raw user9 to logical8; each FCH clears the EOP guard.
@@ -2227,7 +2258,7 @@ static void dev_measure_eop(uint32_t status)
 			for (uint32_t f = fq_newest + 1; f != n && f - fq_newest <= 256; f++) { fq_word[f & 255] = 0; }
 		}
 		if (!fq_have || (int32_t)(n - fq_newest) >= 0) {
-			int db10 = snr_db10((uint16_t)phy.raw_snr); if (db10 < 0) { db10 = 0; }
+			int db10 = ar_pwr_auto_db10((uint16_t)phy.raw_snr); if (db10 < 0) { db10 = 0; }
 			const unsigned q = (unsigned)db10 * 4 / 10 > 254 ? 254u : (unsigned)db10 * 4 / 10;
 			const unsigned mcs = dev_mcs.current < dev_mcs.config.count ? dev_mcs.config.rows[dev_mcs.current].mcs & 15 : 0;
 			fq_word[n & 255] = q | (uint32_t)phy.sample[6] << 8 | (uint32_t)phy.sample[7] << 16 | mcs << 24 |
@@ -2262,6 +2293,16 @@ static void dev_measure_eop(uint32_t status)
 			dev_mcs.ready = dev_mcs.index = dev_mcs.direction = 0;
 		} else {
 			dev_mcs_apply(ar_dev_mcs_sample(dev_mcs_context(), now_ms, policy_snr, policy_errors));
+			/* The air unit's power, from the same record. A busy control
+			 * slot (an MCS request, a hop, a frame switch): the next record
+			 * asks again. */
+			uint8_t target, direction;
+			if (receiver.dev_state == 2 && ar_pwr_auto_record(pwr_auto_context(), now_ms, policy_errors != 0,
+			    policy_snr, phy.sample[6], phy.sample[7], &target, &direction)) {
+				uint32_t word = ar_pwr_auto_word(target, direction, (uint8_t)(receiver.assigned_slot & 15));
+				const uint8_t bytes[4] = {(uint8_t)word, (uint8_t)(word >> 8), (uint8_t)(word >> 16), (uint8_t)(word >> 24)};
+				if (!dev_command_request(8, 2, bytes, 4)) { ar_pwr_auto_sent(&pwr_auto, target, direction); }
+			}
 		}
 		if (!mcs_info.first_request_ms && dev_mcs.requests) { mcs_info.first_request_ms = dev_mcs.request_ms; }
 	}
@@ -2311,6 +2352,8 @@ static void dev_invalidate(void)
 		recovery.invalidations++; request_recovery(2); return;
 	}
 	if (receive_operation >= 67) { dev_mcs_apply(ar_dev_mcs_connect(dev_mcs_context(), 0)); }
+	ar_pwr_auto_reset(pwr_auto_context());
+	dev_peer_power(0);
 	ar_frame_stamp_reset(&fstamp); retry_link = 0;
 	field(0x8000201, 1); field(0xcf41501, 0);
 	link_event(0, receiver.dev_state);
@@ -2483,6 +2526,7 @@ static void dev_observe_lock(const struct ar_dev_control *control)
 		ar_binding_complete(&binding, login.slot, receiver.accepted_peer, sample);
 	}
 	if (receive_operation >= 67) { dev_mcs_apply(ar_dev_mcs_connect(dev_mcs_context(), 1)); }
+	ar_pwr_auto_reset(pwr_auto_context());
 	ar_frame_stamp_reset(&fstamp); retry_link = 0;
 }
 
@@ -2765,6 +2809,7 @@ static void ap_link_changed(unsigned previous)
 	if (now == AR_AP_LOGIN && !ap_trace.freeze_at) { ap_trace.freeze_at = ap_trace.head + 120; }
 	if (now == AR_AP_CONNECTED) {
 		ap_link_stamps = phy_control.stamps;
+		ap_pwr_announce = 1;   /* the ground learns our TX power */
 		/* Binding: the ground that logged in is the pairing result (GET 1). */
 		if (binding.enabled) { ar_binding_complete(&binding, 0, ap_link.ground, NULL); }
 		/* Stock after login: command 3 (TTL 31) asks for the ground's
@@ -2818,6 +2863,9 @@ static void ap_link_changed(unsigned previous)
 		if (ap_bw_code != 2) { ap_bw_at_sweep = 0x80 | 2; }
 		ap_frame_pending = 0;
 		if (ap_frame_mode) { ap_frame_at_sweep = 0x80; }   /* a new link starts on the standard frame */
+		/* Automatic power: back to the host's maximum for the next link. */
+		ap_pwr_pending = 0;
+		if (ap_pwr_min < ap_pwr_max && power_level[8] != 0xff && power_level[8] != ap_pwr_max) { (void)apply_power(8, ap_pwr_max); }
 		ap_set_mcs(ap_init_mcs);
 		if (previous == AR_AP_CONNECTED) { link_event(0, 2); }
 	}
@@ -3395,6 +3443,18 @@ static void ap_apply_frame_mode(unsigned mode)
 	ap_rx_end_us = (mode == 2 ? 1251 : 2234) + 66;
 	ap_info.frame_mode = mode; ap_info.frame_switches++; ap_info.frame_us = ap_frame_us;
 }
+/* A power request from the ground (command 8 sub-type 6), inside the
+ * host's range; none without one. */
+static void ap_power_request(uint32_t word)
+{
+	uint8_t target, direction, slot;
+	if (ar_pwr_auto_parse(word, &target, &direction, &slot) || slot) { return; }
+	uint8_t current = power_level[8] != 0xff ? power_level[8] : ap_pwr_max;
+	uint8_t next = ar_pwr_auto_apply(current, target, direction, ap_pwr_min, ap_pwr_max);
+	/* Nothing to change (at an end of our range): say where we are, so the
+	 * ground steps from there and not from what it asked for. */
+	if (next) { (void)apply_power(8, next); } else { ap_pwr_announce = 1; }
+}
 /* A PHY message from the ground's slot header. Command 3 asks for the
  * broadcast MCS ([slot, mcs | 0xc0], TTL 31); the ground stops asking once it
  * sees that MCS in our headers. */
@@ -3422,7 +3482,17 @@ static void ap_phy_received(const uint8_t control[7])
 			ap_chan_deadline_ms = elapsed_ms() + (life - 1) * ap_frame_us / 1000 + 4;
 		}
 	}
-	if (command == 8 && length == 4 && !(control[6] & 12)) {
+	/* Command 8 sub-type 6: the ground asks for our TX power (ar_pwr_auto). */
+	if (command == 8 && length == 4 && (control[3] & 15) == AR_PWR_AUTO_SUBTYPE) {
+		uint32_t word = control[3] | (uint32_t)control[4] << 8 | (uint32_t)control[5] << 16 | (uint32_t)control[6] << 24;
+		unsigned life = control[1] >> 4 | (control[2] & 1) << 4;
+		if (life <= 1) { ap_pwr_pending = 0; ap_power_request(word); }
+		else if (!ap_pwr_pending) {
+			ap_pwr_pending = word;
+			ap_pwr_deadline_ms = elapsed_ms() + (life - 1) * ap_frame_us / 1000 + 4;
+		}
+	}
+	if (command == 8 && length == 4 && !(control[6] & 12) && !(control[3] & 15)) {
 		unsigned mode = control[3] >> 4 | (control[4] & 15) << 4;
 		unsigned life = control[1] >> 4 | (control[2] & 1) << 4;
 		ap_info.frame_requests++;
@@ -3504,6 +3574,13 @@ static void ap_poll(void)
 			ap_identity_pending = 0; ap_info.phy_sent++;
 		}
 	}
+	/* Our TX power to the ground (at link-up and each change), when the
+	 * block is free. */
+	if (ap_pwr_announce && ap_link.state == AR_AP_CONNECTED && power_level[8] != 0xff) {
+		uint32_t word = ar_pwr_auto_announce_word(power_level[8]);
+		const uint8_t bytes[4] = {(uint8_t)word, (uint8_t)(word >> 8), 0, 0};
+		if (!ar_phy_control_enqueue(&phy_control, 8, 5, bytes, 4, &phy_ops, NULL)) { ap_pwr_announce = 0; ap_info.phy_sent++; }
+	}
 	/* The host's channel its SET 6 could not send (block busy): the same. */
 	if (ap_chan_host_pending && ap_link.state == AR_AP_CONNECTED && !ap_chan_hop &&
 	    !ap_hop_start(ap_chan_host_pending & 0xffff, 0)) {
@@ -3511,6 +3588,9 @@ static void ap_poll(void)
 	}
 	if (ap_frame_pending && (int32_t)(elapsed_ms() - ap_frame_deadline_ms) >= 0) {
 		ap_frame_at_sweep = ap_frame_pending; ap_frame_pending = 0;
+	}
+	if (ap_pwr_pending && (int32_t)(elapsed_ms() - ap_pwr_deadline_ms) >= 0) {
+		uint32_t word = ap_pwr_pending; ap_pwr_pending = 0; ap_power_request(word);
 	}
 	if (ap_chan_pending && (int32_t)(elapsed_ms() - ap_chan_deadline_ms) >= 0) {
 		ap_chan_at_sweep = ap_chan_pending; ap_chan_pending = 0;
@@ -5473,7 +5553,14 @@ static int apply_power(unsigned user, unsigned level)
 	int result = ar_power_plan(&power_cfg, user, level, &plan);
 	if (result) { return result; }
 	for (unsigned i = 0; i < plan.count; i++) { field(plan.writes[i].field, plan.writes[i].value); }
+	uint8_t before = power_level[user];
 	power_level[user] = (uint8_t)level;
+	/* Event 14 for the user we transmit on; an AP also announces it. */
+	if (user == (ap_role ? 8u : 0u) && before != level) {
+		const uint8_t data[] = {0, 1, (uint8_t)level, before != 0xff ? before : 0};
+		publish_event(14, data, sizeof data);
+		if (ap_role) { ap_pwr_announce = 1; }
+	}
 	return 0;
 }
 static void reapply_power(unsigned user)
@@ -5599,6 +5686,13 @@ int ar_rf_host_power(uint32_t reqid, const uint8_t *in, size_t length, uint8_t *
 		if (length < 3 || in[0] > 3) { return -22; }
 		if ((in[0] == 1 || in[0] == 2) && (in[2] < 9 || in[1] > 39 || in[2] > in[1])) { return -22; }
 		memcpy(power_auto, in, 3);
+		/* Automatic power: a DEV asks for the AP's power in mode 1 (off in
+		 * 0); an AP takes requests inside a mode-2 range. */
+		if (!ap_role && in[0] <= 1) { (void)ar_pwr_auto_set_range(pwr_auto_context(), in[0], in[1], in[2]); }
+		if (ap_role && in[0] == 2) { ap_pwr_max = in[1]; ap_pwr_min = in[2]; }
+		/* A DEV's mode 1 is the window it asks the AP's power in (the AP's
+		 * own levels), not its own power: a host sets that with SET 8. */
+		if (!ap_role && in[0] == 1) { return 0; }
 		return in[0] == 1 || in[0] == 2 ? apply_power(ap_role ? 8 : 0, in[1]) : 0;
 	case 0x01000007:
 		out[0] = power_cfg.closed[0] | power_cfg.closed[1] << 1; *out_length = 1; return 0;

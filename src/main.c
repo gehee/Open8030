@@ -387,7 +387,11 @@ static void receive(const struct ar_frame *frame, void *context)
 	}
 	if (ar_event_request(&events, frame, &socket_response)) {
 		size_t size = ar_encode(reply, sizeof reply, &socket_response);
-		(void)bus->send(reply, size); return;
+		(void)bus->send(reply, size);
+		/* A subscription to event 14 (TX power) gets the state as it is:
+		 * a host that came up after the last change learns it at once. */
+		if (frame->reqid == UINT32_C(0x0301000e) && !socket_response.status) { ar_rf_power_events(); }
+		return;
 	}
 	if (frame->reqid == UINT32_C(0x02000064)) {
 		/* SET 100: baseband register write, the mirror of GET 100: u16
