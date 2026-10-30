@@ -33,12 +33,12 @@ static void write_request(struct ar_socket_rx *sockets, struct ar_socket_rx_port
 	uint32_t length = request->length - 8, count = length;
 	if (position != state->position) {
 		response->status = -264; count = (uint32_t)state->position; sockets->tx_out_of_order++;
-	} else if (state->pending_count == AR_SOCKET_TX_PENDING) {
+	} else if (state->pending_count >= state->pending_max) {
 		response->status = -263; sockets->tx_full++;
 	} else {
 		sockets->tx_writes++; sockets->tx_write_bytes += length;
 		struct ar_socket_write *write = &state->pending[
-			(state->pending_head + state->pending_count) % AR_SOCKET_TX_PENDING];
+			(state->pending_head + state->pending_count) % state->pending_max];
 		write->position = position; write->length = length; write->copied = 0;
 		write->active = write->cancelled = 0;
 		if (length) { ar_copy(write->bytes, request->payload + 8, length); }
@@ -56,14 +56,29 @@ static void write_request(struct ar_socket_rx *sockets, struct ar_socket_rx_port
 
 void ar_socket_rx_init(struct ar_socket_rx *sockets)
 {
-	if (sockets) { memset(sockets, 0, sizeof *sockets); }
+	if (!sockets) { return; }
+	memset(sockets, 0, sizeof *sockets);
+	for (unsigned port = 0, small = 0; port < AR_SOCKET_RX_PORTS; port++) {
+		struct ar_socket_rx_port *state = &sockets->ports[port];
+		if (port == AR_SOCKET_BIG_PORT) {
+			state->bytes = sockets->big_rx; state->tx_bytes = sockets->big_tx; state->pending = sockets->big_pending;
+			state->rx_max = AR_SOCKET_RX_CAPACITY; state->tx_max = AR_SOCKET_TX_CAPACITY;
+			state->pending_max = AR_SOCKET_TX_PENDING;
+		} else {
+			state->bytes = sockets->small_rx[small]; state->tx_bytes = sockets->small_tx[small];
+			state->pending = sockets->small_pending[small];
+			state->rx_max = AR_SOCKET_SMALL_RX_CAPACITY; state->tx_max = AR_SOCKET_SMALL_TX_CAPACITY;
+			state->pending_max = AR_SOCKET_SMALL_TX_PENDING;
+			small++;
+		}
+	}
 }
 
 static void reset_port(struct ar_socket_rx_port *state)
 {
 	/* Clearing the large data buffers here stalls RF/SDIO polling during
 	 * repeated open/close. Queue extents and positions control their lifetime. */
-	memset(state, 0, offsetof(struct ar_socket_rx_port, bytes));
+	memset(state, 0, offsetof(struct ar_socket_rx_port, rx_max));
 }
 
 static void open_error(struct ar_socket_rx *sockets, struct ar_frame *response, int32_t error)
@@ -121,12 +136,12 @@ int ar_socket_rx_request(struct ar_socket_rx *sockets, const struct ar_frame *re
 	if (flags != 1 && flags != 2 && flags != 3 && flags != 0x21 && flags != 0x22 && flags != 0x23) {
 		response->status = AR_STATUS_UNSUPPORTED; return 1;
 	}
-	if ((flags & 0x22) == 0x22 && tx_capacity) { tx_capacity = AR_SOCKET_TX_CAPACITY; }
+	if ((flags & 0x22) == 0x22 && tx_capacity) { tx_capacity = state->tx_max; }
 	if (((flags & 1) && !capacity) || ((flags & 2) && !tx_capacity)) {
 		open_error(sockets, response, -6); return 1;
 	}
-	if (((flags & 1) && capacity > AR_SOCKET_RX_CAPACITY) ||
-	    ((flags & 2) && tx_capacity > AR_SOCKET_TX_CAPACITY)) {
+	if (((flags & 1) && capacity > state->rx_max) ||
+	    ((flags & 2) && tx_capacity > state->tx_max)) {
 		open_error(sockets, response, -3); return 1;
 	}
 	reset_port(state);
@@ -154,7 +169,7 @@ int ar_socket_rx_ring_info(const struct ar_socket_rx *sockets, const uint8_t *in
 		if (!(state->flags & 2)) { continue; }
 		uint32_t queued = state->tx_used;
 		for (unsigned i = 0; i < state->pending_count; i++) {
-			const struct ar_socket_write *write = &state->pending[(state->pending_head + i) % AR_SOCKET_TX_PENDING];
+			const struct ar_socket_write *write = &state->pending[(state->pending_head + i) % state->pending_max];
 			if (!write->cancelled) { queued += write->length - write->copied; }
 		}
 		uint8_t *entry = out + 8 + port * 0x50;
@@ -278,7 +293,7 @@ void ar_socket_tx_complete(struct ar_socket_rx *sockets, const struct ar_frame *
 	if (!write->active || (!write->cancelled && write->copied != write->length) ||
 	    write->position != le64(frame->payload) ||
 	    frame->status != (write->cancelled ? -10 : (write->length ? (int32_t)write->length : -7))) { return; }
-	state->pending_head = (state->pending_head + 1) % AR_SOCKET_TX_PENDING;
+	state->pending_head = (state->pending_head + 1) % state->pending_max;
 	state->pending_count--; state->completed++;
 	sockets->next_completion = (port + 1) % AR_SOCKET_RX_PORTS;
 }

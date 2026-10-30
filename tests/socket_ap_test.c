@@ -58,6 +58,24 @@ int main(void)
 	position(5 * payload); memset(input + 8, 0x77, payload);
 	assert(ar_socket_rx_request(&sockets, &request, &reply) == 1 && reply.status == -262);
 	assert(sockets.ports[3].position == 6 * payload && !sockets.tx_out_of_order);
-	puts("AP five-write admission, completion order, payload integrity and ring reuse passed");
+	/* The other ports are small on an air unit: kestrel-air's control port
+	 * (2: retained TX, two in flight, 2 KB in) gets a 4 KB ring and takes two
+	 * writes, the third is -263; a port asking more than its 8 KB in is -3. */
+	assert(sockets.ports[3].tx_capacity == AR_SOCKET_TX_CAPACITY);
+	uint8_t control[12] = {0x23, 0, 0, 0, 2, 0, 0, 0, 0, 8, 0, 0};
+	request = (struct ar_frame){.reqid = 0x04000002, .msgid = 43, .payload = control, .length = sizeof control};
+	assert(ar_socket_rx_request(&sockets, &request, &reply) == 1 && !reply.status);
+	assert(sockets.ports[2].tx_capacity == AR_SOCKET_SMALL_TX_CAPACITY && sockets.ports[2].capacity == 0x800);
+	request.reqid = 0x04010002; request.payload = input; request.length = 8 + 100;
+	for (unsigned i = 0; i < 3; i++) {
+		position(i * 100);
+		assert(ar_socket_rx_request(&sockets, &request, &reply) == 1);
+		assert(reply.status == (i < AR_SOCKET_SMALL_TX_PENDING ? -262 : -263));
+	}
+	uint8_t big_in[12] = {1, 0, 0, 0, 0, 0, 0, 0, 0, 0x40, 0, 0};   /* 16 KB in */
+	request = (struct ar_frame){.reqid = 0x04000000, .msgid = 44, .payload = big_in, .length = sizeof big_in};
+	assert(ar_socket_rx_request(&sockets, &request, &reply) == 1 && reply.status);
+	assert(sizeof sockets < 200000);   /* was 353 KB with four full-size ports */
+	puts("AP five-write admission, completion order, payload integrity, ring reuse and small side ports passed");
 	return 0;
 }

@@ -18,6 +18,16 @@
 #define AR_SOCKET_TX_CAPACITY 4096u
 #define AR_SOCKET_TX_PENDING 2u
 #endif
+/* The video port gets the sizes above; the others get small rings. On an
+ * air unit kestrel-air opens only video (3, five writes in flight) and its
+ * control port (2: 2 KB in, two writes in flight); four full-size air ports
+ * were 353 KB, half the RAM. On a ground kestrel-gnd opens video (3, 56 KB
+ * in) and its control/MSP port (2, 2 KB in); the three other 56 KB RX rings
+ * were 165 KB (8 KB each now). */
+#define AR_SOCKET_BIG_PORT 3u
+#define AR_SOCKET_SMALL_RX_CAPACITY 8192u
+#define AR_SOCKET_SMALL_TX_CAPACITY 4096u
+#define AR_SOCKET_SMALL_TX_PENDING 2u
 struct ar_socket_write {
 	uint8_t bytes[AR_MAX_PAYLOAD - 8];
 	uint64_t position;
@@ -35,10 +45,11 @@ struct ar_socket_rx_port {
 	uint32_t closing, close_msgid;
 	/* Queue metadata above can be reset without clearing payload storage in
 	 * the time-sensitive polling loop. Every newly admitted write initializes
-	 * its own pending metadata; empty queues expose none of the old bytes. */
-	uint8_t bytes[AR_SOCKET_RX_CAPACITY];
-	uint8_t tx_bytes[AR_SOCKET_TX_CAPACITY];
-	struct ar_socket_write pending[AR_SOCKET_TX_PENDING];
+	 * its own pending metadata; empty queues expose none of the old bytes.
+	 * The port's storage and its sizes (set at init, kept over a reset). */
+	uint32_t rx_max, tx_max, pending_max;
+	uint8_t *bytes, *tx_bytes;
+	struct ar_socket_write *pending;
 };
 struct ar_socket_close_info {
 	uint32_t requested, cleaned, replied, cancelled;
@@ -52,6 +63,12 @@ struct ar_socket_rx {
 	uint32_t tx_writes, tx_write_bytes, tx_full, tx_out_of_order, tx_completed, tx_peak;
 	uint8_t error_payload[16];
 	struct ar_socket_close_info close_info;
+	/* The ports' storage: the video port's, and the others' (small on an air unit). */
+	uint8_t big_rx[AR_SOCKET_RX_CAPACITY], big_tx[AR_SOCKET_TX_CAPACITY];
+	struct ar_socket_write big_pending[AR_SOCKET_TX_PENDING];
+	uint8_t small_rx[AR_SOCKET_RX_PORTS - 1][AR_SOCKET_SMALL_RX_CAPACITY];
+	uint8_t small_tx[AR_SOCKET_RX_PORTS - 1][AR_SOCKET_SMALL_TX_CAPACITY];
+	struct ar_socket_write small_pending[AR_SOCKET_RX_PORTS - 1][AR_SOCKET_SMALL_TX_PENDING];
 };
 void ar_socket_rx_init(struct ar_socket_rx *sockets);
 /* GET 0x11 (stock 0x219d9a): [0] a bitmap of the open ports, then from 8 a

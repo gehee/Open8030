@@ -54,9 +54,9 @@ static void transmit_contract(void)
 {
 	ar_socket_rx_init(&sockets);
 	assert(send_bytes(0, input, 1) == -260);
-	configure(3, 56320); options[4] = 5;
+	configure(3, AR_SOCKET_SMALL_RX_CAPACITY); options[4] = 5;   /* port 2: a side port, small */
 	assert(command(0, 0, 2, 0x99991234, 12) == 0);
-	assert(sockets.ports[2].capacity == 56320 && sockets.ports[2].tx_capacity == 5);
+	assert(sockets.ports[2].capacity == AR_SOCKET_SMALL_RX_CAPACITY && sockets.ports[2].tx_capacity == 5);
 	assert(command(0, 0, 2, 11, 12) == 257);
 	/* Exercise carry without allocating/sending four gigabytes. */
 	uint64_t position = UINT64_C(0xfffffffa);
@@ -121,7 +121,7 @@ static void transmit_contract(void)
 	/* Writes stay isolated and MAC scheduling is round-robin, independent of
 	 * completion order. Each open ID is retained at the endpoint. */
 	ar_socket_rx_init(&sockets);
-	configure(3, 56320); options[4] = 32;
+	configure(3, AR_SOCKET_SMALL_RX_CAPACITY); options[4] = 32;   /* every port takes the small size */
 	for (unsigned i = 0; i < 4; i++) {
 		assert(command(0, 0, i, 100 + i, 12) == 0);
 		uint8_t body[9] = {0}; body[8] = i + 10;
@@ -336,7 +336,7 @@ int main(void)
 	configure(1, 0); assert(command(0, 0, 3, 1, 12) == -259);
 	configure(1, AR_SOCKET_RX_CAPACITY + 1); assert(command(0, 0, 3, 1, 12) == -259 && response.payload[0] == 253);
 	/* All host ports map to MAC port+1, are isolated, and drain fairly. */
-	configure(0x21, AR_SOCKET_RX_CAPACITY);
+	configure(0x21, AR_SOCKET_SMALL_RX_CAPACITY);   /* every port takes the small size */
 	for (unsigned port = 0; port < 4; port++) {
 		assert(command(0, 0, port, port + 20, 12) == 0);
 		assert(ar_socket_rx_feed(&sockets, 0, port + 1, input + port, 4100) == 4100);
@@ -350,7 +350,7 @@ int main(void)
 			ar_socket_rx_commit(&sockets, &frame);
 		}
 	}
-	assert(ar_socket_rx_feed(&sockets, 0, 4, input, sizeof input) == AR_SOCKET_RX_CAPACITY);
+	assert(ar_socket_rx_feed(&sockets, 0, 4, input, sizeof input) == AR_SOCKET_SMALL_RX_CAPACITY);   /* opened at the small size above */
 	assert(command(3, 0, 3, 10, 0) == 0);
 	assert(command(0, 0, 3, 44, 12) == 0);
 	assert(!ar_socket_rx_peek(&sockets, scratch, sizeof scratch, &frame)); /* No stale bytes after reopen. */
