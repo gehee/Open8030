@@ -1003,8 +1003,11 @@ static void dev_command_done(unsigned command, const uint8_t *payload)
 	if (dev_cmd.state != 2 || command != dev_cmd.command) { return; }
 	dev_cmd.state = 0;
 	if (command == 4) {
+		/* Our own hop: our uplink TX too, as the AP's 0x40 moves it - with
+		 * the receiver alone the AP stopped hearing us on the new channel
+		 * and the link dropped (re-formed ~1.4 s later, bench 2026-10-26). */
 		unsigned index = payload[1] | (unsigned)payload[2] << 8;
-		if (retune_channel(index, 0, 1)) { chan_info.rejected++; }
+		if (retune_channel(index, 0, 0) || retune_channel(index, 0, 1)) { chan_info.rejected++; }
 	} else if (command == 8 && !(payload[0] & 15)) {   /* sub-type 0: the frame mode */
 		frame_pending = 0x80 | ((payload[0] >> 4) & 7);   /* at the next frame header */
 	}
@@ -3032,11 +3035,15 @@ int ar_rf_host_uplink_mcs_range(const uint8_t *in, size_t length)
 	ap_up_build();
 	return 0;
 }
-/* Our command 4 [0x80 | slot 0, index] (TTL 16): the ground hops as it
- * receives the last TTL, we at the IRQ 5 after the expiry. */
+/* Our command 4 [0x70, index] (TTL 16): the ground hops as it receives the
+ * last TTL, we at the IRQ 5 after the expiry. From an AP the flags say what
+ * the DEV moves (sync_channel): 0x40 its slot TX, 0x10 its broadcast TX,
+ * 0x20 its broadcast RX - all three, the whole link. 0x80 (what a DEV sends
+ * for its own hop) moves nothing on a mode-0 DEV: with it the ground stayed
+ * and lost the link at every host or automatic hop. */
 static int ap_hop_start(unsigned index, unsigned automatic)
 {
-	const uint8_t hop[3] = {0x80, (uint8_t)index, (uint8_t)(index >> 8)};
+	const uint8_t hop[3] = {0x70, (uint8_t)index, (uint8_t)(index >> 8)};
 	if (ar_phy_control_enqueue(&phy_control, 4, 16, hop, 3, &phy_ops, NULL)) { return -16; }
 	ap_chan_hop = 0x10000 | index; ap_chan_hop_auto = (uint8_t)automatic; ap_info.phy_sent++;
 	return 0;

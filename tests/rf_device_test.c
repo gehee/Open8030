@@ -316,11 +316,15 @@ static void open8030_linked_tests(void)
 	hop[1] = (uint8_t)rx->channel_index; assert(!ar_rf_host_channel_set(6, hop, 2)); /* already there */
 	unsigned from = rx->channel_index, to = from ? 0 : 1;
 	hop[1] = (uint8_t)to;
+	const uint32_t uplink_before = *reg(0x0a110910);
 	assert(!ar_rf_host_channel_set(6, hop, 2));
 	assert(ar_rf_host_channel_set(6, hop, 2) == -16);   /* one at a time */
 	for (unsigned f = 0; f < 40 && rx->channel_index != to; f++) { uplink_frame(); }
 	assert(rx->channel_index == to && channel_events && channel_event[2] == to && channel_event[3] == from);
 	assert(rx->dev_state == 2);
+	/* ... our uplink TX (PLL 0x910) with it: the AP listens for us on the
+	 * new channel and advertises it as our return channel. */
+	assert(*reg(0x0a110910) != uplink_before);
 
 	/* An AP uplink-only move must preserve the downlink PLL and channel. */
 	uint32_t downlink = *reg(0x0a110904), downlink_tail = *reg(0x0a110908);
