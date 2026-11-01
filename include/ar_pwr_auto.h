@@ -43,6 +43,8 @@ struct ar_pwr_auto_policy {
 	uint8_t clean_dbm;           /* the ceiling is flat up to this power */
 	int16_t ceiling_db10;        /* the ceiling there, dB x 10 */
 	uint8_t ceiling_slope_db10;  /* how much lower per dB above it, dB x 10 */
+	uint8_t knee_dbm;            /* past this power the ceiling falls faster */
+	uint8_t knee_slope_db10;     /* how much lower per dB above the knee, dB x 10 */
 	uint8_t down_step;           /* the most a request takes off, dB */
 	uint8_t up_step;             /* the most a request adds, dB */
 	uint16_t down_ms, overload_ms;
@@ -138,9 +140,17 @@ int ar_pwr_auto_db10(uint32_t raw);
  * 2026-10-29: 19.5 dB at 26 dBm, 23 at 22, at the same received level).
  * CHANGE TOGETHER with the air unit's front end (another board, another
  * amplifier): re-measure with kestrel-air's pwr= bench knob. */
+/* Flight 2026-11-01 (Lite+, armed, 10-40 m, gain 45-75): 19.1 dB at 26 dBm
+ * on 20 MHz and 20.6 on 40 against 23.2-23.4 at 22 and 22.8-24 at 24, the
+ * flights of 2026-10-30 alike - the ceiling holds to ~24 dBm and drops past
+ * it. On the old line (1 dB a dB from 22, 20 dB at 26) a reading under 19.5
+ * at 26 looked like distance: the power stayed at 26 close by. Now 24 dB to
+ * 22 dBm, 0.5 dB less a dB to 24 (23 dB), 2.5 a dB above (18 dB at 26). */
 #define AR_PWR_AUTO_CLEAN_DBM        22
 #define AR_PWR_AUTO_CEILING_DB10    240
-#define AR_PWR_AUTO_CEILING_SLOPE    10   /* dB x 10 per dB over CLEAN_DBM */
+#define AR_PWR_AUTO_CEILING_SLOPE     5   /* dB x 10 per dB over CLEAN_DBM */
+#define AR_PWR_AUTO_KNEE_DBM         24
+#define AR_PWR_AUTO_KNEE_SLOPE       25   /* dB x 10 per dB over KNEE_DBM */
 #define AR_PWR_AUTO_DOWN_STEP         2
 #define AR_PWR_AUTO_UP_STEP           2
 #define AR_PWR_AUTO_UP_HOLD_MS    10000

@@ -40,57 +40,49 @@ int main(void)
 	assert(!ar_pwr_auto_set_range(&c, 1, 26, 13));
 	ar_pwr_auto_reset(&c);
 
-	/* The power model on the defaults (ceiling 24 dB to 22 dBm, 1 dB less
-	 * per dB above), range 13..26. The bench sweep 15-30 m off: 19.3 dB at
-	 * 26 dBm -> 22 is best (~20.8 predicted); far, 15 dB at 26 -> stay at
-	 * 26; close, 23 dB at 22 -> stay; a fade to 14 dB at 22 -> 26. */
+	/* The power model on the defaults (ceiling 24 dB to 22 dBm, 0.5 dB less
+	 * per dB to 24, 2.5 per dB above), range 13..26. Flight 2026-11-01 close
+	 * by: 19.1 dB at 26 dBm -> 23 is best (~21 predicted); far, 15 dB at 26
+	 * -> stay; 23 dB at 24 or 22 -> stay; a deep fade (8 dB) at 22 -> 26. */
 	ar_pwr_auto_reset(&c);
 	const struct ar_pwr_auto_policy *pp = &c.policy;
-	assert(ar_pwr_auto_best(pp, 193, 26, 13, 26) == 22);
-	{ int d = ar_pwr_auto_predict_db10(pp, 193, 26, 22); assert(d >= 205 && d <= 210); }
-	assert(ar_pwr_auto_predict_db10(pp, 193, 26, 26) >= 192 && ar_pwr_auto_predict_db10(pp, 193, 26, 26) <= 194);
+	assert(ar_pwr_auto_best(pp, 191, 26, 13, 26) == 23);
+	{ int d = ar_pwr_auto_predict_db10(pp, 191, 26, 23); assert(d >= 208 && d <= 215); }
 	assert(ar_pwr_auto_best(pp, 150, 26, 13, 26) == 26);
+	assert(ar_pwr_auto_best(pp, 230, 24, 13, 26) == 24);
 	assert(ar_pwr_auto_best(pp, 230, 22, 13, 26) == 22);
-	assert(ar_pwr_auto_best(pp, 140, 22, 13, 26) == 26);
+	assert(ar_pwr_auto_best(pp, 80, 22, 13, 26) == 26);
 	assert(ar_pwr_auto_best(pp, 140, 22, 13, 24) == 24);   /* the host's range holds */
 	assert(ar_pwr_auto_best(pp, 300, 22, 13, 26) <= 22);   /* at the ceiling: never up */
 
-	/* Records: 19.3 dB at 26 (gain 60, no overload): down after 2 s, 2 dB a
-	 * request; at 24 the SNR the model expects (20.4) stays (22 would be
-	 * ~0.6 dB better, under the 1 dB a move needs); 21.5 dB at 24 (close
-	 * by, near the ceiling) -> 22, again after 2 s. */
+	/* Records: 19.1 dB at 26 (gain 60, no overload): down after 2 s, 2 dB a
+	 * request; at 24 21.3 dB (what the model expects) stays (23 would gain
+	 * under the 1 dB a move needs). */
 	ar_pwr_auto_reset(&c); c.peer_dbm = 26;
-	n = run(&c, &now, 1000, 0, raw_of(193), 60, &target, &direction);
+	n = run(&c, &now, 1000, 0, raw_of(191), 60, &target, &direction);
 	assert(n && n * 5 >= 2000 && target == 24 && direction == 2);
 	ar_pwr_auto_sent(&c, target, direction);
-	assert(!run(&c, &now, 1000, 0, raw_of(204), 60, &target, &direction));
-	n = run(&c, &now, 1000, 0, raw_of(215), 60, &target, &direction);
-	assert(n && n * 5 >= 2000 && target == 22 && direction == 2);
+	assert(!run(&c, &now, 1000, 0, raw_of(213), 60, &target, &direction));   /* holds at 24 */
+	/* A deep fade at 24 (8 dB): up 2 dB within ~15 records (the fast SNR
+	 * settles in a few, then 8 in a row). */
+	n = run(&c, &now, 1000, 0, raw_of(80), 75, &target, &direction);
+	assert(n && n <= 15 && target == 26 && direction == 1);
 	ar_pwr_auto_sent(&c, target, direction);
-	assert(!run(&c, &now, 1000, 0, raw_of(208), 60, &target, &direction));   /* holds at 22 */
-	/* A fade at 22 (14 dB): up 2 dB within ~15 records (the fast SNR
-	 * settles in a few, then 8 in a row), the next 2 dB ~17 records later. */
-	n = run(&c, &now, 1000, 0, raw_of(140), 75, &target, &direction);
-	assert(n && n <= 15 && target == 24 && direction == 1);
-	ar_pwr_auto_sent(&c, target, direction);
-	n = run(&c, &now, 1000, 0, raw_of(140), 75, &target, &direction);
-	assert(n && n <= 17 && target == 26 && direction == 1);
-	ar_pwr_auto_sent(&c, target, direction);
-	/* Out of the fade (19.3 dB at 26, the model's pick 22): held 10 s after
+	/* Out of the fade (19.1 dB at 26, the model's pick 23): held 10 s after
 	 * the last up, then the usual 2 s of the pick and down 2 dB. */
 	{
 		const uint32_t up = now;
-		n = run(&c, &now, 4000, 0, raw_of(193), 60, &target, &direction);
+		n = run(&c, &now, 4000, 0, raw_of(191), 60, &target, &direction);
 		assert(n && now - up >= AR_PWR_AUTO_UP_HOLD_MS + AR_PWR_AUTO_DOWN_MS && now - up <= AR_PWR_AUTO_UP_HOLD_MS + AR_PWR_AUTO_DOWN_MS + 50);
 		assert(target == 24 && direction == 2);
 		ar_pwr_auto_sent(&c, target, direction);
 	}
 	/* A short fade inside the hold keeps it: up again, and no down for
 	 * another 10 s. */
-	n = run(&c, &now, 1000, 0, raw_of(140), 75, &target, &direction);
+	n = run(&c, &now, 1000, 0, raw_of(80), 75, &target, &direction);
 	assert(n && target == 26 && direction == 1);
 	ar_pwr_auto_sent(&c, target, direction);
-	assert(!run(&c, &now, 1900, 0, raw_of(193), 60, &target, &direction));   /* 9.5 s: still held */
+	assert(!run(&c, &now, 1900, 0, raw_of(191), 60, &target, &direction));   /* 9.5 s: still held */
 
 	/* At the gain floor with the SNR short (gain 28, 17 dB): down after 300
 	 * ms, whatever the model says. */

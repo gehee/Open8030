@@ -27,7 +27,8 @@ void ar_pwr_auto_init(struct ar_pwr_auto *ctx)
 		.down_ms = AR_PWR_AUTO_DOWN_MS, .overload_ms = AR_PWR_AUTO_OVERLOAD_MS,
 		.up_records = AR_PWR_AUTO_UP_RECORDS, .down_records = AR_PWR_AUTO_DOWN_RECORDS,
 		.clean_dbm = AR_PWR_AUTO_CLEAN_DBM, .ceiling_db10 = AR_PWR_AUTO_CEILING_DB10,
-		.ceiling_slope_db10 = AR_PWR_AUTO_CEILING_SLOPE, .down_step = AR_PWR_AUTO_DOWN_STEP,
+		.ceiling_slope_db10 = AR_PWR_AUTO_CEILING_SLOPE, .knee_dbm = AR_PWR_AUTO_KNEE_DBM,
+		.knee_slope_db10 = AR_PWR_AUTO_KNEE_SLOPE, .down_step = AR_PWR_AUTO_DOWN_STEP,
 		.up_step = AR_PWR_AUTO_UP_STEP, .up_hold_ms = AR_PWR_AUTO_UP_HOLD_MS};
 	ctx->max_dbm = ctx->min_dbm = 39;
 }
@@ -74,7 +75,10 @@ static uint64_t inverse(int db10) { uint64_t r = ratio_q16(db10); return r ? ((u
 
 static int ceiling_db10(const struct ar_pwr_auto_policy *p, int dbm)
 {
-	return p->ceiling_db10 - (dbm > p->clean_dbm ? (dbm - p->clean_dbm) * p->ceiling_slope_db10 : 0);
+	const int knee = p->knee_dbm > p->clean_dbm ? p->knee_dbm : 99;
+	const int flat = dbm < knee ? dbm : knee;
+	return p->ceiling_db10 - (flat > p->clean_dbm ? (flat - p->clean_dbm) * p->ceiling_slope_db10 : 0) -
+		(dbm > knee ? (dbm - knee) * p->knee_slope_db10 : 0);
 }
 
 /* The distance's part of the SNR at now_dbm, as 1/snr: what is measured
