@@ -181,6 +181,12 @@ struct ar_rf_ap_info {
 	 * hops by level / blind, rollbacks, hops kept 2 s, measured starts,
 	 * last hop (from | to << 8 | measure << 16). */
 	uint32_t hop_retx_frames, hop_measure, hop_by_power, hop_blind, hop_rollbacks, hop_kept, measured_starts, hop_last;
+	/* Receive re-arms asked for, by cause: uplink interrupts late (frames in
+	 * a row), the halted bit with no uplink packet, invalid headers; and the
+	 * late frames and halted readings that did not lead to one. */
+	uint32_t rearm_late, rearm_halted, rearm_fch, late_frames, halted_seen;
+	/* Stream bytes copied ahead of their pre-encode, and of those sent. */
+	uint32_t staged_bytes, staged_used;
 };
 const struct ar_rf_ap_info *ar_rf_ap_information(void);
 /* The highest MCS the receive policy may ask for (request 0x0c5a0036, one
@@ -244,6 +250,7 @@ int ar_rf_ap_role(void);
 struct ar_rf_ap_trace { uint32_t head, frozen, frozen_us, last_pre_us, freeze_at; uint32_t entries[AR_RF_AP_TRACE_ENTRIES][6]; };
 const struct ar_rf_ap_trace *ar_rf_ap_trace_information(void);
 void ar_rf_ap_trace_unfreeze(unsigned mode);
+void ar_rf_ap_trigger(unsigned position, unsigned byte);
 struct ar_rf_rx_info {
 	uint32_t frequency_khz, irq_total, irq_counts[20];
 	uint32_t fch_last, fch_locked, receive_events, dma_completions;
@@ -356,6 +363,12 @@ typedef void (*ar_rf_tx_commit_callback)(unsigned mac_port, size_t length, void 
 /* Both callbacks are required. Polling only: peek and commit cannot race with
  * host close/reset. Commit follows copying into the RF-owned packet ring. */
 void ar_rf_set_tx_callbacks(ar_rf_tx_peek_callback peek, ar_rf_tx_commit_callback commit, void *context);
+/* Optional (an AP): peek from offset bytes in on a chosen port, and the bytes
+ * a port has to go - the next block is staged from the main loop. */
+typedef size_t (*ar_rf_tx_peek_at_callback)(unsigned *mac_port, size_t offset, uint8_t *scratch,
+	size_t capacity, void *context);
+typedef size_t (*ar_rf_tx_available_callback)(unsigned mac_port, void *context);
+void ar_rf_set_tx_staging(ar_rf_tx_peek_at_callback peek_at, ar_rf_tx_available_callback available);
 struct ar_rf_tx_payload_info {
 	uint32_t packets, bytes, first_length, last_length, last_port;
 	uint8_t first_packet[160], last_packet[160];

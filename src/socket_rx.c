@@ -41,7 +41,15 @@ static void write_request(struct ar_socket_rx *sockets, struct ar_socket_rx_port
 			(state->pending_head + state->pending_count) % state->pending_max];
 		write->position = position; write->length = length; write->copied = 0;
 		write->active = write->cancelled = 0;
-		if (length) { ar_copy(write->bytes, request->payload + 8, length); }
+		/* In 1 KiB pieces with the yield between: a slice's ~7 KB in one
+		 * copy held the main loop over 200 us (see main.c's feed). The
+		 * write is not counted (visible) until it is all there. */
+		for (uint32_t done = 0; done < length; ) {
+			uint32_t piece = length - done > 1024 ? 1024 : length - done;
+			ar_copy(write->bytes + done, request->payload + 8 + done, piece);
+			done += piece;
+			if (done < length && sockets->yield) { sockets->yield(); }
+		}
 		state->pending_count++; state->position += length; state->enqueued++;
 		response->status = -262;
 	}
@@ -360,6 +368,28 @@ size_t ar_socket_tx_peek(struct ar_socket_rx *sockets, uint8_t *scratch,
 		return count;
 	}
 	return 0;
+}
+
+size_t ar_socket_tx_peek_at(struct ar_socket_rx *sockets, unsigned *mac_port, size_t offset,
+	uint8_t *scratch, size_t capacity)
+{
+	if (!sockets || !mac_port || !scratch || !capacity || *mac_port > AR_SOCKET_RX_PORTS) { return 0; }
+	if (!*mac_port) { return offset ? 0 : ar_socket_tx_peek(sockets, scratch, capacity, mac_port); }
+	const struct ar_socket_rx_port *state = &sockets->ports[*mac_port - 1];
+	if (state->closing || state->tx_used <= offset) { return 0; }
+	size_t count = state->tx_used - offset < capacity ? state->tx_used - offset : capacity;
+	size_t at = (state->tx_head + offset) % state->tx_capacity;
+	size_t first = state->tx_capacity - at;
+	if (first > count) { first = count; }
+	ar_copy(scratch, state->tx_bytes + at, first);
+	if (count > first) { ar_copy(scratch + first, state->tx_bytes, count - first); }
+	return count;
+}
+size_t ar_socket_tx_available(const struct ar_socket_rx *sockets, unsigned mac_port)
+{
+	if (!sockets || !mac_port || mac_port > AR_SOCKET_RX_PORTS) { return 0; }
+	const struct ar_socket_rx_port *state = &sockets->ports[mac_port - 1];
+	return state->closing || !state->tx_capacity ? 0 : state->tx_used;
 }
 
 void ar_socket_tx_commit(struct ar_socket_rx *sockets, unsigned mac_port, size_t length)

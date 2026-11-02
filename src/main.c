@@ -41,6 +41,16 @@ static size_t transmit_peek(uint8_t *scratch, size_t capacity, unsigned *port, v
 	(void)context;
 	return ar_socket_tx_peek(&sockets, scratch, capacity, port);
 }
+static size_t transmit_peek_at(unsigned *port, size_t offset, uint8_t *scratch, size_t capacity, void *context)
+{
+	(void)context;
+	return ar_socket_tx_peek_at(&sockets, port, offset, scratch, capacity);
+}
+static size_t transmit_available(unsigned port, void *context)
+{
+	(void)context;
+	return ar_socket_tx_available(&sockets, port);
+}
 static void transmit_commit(unsigned port, size_t length, void *context)
 {
 	(void)context;
@@ -121,6 +131,8 @@ int ar_rf_host_power(uint32_t reqid, const uint8_t *in, size_t length, uint8_t *
 int ar_rf_host_retx_config(const uint8_t *payload, size_t length);
 int ar_rf_host_channel_info(uint8_t output[1028]);
 int ar_rf_host_channel_set(unsigned order, const uint8_t *payload, size_t length);
+/* Host bytes parsed between two RF polls (see the main loop). */
+#define AR_FEED_PIECE 1024u
 static uint32_t loop_stats[4], loop_previous;
 void ar_rf_note_push_time(uint32_t us);
 void ar_main_loop_statistics(uint32_t out[6])
@@ -166,6 +178,13 @@ static void receive(const struct ar_frame *frame, void *context)
 		/* One byte: let the trace run on, never freezing again (1), or
 		 * freezing only when the AP stops transmitting (2). */
 		ar_rf_ap_trace_unfreeze(frame->payload[0]);
+		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid};
+		size_t size = ar_encode(reply, sizeof reply, &response);
+		(void)bus->send(reply, size); return;
+	}
+	if (diagnostic_reqid == AR_REQ_RF_AP_TRACE && !frame->status && frame->length == 3 && frame->payload[0] == 0x50) {
+		/* Bench: {0x50, entry, byte} moves the broadcast's pre-encode. */
+		ar_rf_ap_trigger(frame->payload[1], frame->payload[2]);
 		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid};
 		size_t size = ar_encode(reply, sizeof reply, &response);
 		(void)bus->send(reply, size); return;
@@ -688,11 +707,13 @@ int main(void)
 	 * radio bring-up below; SDIO tolerated the delay. */
 	if (!bus->init_after_boot) { bus->init(); }
 	ar_socket_rx_init(&sockets);
+	sockets.yield = ar_rf_poll;
 	ar_events_init(&events);
 	ar_telemetry_init(&telemetry, &events);
 	ar_rf_set_event_callback(rf_event, NULL);
 	ar_rf_set_payload_callback(received_payload, NULL);
 	ar_rf_set_tx_callbacks(transmit_peek, transmit_commit, NULL);
+	ar_rf_set_tx_staging(transmit_peek_at, transmit_available);
 #ifdef AR_BOOT_EMBEDDED
 	int boot_status = ar_boot_embedded_profile.plan ? ar_boot_prepare(&ar_boot_embedded_profile) :
 		ar_boot_prepare_loader(&ar_boot_embedded_profile, (const char *)(uintptr_t)0x200000, 16384);
@@ -719,7 +740,18 @@ int main(void)
 		uint32_t stage = *(volatile uint32_t *)0xe000bff8u;
 		ar_rf_note_host_stage(0, (stage - loop_started) / 40);
 		if (length) {
-			ar_feed(&parser, data, length, receive, NULL);
+			/* In pieces, the radio served between them: a slice's write
+			 * (~7 KB) took over 200 us to parse in one go, and the
+			 * pre-encode waiting behind it filled its block up to ~0.5 ms
+			 * late - 8.6% of them, 1.45% of frames sent again where stock
+			 * sends none (bench 2026-11-02). The parser keeps its state
+			 * across calls. */
+			for (size_t done = 0; done < length; ) {
+				size_t piece = length - done > AR_FEED_PIECE ? AR_FEED_PIECE : length - done;
+				ar_feed(&parser, data + done, piece, receive, NULL);
+				done += piece;
+				if (done < length) { ar_rf_poll(); }
+			}
 			uint32_t fed = *(volatile uint32_t *)0xe000bff8u;
 			ar_rf_note_host_stage(1, (fed - stage) / 40); stage = fed;
 		}

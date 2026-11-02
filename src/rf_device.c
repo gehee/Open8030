@@ -136,6 +136,16 @@ static void ap_command_done(unsigned command, const uint8_t *payload);
 static void ap_trace_irq(unsigned index);
 static struct ar_rf_ap_trace ap_trace;
 static unsigned ap_rearm_pending, ap_rx_late, ap_fch_bad, ap_sweeps;
+/* Uplink interrupts handled past the slot this frame, and frames in a row
+ * with one; uplink packets at the last halted-bit check. The interrupts are
+ * polled: a main loop held 100-400 us by host work makes a timely uplink
+ * look late once in a while, and each re-arm holds the sequencer for a
+ * frame (both of its pre-encodes lost, the frame sent again: 410 re-arms
+ * in 30 s, 2.3% of frames failing where stock has none, bench 2026-11-02).
+ * A receive path really behind its slot is late every frame. */
+static unsigned ap_late_now, ap_late_run;
+static uint32_t ap_halted_packets;
+#define AP_LATE_FRAMES 3
 /* The ground's slot ends here (us after IRQ 5), and the frame's length:
  * receive events later than the slot mean the receive path fell behind. */
 static uint32_t ap_rx_end_us = 2300, ap_frame_us = 5634;
@@ -536,6 +546,12 @@ static ar_rf_tx_commit_callback tx_commit_callback;
 static void *tx_context;
 static struct ar_rf_tx_payload_info tx_payload_info;
 
+static ar_rf_tx_peek_at_callback tx_peek_at_callback;
+static ar_rf_tx_available_callback tx_available_callback;
+void ar_rf_set_tx_staging(ar_rf_tx_peek_at_callback peek_at, ar_rf_tx_available_callback available)
+{
+	tx_peek_at_callback = peek_at; tx_available_callback = available;
+}
 void ar_rf_set_tx_callbacks(ar_rf_tx_peek_callback peek, ar_rf_tx_commit_callback commit, void *context)
 {
 	tx_peek_callback = peek; tx_commit_callback = commit; tx_context = context;
@@ -2831,6 +2847,39 @@ static uint8_t ap_mac_sequence, ap_identity_hash, ap_init_mcs = 2;
 #endif
 static _Alignas(8) uint8_t ap_tx_buffers[AP_TX_BUFFERS][AP_TX_BYTES];
 static unsigned ap_tx_next;
+/* The next block's stream bytes, copied into its buffer from the main loop
+ * ahead of the pre-encode (at a fixed offset behind the header and the
+ * largest control: header, control and stream are separate DMA segments).
+ * Built at the pre-encode, a full block (~10 KB at 20 MHz MCS 11) took
+ * ~200 us to copy before the encoder could start, and the second block's
+ * pre-encode comes only ~0.66 ms before it goes out: with the main loop's
+ * own wait, ~2.5% of frames went out broken at MCS 11 (stock: none). The
+ * staged bytes stay in the socket until the block takes them; the
+ * pre-encode adds what came since, or sends fewer if the budget shrank. */
+#define AP_PAYLOAD_AT 216u
+#define AP_STAGE_PIECE 1024u
+static struct { uint32_t length, budget; unsigned port, buffer; uint8_t valid; } ap_stage;
+static void ap_stage_poll(void)
+{
+	if (ap_link.state != AR_AP_CONNECTED || !tx_peek_at_callback || !tx_available_callback || ap_bw_quiet || ap_bw_prequiet) {
+		ap_stage.valid = 0; return;
+	}
+	if (!ap_stage.valid || ap_stage.buffer != ap_tx_next) {
+		ap_stage.valid = 1; ap_stage.buffer = ap_tx_next; ap_stage.length = 0; ap_stage.port = 0;
+	}
+	/* As much as the last block's budget could carry (a smaller one sends a
+	 * prefix), a piece at a time. */
+	uint32_t limit = ap_info.budget_last > 12 ? ap_info.budget_last - 12 : 0;
+	if (limit > AP_TX_BYTES - AP_PAYLOAD_AT) { limit = AP_TX_BYTES - AP_PAYLOAD_AT; }
+	if (ap_stage.length >= limit) { return; }
+	uint32_t room = limit - ap_stage.length;
+	if (room > AP_STAGE_PIECE) { room = AP_STAGE_PIECE; }
+	uint8_t *at = ap_tx_buffers[ap_tx_next] + AP_PAYLOAD_AT + ap_stage.length;
+	size_t n = tx_peek_at_callback(&ap_stage.port, ap_stage.length, at, room, tx_context);
+	if (!n) { if (!ap_stage.length) { ap_stage.port = 0; } return; }
+	ar_cache_clean(at, n);
+	ap_stage.length += (uint32_t)n; ap_info.staged_bytes += (uint32_t)n;
+}
 void ar_rf_note_host_stage(unsigned stage, uint32_t us)
 {
 	if (stage >= 4) { return; }
@@ -2972,16 +3021,34 @@ static void ap_preencode(void)
 	if (!control_length || budget < header + aligned || budget > AP_TX_BYTES) {
 		ap_info.errors++; dev_tx_finish_segments(); return;
 	}
-	/* Stream bytes straight into the packet, behind a one-descriptor header. */
+	/* Stream bytes: the ones staged in this buffer (ap_stage_poll) and what
+	 * came since, behind a one-descriptor header. */
 	size_t length = 0; unsigned port = 0;
 	unsigned quiet = ap_bw_quiet || ap_bw_prequiet;
+	uint8_t *payload = packet + AP_PAYLOAD_AT;
 	if (ap_link.state == AR_AP_CONNECTED && tx_peek_callback && tx_commit_callback && !quiet) {
 		size_t room = budget - header - aligned;
-		if (room > 0xfffff) { room = 0xfffff; }
-		length = room ? tx_peek_callback(packet + header + aligned, room, &port, tx_context) : 0;
+		if (room > AP_TX_BYTES - AP_PAYLOAD_AT) { room = AP_TX_BYTES - AP_PAYLOAD_AT; }
+		size_t staged = 0;
+		if (ap_stage.valid && ap_stage.buffer == ap_tx_next && ap_stage.length && tx_available_callback &&
+		    tx_available_callback(ap_stage.port, tx_context) >= ap_stage.length) {
+			staged = ap_stage.length < room ? ap_stage.length : room; port = ap_stage.port;
+			ap_info.staged_used += (uint32_t)staged;
+		}
+		if (staged < room && staged && tx_peek_at_callback) {
+			size_t more = tx_peek_at_callback(&port, staged, payload + staged, room - staged, tx_context);
+			ar_cache_clean(payload + staged, more);
+			length = staged + more;
+		} else if (staged) {
+			length = staged;
+		} else if (room) {
+			length = tx_peek_callback(payload, room, &port, tx_context);
+			ar_cache_clean(payload, length);
+		}
 		if (length) { ap_info.payload_packets++; } else { ap_info.empty_packets++; }
 		if (length > room || (length && (!port || port > 4))) { ap_info.errors++; length = 0; }
 	}
+	ap_stage.valid = 0;
 	if (!length) { header = 8; }
 	memset(packet, 0, header + aligned);
 	packet[0] = 0x58; packet[4] = ap_mac_sequence++; packet[6] = (uint8_t)control_length;
@@ -2989,12 +3056,11 @@ static void ap_preencode(void)
 		uint32_t word = (uint32_t)length << 12 | port;
 		packet[7] = 1;
 		for (unsigned b = 0; b < 4; b++) { packet[8 + b] = word >> (8 * b); }
-		/* The payload went in behind a 12-byte header; nothing to move. */
 	}
 	memcpy(packet + header, control, control_length);
 	uint16_t check = ar_mac_checksum16(packet, header);
 	packet[2] = (uint8_t)check; packet[3] = check >> 8;
-	ar_cache_clean(packet, header + aligned + length);
+	ar_cache_clean(packet, header + aligned);   /* the stream bytes were cleaned as they came in */
 	barrier();
 	field(0xd440020, (uint32_t)(uintptr_t)packet);
 	field(0xd400010, header); field(0xd401808, 1);
@@ -3004,7 +3070,7 @@ static void ap_preencode(void)
 		/* Segments longer than 4 KiB come out empty at the ground (stock's
 		 * stream arrives in socket-buffer pieces): at most 4000 bytes each,
 		 * on the next segment bits (at most eight segments a packet). */
-		const uint8_t *data = packet + header + aligned; size_t left = length; unsigned bit = 2;
+		const uint8_t *data = payload; size_t left = length; unsigned bit = 2;
 		while (left && bit < 8) {
 			size_t piece = left > 4000 && bit < 7 ? 4000 : left;
 			field(0xd440020, (uint32_t)(uintptr_t)data);
@@ -3609,6 +3675,31 @@ void ar_rf_ap_trace_unfreeze(unsigned mode)
 	 * reached), only the stall check in ap_poll. */
 	ap_trace.freeze_at = mode == 2 ? UINT32_MAX - 1 : UINT32_MAX; ap_trace.frozen = 0;
 }
+/* Bench: the broadcast's pre-encode (the one that fills the next frame's
+ * first block) moved in the 0x8a0 frame program - positional, by hardware
+ * entry (0 the switch before the broadcast, 1 the broadcast, 2-4 the
+ * switches and the sweep after it, 5 the slot), byte 0x80 | at << 4 | raw
+ * user 8 (stock: 0xe8 at entry 1). Placed at the next IRQ 5 with the engines
+ * re-armed, as stock re-places it on a frame change; trace item 50 holds the
+ * table before and after. */
+static unsigned ap_trigger_pending;   /* 0x10000 | position << 8 | byte */
+void ar_rf_ap_trigger(unsigned position, unsigned byte)
+{
+	/* position bit 7: no re-arm (the table taken as it runs). */
+	if ((position & 0x7f) < 6 && (byte & 0x80)) { ap_trigger_pending = 0x10000 | (position & 0x7f) << 8 | (position & 0x80) << 8 | (byte & 0xff); }
+}
+static void ap_place_trigger(void)
+{
+	unsigned position = (ap_trigger_pending >> 8) & 7, byte = ap_trigger_pending & 0xff;
+	unsigned rearm = !(ap_trigger_pending & 0x8000);
+	ap_trigger_pending = 0;
+	ap_trace_mark(50, read32(BB + 0x8a0), read32(BB + 0x8a4), position << 8 | byte);
+	for (unsigned offset = 0x8a0; offset < 0x900; offset += 4) { write32(BB + offset, 0); }
+	update(BB + 0x8a0 + position / 4 * 4, 0xffu << (position % 4 * 8), (uint32_t)byte << (position % 4 * 8));
+	if (rearm) { (void)hold_engines(); release_engines(); }
+	ap_trace_mark(50, read32(BB + 0x8a0), read32(BB + 0x8a4), position << 8 | byte);
+	if (!ap_trace.frozen) { ap_trace.freeze_at = ap_trace.head + 200; }   /* keep the frames after it */
+}
 static void ap_trace_irq(unsigned index)
 {
 	uint32_t now = elapsed_us();
@@ -4107,6 +4198,15 @@ static int build_commands(void)
 	 * TX0 with pre-command mode6. RX8/TX0 begin on the link frequency;
 	 * RX11 is tuned independently below. Retained TX ownership remains open. */
 	static const struct ar_command_descriptor frame[] = {{0x3621,0},{0x358,0},{0x3413,0}};
+	/* The AP's broadcast pre-encode (the one that fills the next frame's
+	 * first block): at the start of the slot (entry 5: displacement 4, at 0)
+	 * instead of stock's 6 into the broadcast. The block was filled 2.05 ms
+	 * before it went out at 40 MHz (short frame), now 1.35 (1.0 ms is about
+	 * the least: at 0.9 ms more blocks are sent again, at 0.57 they miss).
+	 * Bench 2026-11-02, 40 MHz MCS 8, ~20 Mbps video, 4 x 45 s each:
+	 * per slice radio->ground 5.13 -> 4.81 ms, capture->picture 19.55 ->
+	 * 18.82, blocks sent again 7.3% -> 4.7%. */
+	static const struct ar_command_descriptor ap_frame[] = {{0x0621,4},{0x358,0},{0x3413,0}};
 	struct ar_command_profile profiles[AR_COMMAND_USERS];
 	for (unsigned user = 0; user < AR_COMMAND_USERS; user++) {
 		uint32_t rx = read32(BB + 0x9a0 + user * 8);
@@ -4119,7 +4219,7 @@ static int build_commands(void)
 	}
 	memcpy(command_state.calibration[2],calibration,sizeof calibration);
 	command_state.valid_banks = 4; /* Only bank 2 is calibrated by this runtime. */
-	int result = ar_command_build(&command_program,frame,3,!ap_role,profiles,command_write,NULL);
+	int result = ar_command_build(&command_program,ap_role ? ap_frame : frame,3,!ap_role,profiles,command_write,NULL);
 	commands_ready = !result;
 	if (!result) { tune_measurement(); }
 	return result;
@@ -4658,6 +4758,7 @@ void ar_rf_poll(void)
 		}
 		previous = now;
 		ap_poll();
+		ap_stage_poll();
 	}
 	bandwidth_poll();
 	if (!ap_role) { distance_push(); }
@@ -4694,7 +4795,7 @@ void ar_rf_poll(void)
 				uint32_t since = elapsed_us() - ap_sweep_us;
 				if ((index == 2 && since > 900) ||
 			    ((index == 12 || index == 15) && since > ap_rx_end_us && since < ap_frame_us - 600)) {
-					ap_rx_late = 1;
+					ap_late_now = 1;
 				}
 			}
 			if (index == 16) { receive_event(); }
@@ -4860,8 +4961,17 @@ void ar_rf_poll(void)
 					/* 0xfa8 bit 6 set: the receive path halted (no sync at all,
 					 * even with a ground sending); a re-arm brings it back. At
 					 * most every 16th sweep: it is also set while nothing came. */
-					if ((read32(BB + 0xfa8) & 0x40) && !(++ap_sweeps & 15)) { ap_rx_late = 1; }
+					if (ap_late_now) { ap_info.late_frames++; }
+					ap_late_run = ap_late_now ? ap_late_run + 1 : 0; ap_late_now = 0;
+					if (ap_late_run >= AP_LATE_FRAMES) { ap_late_run = 0; ap_rx_late = 1; ap_info.rearm_late++; }
+					/* ... and only when no uplink packet came since the last look. */
+					if ((read32(BB + 0xfa8) & 0x40) && !(++ap_sweeps & 15)) {
+						ap_info.halted_seen++;
+						if (ap_info.uplink_packets == ap_halted_packets) { ap_rx_late = 1; ap_info.rearm_halted++; }
+						ap_halted_packets = ap_info.uplink_packets;
+					}
 					ap_up_tick();
+					if (ap_trigger_pending) { ap_place_trigger(); }
 					if (ap_chan_at_sweep) {
 						unsigned index = ap_chan_at_sweep & 0xffff;
 						ap_chan_at_sweep = 0; ap_retune(index);
@@ -5079,7 +5189,7 @@ void ar_rf_poll(void)
 				 * while the ground keeps sending: re-arm RX at the next sweep. */
 				if (ap_role) {
 					if (receiver.fch_last & 0x80) { ap_fch_bad = 0; }
-					else if (++ap_fch_bad >= 8) { ap_fch_bad = 0; ap_rx_late = 1; }
+					else if (++ap_fch_bad >= 8) { ap_fch_bad = 0; ap_rx_late = 1; ap_info.rearm_fch++; }
 				}
 				unsigned user = (receiver.fch_last >> 9) & 15;
 				if (automatic_recovery() && (user == 8 || user == 9)) {

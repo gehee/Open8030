@@ -104,5 +104,14 @@ int main(void)
 	profiles[0].bandwidth[0] = 1;
 	assert(!ar_command_build(&p,NULL,0,1,profiles,write_field,NULL));
 	assert(!p.count && p.cursor == -1 && p.entries[5].bits == 0xfeedbeef);
+	/* The AP's broadcast pre-encode: stock's 6 into the broadcast (entry 1),
+	 * ours at the start of the slot (entry 5). */
+	struct ar_command_descriptor stock_ap[] = {{0x3621,0},{0x358,0},{0x3413,0}};
+	struct ar_command_descriptor ours_ap[] = {{0x0621,4},{0x358,0},{0x3413,0}};
+	memset(registers, 0, sizeof registers);
+	assert(!ar_command_build(&p,stock_ap,3,0,profiles,write_field,NULL));
+	assert(registers[0x8a0/4] == 0xe800 && registers[0x8a4/4] == 0);
+	assert(!ar_command_build(&p,ours_ap,3,0,profiles,write_field,NULL));
+	assert(registers[0x8a0/4] == 0 && registers[0x8a4/4] == 0x8800);
 	puts("command expansion, metadata retention and validation passed");
 }

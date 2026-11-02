@@ -63,6 +63,9 @@ struct ar_socket_rx {
 	uint32_t tx_writes, tx_write_bytes, tx_full, tx_out_of_order, tx_completed, tx_peak;
 	uint8_t error_payload[16];
 	struct ar_socket_close_info close_info;
+	/* Called between the pieces of a write's copy (set after init): an AP
+	 * serves its radio there, so a slice's copy cannot hold a pre-encode. */
+	void (*yield)(void);
 	/* The ports' storage: the video port's, and the others' (small on an air unit). */
 	uint8_t big_rx[AR_SOCKET_RX_CAPACITY], big_tx[AR_SOCKET_TX_CAPACITY];
 	struct ar_socket_write big_pending[AR_SOCKET_TX_PENDING];
@@ -106,5 +109,11 @@ void ar_socket_close_commit(struct ar_socket_rx *sockets, const struct ar_frame 
 size_t ar_socket_tx_peek(struct ar_socket_rx *sockets, uint8_t *scratch,
 	size_t capacity, unsigned *mac_port);
 void ar_socket_tx_commit(struct ar_socket_rx *sockets, unsigned mac_port, size_t length);
+/* The same from offset bytes in, on a port already chosen (*mac_port; 0: as
+ * ar_socket_tx_peek chooses, offset 0); and the bytes a port has to go (0
+ * while it closes). An AP stages a block's bytes ahead of its pre-encode. */
+size_t ar_socket_tx_peek_at(struct ar_socket_rx *sockets, unsigned *mac_port, size_t offset,
+	uint8_t *scratch, size_t capacity);
+size_t ar_socket_tx_available(const struct ar_socket_rx *sockets, unsigned mac_port);
 void ar_socket_rx_totals(uint32_t *offered, uint32_t *dropped);
 #endif

@@ -51,6 +51,15 @@ int main(void)
 			size_t offset = sent + i;
 			assert(scratch[i] == (uint8_t)((offset / payload) * 37 + offset % payload));
 		}
+		/* From an offset on the same port (an AP's staged block): the same bytes. */
+		if (n > 2) {
+			static uint8_t later[sizeof scratch];
+			unsigned same = port;
+			size_t m = ar_socket_tx_peek_at(&sockets, &same, n / 2, later, sizeof later);
+			assert(same == port && m >= n - n / 2 && !memcmp(later, scratch + n / 2, n - n / 2));
+			assert(ar_socket_tx_available(&sockets, port) == sockets.ports[3].tx_used);
+			assert(!ar_socket_tx_peek_at(&sockets, &same, sockets.ports[3].tx_used, later, sizeof later));
+		}
 		ar_socket_tx_commit(&sockets, port, n); sent += n;
 	}
 	assert(completed == 5 && sent == 5 * payload);
