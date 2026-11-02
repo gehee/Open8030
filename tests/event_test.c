@@ -58,7 +58,7 @@ int main(void)
 	}
 	assert(e.dropped == 4);
 	ar_events_init(&e); assert(!e.count && !e.subscriptions && !e.dropped);
-	const size_t sizes[] = {3, 4, 4, 322, 0, 0, 256, 4, 1024, 12, 1024, 1024, 4, 136};
+	const size_t sizes[] = {3, 4, 4, 322, 0, 0, 256, 4, 1024, 12, 1024, 1024, 4, 136, 4, 4};
 	uint8_t payload[AR_EVENT_MAX_PAYLOAD];
 	for (unsigned round = 0; round < 20; round++) {
 		for (unsigned id = 0; id < sizeof sizes / sizeof sizes[0]; id++) {

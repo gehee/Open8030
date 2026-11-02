@@ -110,7 +110,7 @@ const struct ar_rf_scan_info *ar_rf_scan_information(void) { return &scan_info; 
 const struct ar_command_program *ar_rf_command_information(void) { return &command_program; }
 #endif
 /* Distance (stock bb_phy_distc_proc), see distance_sample(). */
-static struct { uint32_t raw, ms, irqs, accepted, dropped; uint8_t rejects, valid; } distance;
+static struct { uint32_t raw, ms, irqs, accepted, dropped; uint8_t rejects, valid, bw; } distance;
 static struct ar_dev_idle_config dev_config;
 static struct ar_binding binding;
 static uint8_t dev_candidates[AR_DEV_MAX_CANDIDATES][4], dev_status_a, dev_status_b;
@@ -1081,7 +1081,40 @@ static uint8_t chan_auto = 1, chan_work_count, chan_work[128];
  * at 0xfd0 and four at 0xfdc: [19:0] the round-trip count (bit 19 = below
  * zero, taken as 0), bits 20, 22, 23 mark an invalid sample. A sample more
  * than 500 counts from the last is an outlier and dropped, unless ten come
- * in a row. Metres = (count - offset) * 1.5; none after 1 s without one. */
+ * in a row. Metres = (count - offset - the radios' delay) * 1.5; none
+ * after 1 s without one. The count carries the radio filters' delay, which
+ * grows as the width narrows: at the same spot (~1 m) with offset 20 stock's
+ * formula read 63 m at 40 MHz, 70 at 20 and 111 at 5 (2026-10-30/11-01) -
+ * 56 m + 280/MHz, about 185/MHz counts, taken off at the width the sample
+ * was ranged at. The 56 m left at every width is the rest of both radios'
+ * chains: 37 counts (55.5 m) taken off too, so the metres are the distance
+ * itself, with no zero on the host. Measured on a Lite+ only. */
+#define DISTANCE_FILTER_COUNTS_MHZ 185u
+#define DISTANCE_CHAIN_COUNTS 37u
+static uint32_t distance_filter_counts(unsigned code)
+{
+	static const uint8_t mhz[6] = {0, 0, 5, 10, 20, 40};   /* bandwidth codes 2..5 */
+	return code >= 2 && code <= 5 ? (DISTANCE_FILTER_COUNTS_MHZ + mhz[code] / 2u) / mhz[code] : 0;
+}
+/* One ranging sample is coarse (a count is 1.5 m) and jumps a count or two
+ * from frame to frame (detection jitter, reflections): at rest 3 m read 1-6.
+ * The report is the mean of the last 400 ms of samples, each with its own
+ * width's filter delay taken off, in four 100 ms buckets (whatever the
+ * ranging rate). */
+static struct { int32_t sum[4]; uint32_t n[4]; uint32_t bucket_ms; uint8_t head; } distance_avg;
+static void distance_avg_age(uint32_t now)
+{
+	if (!distance_avg.bucket_ms) { distance_avg.bucket_ms = now; return; }
+	for (unsigned k = 0; k < 4 && now - distance_avg.bucket_ms >= 100; k++) {
+		distance_avg.head = (uint8_t)((distance_avg.head + 1) & 3);
+		distance_avg.sum[distance_avg.head] = 0; distance_avg.n[distance_avg.head] = 0;
+		distance_avg.bucket_ms += 100;
+	}
+	if (now - distance_avg.bucket_ms >= 100) {   /* more than 400 ms went by */
+		memset(&distance_avg, 0, sizeof distance_avg); distance_avg.bucket_ms = now;
+	}
+}
+static uint32_t distance_filter_counts(unsigned code);
 static void distance_sample(void)
 {
 	distance.irqs++;
@@ -1100,24 +1133,58 @@ static void distance_sample(void)
 			if (++distance.rejects < 10) { distance.dropped++; return; }
 		}
 	}
-	distance.rejects = 0; distance.raw = value; distance.ms = now; distance.valid = 1;
+	/* A jump taken as the new level (ten in a row past the outlier limit):
+	 * the average starts over from it. */
+	if (distance.rejects >= 10) { memset(&distance_avg, 0, sizeof distance_avg); }
+	distance.rejects = 0; distance.raw = value; distance.ms = now; distance.valid = 1; distance.bw = (uint8_t)bw_code;
 	distance.accepted++;
+	distance_avg_age(now);
+	const uint32_t filter = distance_filter_counts((unsigned)bw_code);
+	distance_avg.sum[distance_avg.head] += (int32_t)value - (int32_t)filter;
+	distance_avg.n[distance_avg.head]++;
+}
+/* The distance in metres (the averaged samples, the radios' delays off), or
+ * -1: no sample in the last second, or ranging off. */
+static int32_t distance_metres(void)
+{
+	const uint32_t rest = dev_mcs.config.distance_offset + DISTANCE_CHAIN_COUNTS, now = elapsed_ms();
+	if (!distance.valid || !dev_mcs.config.distance_enabled || now - distance.ms > 1000) { return -1; }
+	/* The last 400 ms of samples (x16 for the mean's fraction), or with none
+	 * in them the latest sample, as before. */
+	distance_avg_age(now);
+	int32_t sum = 0; uint32_t n = 0;
+	for (unsigned k = 0; k < 4; k++) { sum += distance_avg.sum[k]; n += distance_avg.n[k]; }
+	const int64_t counts_x16 = n ? (int64_t)sum * 16 / (int64_t)n
+		: ((int64_t)distance.raw - (int64_t)distance_filter_counts(distance.bw)) * 16;
+	const int64_t over = counts_x16 - (int64_t)rest * 16;
+	return over > 0 ? (int32_t)((over * 3) / 32) : 0;
 }
 int ar_rf_host_distance(const uint8_t *payload, size_t length, uint8_t output[32])
 {
 	if (!payload || length < 1 || !output) { return -22; }
 	memset(output, 0, 32);
-	uint32_t offset = dev_mcs.config.distance_offset, now = elapsed_ms();
 	for (unsigned slot = 0; slot < 8; slot++) {
 		if (!(payload[0] & (1u << slot))) { continue; }
-		int32_t metres = -1;
 		/* The DEV keeps one record (slot 0), as stock. */
-		if (slot == 0 && distance.valid && dev_mcs.config.distance_enabled && now - distance.ms <= 1000) {
-			metres = distance.raw > offset ? (int32_t)(((distance.raw - offset) * 3) >> 1) : 0;
-		}
+		const int32_t metres = slot == 0 ? distance_metres() : -1;
 		for (unsigned b = 0; b < 4; b++) { output[slot * 4 + b] = (uint8_t)((uint32_t)metres >> (8 * b)); }
 	}
 	return 0;
+}
+/* Ours: event 15 {slot 0, 1 = known, metres low, high} - the distance pushed
+ * to the host as it changes (at most every 100 ms) and once a second anyway,
+ * so a host needs no request for it; 0 known = no distance (stale or off). */
+static void distance_push(void)
+{
+	static uint32_t last_ms; static int32_t last = -2;
+	const uint32_t now = elapsed_ms();
+	if (now - last_ms < 100) { return; }
+	const int32_t m = distance_metres();
+	if (m == last && now - last_ms < 1000) { return; }
+	last_ms = now; last = m;
+	const uint32_t v = m < 0 ? 0 : (uint32_t)m > 0xffff ? 0xffff : (uint32_t)m;
+	const uint8_t data[] = {0, (uint8_t)(m >= 0), (uint8_t)v, (uint8_t)(v >> 8)};
+	publish_event(15, data, sizeof data);
 }
 /* The scan's row for a configured channel (by frequency), or -1. */
 static int scan_row_of(uint32_t frequency_khz)
@@ -4443,7 +4510,7 @@ static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t 
 			tx_mcs_info.current = tx_interleaver.users[0].mcs;
 		}
 		frame_mode = 0; frame_pending = 0; frame_want = 0;   /* a new link starts on the standard frame */
-		memset(&distance, 0, sizeof distance);
+		memset(&distance, 0, sizeof distance); memset(&distance_avg, 0, sizeof distance_avg);
 	}
 	if (operation == 36 || operation == 37 || operation == 39 || operation >= 41) {
 		/* 0x222cac(8,0) also clears the shared identity field. Trial 59
@@ -4593,6 +4660,7 @@ void ar_rf_poll(void)
 		ap_poll();
 	}
 	bandwidth_poll();
+	if (!ap_role) { distance_push(); }
 	if (receive_operation >= 68) {
 		uint32_t tick = read32(TIMER);
 		if (receiver.dev_state == 2) {

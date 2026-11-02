@@ -31,11 +31,13 @@ static unsigned event_count, event_ids[32];
 static uint8_t event_data[32][4];
 static unsigned last_event_id = 255, channel_events, bandwidth_events;
 static uint8_t last_event[4], channel_event[4], bandwidth_event[4];
+static unsigned distance_events; static uint8_t distance_event[4];
 static void receive_event(unsigned id, const uint8_t *data, size_t length, void *context)
 {
 	/* Link (0, 3 bytes) and MCS (1); Open8030 also publishes channel (2) and
 	 * bandwidth (12) changes, 4 bytes each. */
-	assert(context == event_data && (id < 2 || id == 2 || id == 12) && length == (id ? 4u : 3u));
+	assert(context == event_data && (id < 2 || id == 2 || id == 12 || id == 15) && length == (id ? 4u : 3u));
+	if (id == 15) { distance_events++; memcpy(distance_event, data, 4); return; }   /* the distance, pushed */
 	last_event_id = id; memset(last_event, 0, 4); memcpy(last_event, data, length);
 	if (id == 2) { channel_events++; memcpy(channel_event, data, 4); }
 	if (id == 12) { bandwidth_events++; memcpy(bandwidth_event, data, 4); }
@@ -273,21 +275,36 @@ static void open8030_linked_tests(void)
 	assert(rx->dev_state == 2 && rx->assigned_slot == 0);
 	ar_rf_set_event_callback(receive_event, event_data);   /* off in this part of main() */
 
-	/* GET 5: (raw - offset) x 1.5 m, offset 0 in this plan; DEV slot 0 only. */
+	/* GET 5: (raw - offset - the radios' delay) x 1.5 m, offset 0 in this
+	 * plan, the link at 5 MHz here: 37 counts (185 / 5) + the chains' 37;
+	 * DEV slot 0 only. */
 	uint8_t in[2] = {0}, out[32];
 	assert(ar_rf_host_distance(NULL, 1, out) == -22 && ar_rf_host_distance(in, 0, out) == -22);
 	assert(distance_of(1, 0) == -1);                 /* no sample yet */
-	ranging(0, 66); assert(distance_of(1, 0) == 99);
-	ranging(5, 70); assert(distance_of(1, 0) == 105); /* any index lands in slot 0 */
+	ranging(0, 103); assert(distance_of(1, 0) == 43);
+	/* Event 15 pushes it too, without a request: known, 43 m (the pass that
+	 * takes a sample pushes before it; the next, 100 ms on, with it). */
+	distance_events = 0; ticks += 1100 * 40000ull; ranging(0, 103);
+	ticks += 150 * 40000ull; ar_rf_poll();
+	assert(distance_events && distance_event[0] == 0 && distance_event[1] == 1 && distance_event[2] == 43 && !distance_event[3]);
+	/* Stale after a second: pushed as not known. */
+	ticks += 1100 * 40000ull; ar_rf_poll();
+	assert(distance_event[1] == 0 && !distance_event[2]);
+	ranging(0, 103); ticks += 150 * 40000ull; ar_rf_poll();
+	ranging(5, 107); assert(distance_of(1, 0) == 46);  /* any index lands in slot 0; the mean of 103 and 107 */
 	assert(distance_of(3, 1) == -1 && distance_of(1, 1) == 0); /* slot 1: -1 when asked, untouched if not */
-	ranging(0, 80 | 1u << 20); ranging(0, 80 | 1u << 22); ranging(0, 80 | 1u << 23);
-	assert(distance_of(1, 0) == 105);                /* invalid flags dropped */
+	ranging(0, 117 | 1u << 20); ranging(0, 117 | 1u << 22); ranging(0, 117 | 1u << 23);
+	assert(distance_of(1, 0) == 46);                 /* invalid flags dropped */
 	ranging(0, 1u << 19 | 5); assert(distance_of(1, 0) == 0);   /* below zero: 0 m */
-	ranging(0, 60); ranging(0, 900);                 /* a jump over 500 is an outlier */
-	assert(distance_of(1, 0) == 90);
-	for (unsigned i = 0; i < 8; i++) { ranging(0, 900); }
-	assert(distance_of(1, 0) == 90);
-	ranging(0, 900); assert(distance_of(1, 0) == 1350);   /* the tenth in a row is taken */
+	ranging(0, 97); ranging(0, 937);                 /* a jump over 500 is an outlier */
+	assert(distance_of(1, 0) == 4);                  /* mean of 103, 107, 0, 97 */
+	for (unsigned i = 0; i < 8; i++) { ranging(0, 937); }
+	assert(distance_of(1, 0) == 4);
+	ranging(0, 937); assert(distance_of(1, 0) == 1294);   /* the tenth in a row is taken: the mean starts over */
+	/* The mean is the last 400 ms: 100 ms later a sample of 941 averages in
+	 * (939: 1297 m); 500 ms after that only the new ones count. */
+	ticks += 100 * 40000ull; ranging(0, 941); assert(distance_of(1, 0) == 1297);
+	ticks += 500 * 40000ull; ranging(0, 945); assert(distance_of(1, 0) == 1306);
 	ticks += 1100 * 40000ull; assert(distance_of(1, 0) == -1); /* stale after 1 s */
 
 	/* GET 10: the configured channels and the link's; SET 5 / SET 35. */
