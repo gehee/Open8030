@@ -18,7 +18,7 @@ def main():
     commands = parser.add_subparsers(dest='command', required=True)
     firmware = commands.add_parser('build', help='Build runtime, bootstrap and packaged VRX image')
     firmware.add_argument('--prepare', action='store_true', help='Download/install pinned build dependencies')
-    firmware.add_argument('--profile', type=Path, default=ROOT / '.local/board-profile.c')
+    firmware.add_argument('--profile', type=Path, default=ROOT / 'profiles/board-profile.c')
     for name, help_text in (
         ('run', 'Copy, start and leave Open8030 running on the VRX'),
         ('stop', 'Restore the original VRX radio and video services'),
@@ -40,7 +40,7 @@ def main():
     args = parser.parse_args()
     if args.command == 'build':
         if not args.profile.is_file():
-            raise ValueError(f'Missing private board profile: {args.profile}')
+            raise ValueError(f'Missing board profile: {args.profile}')
         if args.prepare:
             build.prepare()
         build.build_release(args.profile)

@@ -15,12 +15,11 @@ External components retain their own licenses and attribution requirements.
 - **zlib:** used only by native host tests as an independent CRC oracle; it is
   not linked into the radio firmware by those tests.
 
-Published firmware images include compiled matched board-profile data. The profile
-source and receiver loader JSON are not distributed in this repository, and
-Open8030's MIT license does not relicense those private inputs. Container headers
-and empty configuration space are generated from source; packaging does not
-require a stock firmware image. A source checkout alone does not supply the
-private inputs needed to reproduce the RF video image.
+The board profiles in `profiles/` hold hardware data (register defaults, pin data,
+frame-header keys) reverse engineered from the stock radio firmware. The receiver
+loader JSON is not distributed in this repository. Container headers and empty
+configuration space are generated from source; packaging does not require a stock
+firmware image.
 
 Binary releases include `LICENSES.txt` with the Open8030 license, Zephyr
 license and source notices (including its MIT/BSD libc components), and the GCC

@@ -42,10 +42,12 @@ sudo apt-get install build-essential cmake git python3 python3-venv \
   device-tree-compiler zlib1g-dev xz-utils file wget openssh-client
 ```
 
-Place the matched private board profile at `.local/board-profile.c`. It defines
-`ar_boot_embedded_profile` from [ar_boot.h](include/ar_boot.h); it is not supplied
-and there is no public generation procedure yet. Without it, you can still run
-[offline tests and QEMU](#development).
+The board profiles are in [profiles/](profiles), reverse engineered from the
+stock radio firmware: `board-profile.c` (the build's default, VRX Pro),
+`ascent-vrx-pro.c`, `ascent-lite.c`, `ascent-lite-plus.c` and `steadyview-vrx.c`.
+Each defines `ar_boot_embedded_profile` from [ar_boot.h](include/ar_boot.h).
+[tools/extract_profile.py](tools/extract_profile.py) writes one from a stock
+`bb_demo_*.img`.
 
 ## Build and run on the Ascent VRX
 
@@ -63,7 +65,7 @@ root SSH access and daemon TCP port 50000 must be available.
 No stock firmware image or receiver connection is needed to build. The packager
 generates the container header and reserves an empty configuration region; the
 receiver's original loader supplies its external JSON configuration at startup.
-The private board profile is still required for RF operation.
+A board profile from [profiles/](profiles) is still required for RF operation.
 
 Later builds need only `./open8030 build`. It builds the runtime and bootstrap,
 packages `.local/open8030.img`, and verifies it against [baseline.json](baseline.json).
@@ -99,8 +101,7 @@ confirm a visible scene before running Open8030 again.
 
 Local images, private inputs and saved session details stay in ignored `.local/`.
 Use the same checkout and receiver address for `run` and `stop` so the
-helper can find its session. The published firmware includes compiled board-profile
-data; the profile source and lab artifacts remain private. Preserve the release's
+helper can find its session. Lab artifacts remain private. Preserve the release's
 license notices when redistributing it. These commands target the tested Ascent VRX
 baseline and reject mismatched images or receiver software.
 

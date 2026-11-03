@@ -81,7 +81,7 @@ the adapter's output cadence, not a measurement of RF frame rate or latency.
 
 | Symptom | Interpretation and next step |
 | --- | --- |
-| Missing or unmatched private profile | Hardware builds need the accepted private input. Native tests and QEMU remain available without it. |
+| Missing or unmatched board profile | Hardware builds need a profile from `profiles/`. Native tests and QEMU remain available without it. |
 | Generated container does not match the recorded layout | The compiled inputs or packaging differ from the baseline. Compare source/toolchain/profile hashes before accepting an image. |
 | Startup exits before the observation window | Read `run.log` and `exit.status`; a software/configuration hash or process-layout check may have failed. |
 | A session is already active | Inspect that saved session. Use `stop` after completed startup; a failed preflight may leave a stage record too, so inspect logs before treating it as a running radio. |

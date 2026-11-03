@@ -94,8 +94,9 @@ def build(board, cflags, boot_profile=None):
     directory = LOCAL / ("build-qemu-ready" if board == "qemu_riscv32" else "build-ar8030-bringup")
     if boot_profile:
         boot_profile = boot_profile.resolve(strict=True)
-        if board != "ar8030_bringup" or not boot_profile.is_relative_to(LOCAL.resolve()) or boot_profile.suffix != ".c":
-            raise ValueError("Boot profile must be generated private .local/ C data for ar8030_bringup")
+        inside = any(boot_profile.is_relative_to(d.resolve()) for d in (LOCAL, ROOT / "profiles"))
+        if board != "ar8030_bringup" or not inside or boot_profile.suffix != ".c":
+            raise ValueError("Boot profile must be C data in profiles/ or .local/ for ar8030_bringup")
     run(["cmake", "-GNinja", "-S", ROOT, "-B", directory,
          f"-DBOARD={board}", f"-DPython3_EXECUTABLE={PYTHON}", f"-DCMAKE_C_FLAGS={cflags}",
          f"-DAR8030_BOOT_PROFILE_SOURCE={boot_profile or ''}"], env=env)

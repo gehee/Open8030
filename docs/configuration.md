@@ -10,21 +10,21 @@ unverified.
 
 | Source | Purpose | When it is used |
 | --- | --- | --- |
-| Private `.local/board-profile.c` | Ordered register defaults, pin data, frame-control-header encoding keys and flash-part descriptions | Compiled into the hardware runtime |
+| `profiles/board-profile.c` (or another file in `profiles/`) | Ordered register defaults, pin data, frame-control-header encoding keys and flash-part descriptions | Compiled into the hardware runtime |
 | Receiver `/usrdata/fpv/boot_ar8030/bb_config_gnd.json` | Role, channel list, identities, power calibration and MCS policy | Copied by `run`; supplied to RAM by the original loader |
 | Hardware OTP and factory storage | Board identity and available power offsets | Read during runtime boot |
 | Original Linux backend | Candidate peers, lifecycle commands, sockets and selected runtime controls | After daemon/backend startup |
 
-The private profile defines `ar_boot_embedded_profile` from
+The board profile defines `ar_boot_embedded_profile` from
 [ar_boot.h](../include/ar_boot.h). The matched board path requires 704 ordered
 register-default entries (5,632 bytes), 40 bytes of pin data and 100 bytes of
 encoding keys. The loader-based path uses a null `plan` pointer and constructs its
 radio plan from JSON; a non-null `plan` selects a separate compiled-plan path.
 Neither path supplies a generic profile for arbitrary boards.
 
-The profile is not distributed and there is no public generation procedure yet.
-`--profile` accepts a matching `.c` file inside `.local/`, not arbitrary replacement
-board data. QEMU and native tests do not require it. Synthetic fixtures in
+The profiles were reverse engineered from the stock firmware;
+[tools/extract_profile.py](../tools/extract_profile.py) extracts one from a stock
+`bb_demo_*.img`. `--profile` accepts a `.c` file inside `profiles/` or `.local/`. QEMU and native tests do not require it. Synthetic fixtures in
 [tests/config_fixture.h](../tests/config_fixture.h) exercise parsing; they are not
 a deployable receiver configuration.
 
@@ -34,7 +34,7 @@ a deployable receiver configuration.
 | --- | --- |
 | `./open8030 build` | Build runtime and bootstrap, package and check the recorded baseline |
 | `build --prepare` | Also download/install the pinned build dependencies |
-| `build --profile .local/FILE.c` | Select the private profile; default is `.local/board-profile.c` |
+| `build --profile profiles/FILE.c` | Select the board profile; default is `profiles/board-profile.c` |
 | `run HOST` | Upload, start, check identity/link and keep the RAM session running |
 | `status HOST` | Query replacement identity and RF link; no camera inspection |
 | `stop HOST` | Restore the original radio/video services for the saved session |
