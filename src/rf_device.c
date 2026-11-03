@@ -384,19 +384,26 @@ static void ap_receive(const struct ar_mac_frame *frame);
 static uint32_t bw_retry_ms;
 static unsigned bw_code = 2, bw_state, bw_request_pending, bw_settle_step, chain_snr_fresh, bw_target = 2;
 /* The receiver's width policy (dev_width.c): bw_target is what it asks for. */
-/* 40 MHz only where MCS 8 holds: down to 20 under 16 dB (36 x 10^1.6: SNR
- * register units; MCS 8 leaves at 17), back at 19.5 dB read on 20 MHz (36 x
- * 10^1.95; 40 MHz reads only ~0.5 dB under 20, so ~19 there: flight
- * 2026-10-29 40 MHz MCS 8 sent a block again for 1% of frames at 19-20 dB;
- * 21.5 held a 19-20 dB link at 20 MHz for the whole flight). Flights 2026-10-28 per frame: 40 MHz under
- * MCS 8 is no faster than 20 at MCS 6 and sends more again (40 MHz MCS 5 /
- * 6 at 14-16 dB: 9-23% of frames; 20 MHz MCS 6 at 16-18: 3-6%); widened at
- * 18 dB read on 20 it sat at 40 MHz MCS 3-6. The rows' own 8.3 dB held 40
- * MHz to the far end. Under 20 MHz straight to 20 once MCS 6 holds, whatever
- * the SNR (dev_width.c): flight 2026-10-29 read ~15 dB on 5 MHz, 17-18 on 20,
- * and a relink sat 13 s at 5 MHz waiting for 15.2. */
+/* 40 MHz only where MCS 8 holds cleanly: down to 20 under 19 dB (36 x
+ * 10^1.9: SNR register units), back at 21 dB read on 20 MHz (36 x 10^2.1; 40
+ * MHz reads ~0.5 dB under 20, so ~1.5 dB between the two), and for 4 s after
+ * the step only under 16 dB (36 x 10^1.6). Each step into 40 resends ~8x for
+ * half a second (9-11% of frames against 1.1-1.5%, flights 2026-10-30) and
+ * reads low: at 21 dB half the steps came back to 20 within 0.7-4.2 s. Flights
+ * 2026-10-30 per frame: 40 MHz MCS 8 at 18-19 dB 2.6% of frames with errors,
+ * 16-17 12%; 20 MHz MCS 10 (31 Mbps, against 34) at 18-19 0.3%, MCS 8 (23.7,
+ * more than 40 MHz MCS 6's 22.4) at 16-17 0.1% and 14-15 1.4%. It was 16 /
+ * 19.5 dB: at 150-200 m the link sat at 40 or 20 MHz MCS 6 with 8-12 Mbps of
+ * video where beta4 (20 MHz, the rows' own MCS) held 11.5-13. Under 20 MHz
+ * straight to 20 once MCS 6 holds, whatever the SNR (dev_width.c): flight
+ * 2026-10-29 read ~15 dB on 5 MHz, 17-18 on 20, and a relink sat 13 s at 5
+ * MHz waiting for 15.2. Back at 21, not 22 (flight 2026-11-01): with the air
+ * at 22-24 dBm its own ceiling is ~22.5-23 dB, so 20 MHz read 21-22.9 close
+ * by and 40 came back long after the spot it had left at, or not at all at 24
+ * dBm; the 4 s hold keeps a step that reads low at 40. */
 static struct ar_width_config bw_policy = {.min = 2, .max = 4, .narrow_mcs = 5, .climb_mcs = 8,
-	.narrow_snr_40 = 1433, .widen_snr_40 = 3209,
+	.narrow_snr_40 = 2859, .widen_snr_40 = 4532,
+	.narrow_snr_40_hold = 1433, .hold_40_ms = 4000,
 	.narrow_ms = 200, .widen_ms = 1000, .settle_ms = 500};
 /* At 40 MHz no MCS above 8: over it a block in ten or more was sent again at
  * any SNR on the bench (sweep with 0xbac clear, 2026-10-27: MCS 10 2.2 and
@@ -404,22 +411,30 @@ static struct ar_width_config bw_policy = {.min = 2, .max = 4, .narrow_mcs = 5, 
  * latency each. The host's ceiling holds under it. */
 #define CEILING_40 (8u + 2u)   /* internal = stock + 2 */
 static unsigned host_ceiling;   /* internal MCS the host asked for (0: none) */
-/* At 20 and 40 MHz MCS 8 down under 17 dB and up from 6 at 18.5 (the rows:
- * 14.2 and 15.2). Flights 2026-10-28 per frame, MCS 8: at 40 MHz 1-2% of
- * frames sent a block again at 22-24 dB, 4.5-5% at 18-21, 13% at 16, 25% at
- * 14; at 20 MHz 4.6% at 18, 12% at 16, 37% at 14 (MCS 6 there 3% at 16, 7% at
- * 14). The row's own values back on 10 and 5 MHz (no data). */
-#define MCS8_WIDE_DOWN 1805u   /* 36 x 10^1.7 */
-#define MCS8_WIDE_UP 2550u     /* 36 x 10^1.85 */
-static uint16_t mcs8_down, mcs8_up;   /* the row's own values (0: not seen) */
+/* MCS 8 and 10 by width. At 40 MHz MCS 8 down under 17 dB and up from 6 at
+ * 18.5 (its row: 14.2 and 15.2) - under 19 the link is at 20 MHz anyway. At
+ * 20 MHz MCS 8 on its row's own values (flight 2026-10-30, beta4: clean to
+ * ~15 dB) and MCS 10 down under 17 and up at 18.5 (its row: 16.1 and 17.1;
+ * 16-17 dB 9-17% of frames with errors, 18-19 0.3%) - with 40 MHz allowed;
+ * with Max Bandwidth 20 its row's own, as beta4. Under 20 MHz the rows' own
+ * values (no data). */
+#define MCS_ROW_8 (8u + 2u)    /* internal */
+#define MCS_ROW_10 (10u + 2u)
+#define WIDE_DOWN 1805u        /* 36 x 10^1.7 */
+#define WIDE_UP 2550u          /* 36 x 10^1.85 */
+static uint16_t row_own[2][2];   /* MCS 8 / 10 rows' own down, up (0: not seen) */
 static void mcs_rows_for_width(void)
 {
 	for (unsigned i = 0; i < dev_mcs.config.count && i < AR_DEV_MCS_ROWS; i++) {
 		struct ar_dev_mcs_row *row = &dev_mcs.config.rows[i];
-		if (row->mcs != CEILING_40) { continue; }
-		if (row->snr_down != MCS8_WIDE_DOWN || row->snr_up != MCS8_WIDE_UP) { mcs8_down = row->snr_down; mcs8_up = row->snr_up; }
-		if (bw_code >= 4) { row->snr_down = MCS8_WIDE_DOWN; row->snr_up = MCS8_WIDE_UP; }
-		else if (mcs8_down) { row->snr_down = mcs8_down; row->snr_up = mcs8_up; }
+		const unsigned k = row->mcs == MCS_ROW_8 ? 0 : row->mcs == MCS_ROW_10 ? 1 : 2;
+		if (k > 1) { continue; }
+		if (row->snr_down != WIDE_DOWN || row->snr_up != WIDE_UP) { row_own[k][0] = row->snr_down; row_own[k][1] = row->snr_up; }
+		/* MCS 10's at 20 MHz only with 40 allowed: with Max Bandwidth 20 the
+		 * rows' own, as beta4 ran (16.1 / 17.1 dB). */
+		const int wide = k == 0 ? bw_code >= 5 : bw_code == 4 && bw_policy.max >= 5;
+		if (wide) { row->snr_down = WIDE_DOWN; row->snr_up = WIDE_UP; }
+		else if (row_own[k][0]) { row->snr_down = row_own[k][0]; row->snr_up = row_own[k][1]; }
 	}
 }
 static void apply_ceiling(void)
@@ -5678,6 +5693,7 @@ int ar_rf_host_bandwidth(const uint8_t *payload, size_t length)
 	/* The widest the receiver may run; the policy decides below it. */
 	if (payload[2] < 2 || (bw_automatic && payload[2] < bw_policy.min)) { return -22; }
 	bw_policy.max = payload[2] > BW_WIDEST ? BW_WIDEST : payload[2]; ar_width_reset(&bw_width);
+	apply_ceiling();   /* MCS 10's rows follow the cap */
 	if (!bw_automatic) { bw_manual = bw_target = bw_policy.max; }
 	if (bw_state != 1) { bw_info.requests = 0; bw_state = 0; }
 	return 0;

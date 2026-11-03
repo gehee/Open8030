@@ -96,6 +96,16 @@ int main(void)
 	assert(run(&k3, &s, 2, 8, 1000, &t, 5000) == 3);      /* capped at 10 */
 	ar_width_reset(&s); t = 0;
 	assert(run(&k, &s, 3, 8, 200, &t, 5000) == 2);        /* weak: narrowing wins */
-	puts("DEV width policy: jump to 40 MHz, one step per fade (no cascade), no hold-off, interference guard, bounds, 40 MHz thresholds, climb to 20 passed");
+	/* Held at 40 MHz for hold_40_ms after the step: only a fade under the
+	 * hold's own threshold narrows it then; after the hold, the usual one. */
+	struct ar_width_config h = w; h.narrow_snr_40_hold = 300; h.hold_40_ms = 4000;
+	ar_width_reset(&s); t = 0;
+	assert(ar_width_decide(&h, &s, 5, 8, 9000, t) == 5);  /* just moved to 40 */
+	assert(run(&h, &s, 5, 8, 400, &t, 3000) == 5);        /* under 571, over 300: held */
+	assert(run(&h, &s, 5, 8, 400, &t, 1500) == 4);        /* past 4 s: narrows */
+	ar_width_reset(&s); t = 0;
+	assert(ar_width_decide(&h, &s, 5, 8, 9000, t) == 5);
+	assert(run(&h, &s, 5, 8, 250, &t, 1500) == 4);        /* a real fade: at once */
+	puts("DEV width policy: jump to 40 MHz, one step per fade (no cascade), no hold-off, interference guard, bounds, 40 MHz thresholds, climb to 20, hold at 40 passed");
 	return 0;
 }

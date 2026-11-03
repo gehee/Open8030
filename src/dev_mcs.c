@@ -66,6 +66,7 @@ unsigned ar_dev_mcs_connect(struct ar_dev_mcs *ctx, unsigned connected)
 	if (connected == ctx->connected) { return AR_DEV_MCS_NOTHING; }
 	ctx->connected = connected;
 	ctx->ready = ctx->index = 0;
+	ctx->rate_frames = ctx->rate_errors = 0;
 	if (connected) { return AR_DEV_MCS_NOTHING; }
 	ctx->started = ctx->pending = ctx->direction = 0;
 	ctx->delayed = 0;
@@ -97,6 +98,11 @@ unsigned ar_dev_mcs_observe(struct ar_dev_mcs *ctx, uint8_t mcs)
 	return AR_DEV_MCS_NOTHING;
 }
 
+static int blocked(const struct ar_dev_mcs *ctx, unsigned row, uint32_t now_ms)
+{
+	return ctx->blocked_hold_ms && row == ctx->blocked && (int32_t)(now_ms - ctx->blocked_until_ms) < 0;
+}
+
 static unsigned request(struct ar_dev_mcs *ctx, uint32_t now_ms)
 {
 	ctx->pending = 1;
@@ -116,6 +122,9 @@ unsigned ar_dev_mcs_sample(struct ar_dev_mcs *ctx, uint32_t now_ms,
 	/* PHY103/24b64a: increment before insertion; a >200-ms gap discards
 	 * window readiness. Eight new samples are needed even after reconnect. */
 	if ((uint32_t)(now_ms - ctx->sample_ms) > 200) { ctx->ready = ctx->index = 0; }
+	/* A window discarded (a gap, a width change settling): its errors are
+	 * not the row's either. */
+	if (!ctx->ready && !ctx->index) { ctx->rate_frames = ctx->rate_errors = 0; }
 	ctx->sample_ms = now_ms;
 	ctx->index = (ctx->index + 1) & 7;
 	ctx->snr[ctx->index] = snr; ctx->errors[ctx->index] = errors;
@@ -134,15 +143,39 @@ unsigned ar_dev_mcs_sample(struct ar_dev_mcs *ctx, uint32_t now_ms,
 			while (selected + 1 < ctx->config.count && ctx->config.rows[selected + 1].snr_down <= minimum) { selected++; }
 		}
 		while (ctx->ceiling && selected && ctx->config.rows[selected].mcs > ctx->ceiling) { selected--; }
+		while (selected && blocked(ctx, selected, now_ms)) { selected--; }
 		ctx->current = selected; ctx->previous = 255; ctx->started = 1;
 		return request(ctx, now_ms);
+	}
+	/* Errored frames on the row in use, once it is in use. The 8-sample
+	 * window below moves only on 4 or 6 of 8 errored: a row losing 3% of
+	 * its frames (MCS 11 at 20 MHz on a busy channel) stayed, and each of
+	 * those frames is a picture late or lost. Such a row is left at once. */
+	if (ctx->pending) { ctx->rate_frames = ctx->rate_errors = 0; }
+	else { ctx->rate_frames++; ctx->rate_errors += !!errors; }
+	if (ctx->config.automatic && ctx->rate_frames >= AR_DEV_MCS_RATE_FRAMES) {
+		const unsigned failed = ctx->current && ctx->rate_errors > AR_DEV_MCS_RATE_ERRORS;
+		ctx->rate_frames = ctx->rate_errors = 0;
+		if (failed) {
+			const uint32_t again = now_ms - ctx->blocked_until_ms;
+			ctx->blocked_hold_ms = ctx->blocked_hold_ms && ctx->blocked == ctx->current && again < 60000u ?
+				(ctx->blocked_hold_ms * 2 > AR_DEV_MCS_BLOCK_MAX_MS ? AR_DEV_MCS_BLOCK_MAX_MS : ctx->blocked_hold_ms * 2) :
+				AR_DEV_MCS_BLOCK_MS;
+			ctx->blocked = ctx->current; ctx->blocked_until_ms = now_ms + ctx->blocked_hold_ms;
+			ctx->rate_downs++;
+			ctx->previous = ctx->current; ctx->current--;
+			ctx->direction = 0;
+			return request(ctx, now_ms);
+		}
 	}
 	if (!ctx->config.automatic || ctx->pending ||
 	    (uint32_t)(now_ms - ctx->request_ms) < ctx->config.hold_ms) { return AR_DEV_MCS_NOTHING; }
 	const struct ar_dev_mcs_row *current = &ctx->config.rows[ctx->current];
 	const struct ar_dev_mcs_row *next = ctx->current + 1 < ctx->config.count ? current + 1 : NULL;
-	/* The host's ceiling: no row above it. */
+	/* The host's ceiling: no row above it. A row left for its error rate:
+	 * not again until its hold ends. */
 	if (next && ctx->ceiling && next->mcs > ctx->ceiling) { next = NULL; }
+	if (next && blocked(ctx, ctx->current + 1, now_ms)) { next = NULL; }
 	const int over = ctx->ceiling && ctx->current && current->mcs > ctx->ceiling;
 	unsigned up_snr = next ? next->snr_up : UINT16_MAX;
 	unsigned down_snr = ctx->current ? current->snr_down : 0;

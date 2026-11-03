@@ -32,6 +32,12 @@ struct ar_width_config {
 	 * narrow_snr_40; widen into it with the SNR, read on 20 MHz, at or above
 	 * widen_snr_40 (doubled per step under 20). */
 	uint32_t narrow_snr_40, widen_snr_40;
+	/* For hold_40_ms after a step into 40 MHz only a fade under
+	 * narrow_snr_40_hold narrows it (0: off): the first half second at 40
+	 * reads low and resends ~8x, and narrowed on that it went back to 20 in
+	 * 0.7 s, then up again (flight 2026-10-30). */
+	uint32_t narrow_snr_40_hold;
+	uint16_t hold_40_ms;
 	uint16_t narrow_ms, widen_ms, settle_ms;
 };
 struct ar_width_state {

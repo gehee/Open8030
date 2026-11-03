@@ -45,7 +45,23 @@ struct ar_dev_mcs {
 	/* Open8030: the host's ceiling, internal MCS (0: none) - no row above it,
 	 * and down from one at once. */
 	uint8_t ceiling;
+	/* Open8030: the share of errored frames on the row in use, counted over
+	 * AR_DEV_MCS_RATE_FRAMES; a row that loses more than AR_DEV_MCS_RATE_ERRORS
+	 * of them is left and not taken again for blocked_hold_ms. */
+	uint16_t rate_frames, rate_errors;
+	uint8_t blocked;
+	uint32_t blocked_until_ms, blocked_hold_ms, rate_downs;
 };
+/* About 1 s of frames at 20 MHz (215/s), 0.8 s at 40 MHz. Up to 2 errored
+ * of them (0.8%) is the row's to keep: a clean 20 MHz MCS 8 link loses
+ * 0-0.1%, MCS 11 on the same bench 1-4% (frames lost or late are
+ * pictures dropped on the goggle's screen). */
+#define AR_DEV_MCS_RATE_FRAMES 256
+#define AR_DEV_MCS_RATE_ERRORS 2
+/* The hold after a row fails, doubled when it fails again within a minute
+ * of coming back, to 80 s. */
+#define AR_DEV_MCS_BLOCK_MS 10000u
+#define AR_DEV_MCS_BLOCK_MAX_MS 80000u
 /* Reject unsupported/ill-formed policy data before modifying the context. */
 int ar_dev_mcs_init(struct ar_dev_mcs *ctx, const struct ar_dev_mcs_config *config);
 /* DEV4 plan extension: flags, initial MCS, row count, policy, three LE16

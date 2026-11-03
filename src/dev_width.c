@@ -20,7 +20,9 @@ unsigned ar_width_decide(const struct ar_width_config *config, struct ar_width_s
 	if (current > max) { return max; }
 	if (current < min) { return min; }
 	if (now_ms - state->changed_ms < config->settle_ms) { return current; }
-	const uint32_t narrow_snr = current == 5 && config->narrow_snr_40 ? config->narrow_snr_40 : config->narrow_snr;
+	uint32_t narrow_snr = current == 5 && config->narrow_snr_40 ? config->narrow_snr_40 : config->narrow_snr;
+	if (current == 5 && config->hold_40_ms && config->narrow_snr_40_hold &&
+	    now_ms - state->changed_ms < config->hold_40_ms) { narrow_snr = config->narrow_snr_40_hold; }
 	if (snr < narrow_snr) {
 		state->strong = 0;
 		if (current <= min) { state->weak = 0; return current; }

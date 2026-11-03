@@ -243,6 +243,29 @@ int main(void)
 	assert(!ctx.pending && !ctx.started);
 	assert(ar_dev_mcs_connect(&ctx, 0) == 0);
 	assert(ar_dev_mcs_interleaver(&ctx) == 0);
+	/* A row losing 3 of 256 frames is left, and held off 10 s; failing
+	 * again within a minute of coming back doubles the hold. 2 of 256 stay. */
+	cfg = config(); start(&ctx, &cfg, &now);
+	for (unsigned row = 1; row < 3; row++) {
+		samples(&ctx, &now, 20, 500, 0); assert(ctx.current == row && ctx.pending);
+		ar_dev_mcs_observe(&ctx, cfg.rows[row].mcs); assert(!ctx.pending);
+	}
+	for (unsigned i = 0; i < 4; i++) { samples(&ctx, &now, 63, 500, 0); samples(&ctx, &now, 1, 500, i < 2); }
+	assert(ctx.current == 2 && !ctx.rate_downs);
+	unsigned errored = 0;
+	for (unsigned i = 0; i < 256 && !ctx.pending; i++) { samples(&ctx, &now, 1, 500, i % 80 == 5); errored += i % 80 == 5; }
+	assert(errored == 4 && ctx.current == 1 && ctx.pending && ctx.rate_downs == 1 && ctx.blocked_hold_ms == 10000);
+	ar_dev_mcs_observe(&ctx, 5);
+	const uint32_t left = now;
+	while (now - left < 9900) { samples(&ctx, &now, 1, 500, 0); assert(ctx.current == 1); }
+	samples(&ctx, &now, 200, 500, 0); assert(ctx.current == 2 && ctx.pending);
+	ar_dev_mcs_observe(&ctx, 12);
+	for (unsigned i = 0; i < 256 && !ctx.pending; i++) { samples(&ctx, &now, 1, 500, i % 80 == 5); }
+	assert(ctx.current == 1 && ctx.rate_downs == 2 && ctx.blocked_hold_ms == 20000);
+	/* The lowest row is never left for its rate; a disconnect discards the count. */
+	ar_dev_mcs_observe(&ctx, 5); ctx.current = 0; ctx.rate_frames = ctx.rate_errors = 0;
+	samples(&ctx, &now, 256, 10, 1); assert(ctx.rate_downs == 2);
+	ar_dev_mcs_connect(&ctx, 0); assert(!ctx.rate_frames && !ctx.rate_errors);
 	puts("DEV receive MCS policy tests passed");
 	return 0;
 }
