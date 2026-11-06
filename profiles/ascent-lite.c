@@ -1,7 +1,7 @@
 /* Board profile: Ascent Lite (board_type 482)
  * Transport: SDIO (Hi3516CV610 host)
  * Firmware:  Ascent_H_Sky_18.21.10_bb_demo_sky_3v3.img
- * Role:      AP / air
+ * Role:      AP / air (set by the radio config, not the profile)
  * Sensor:    CV2004 (1080p100, 864p120)
  * Notes:     The sky_3v3 boot (pinmux, pads, I/O domains) is the same
  *            as sky_cx472's, and so is the pin function table: these are

@@ -1,7 +1,7 @@
 /* Board profile: Ascent VRX Pro
  * Transport: USB (DWC2 device, arlink.ko)
  * Firmware:  Ascent_VRX_Pro_18.21.10_bb_demo_cx485_2PA.img
- * Role:      AP / ground
+ * Role:      DEV / ground (set by the radio config, not the profile)
  * Board:     cx485, 2PA (two power amplifiers)
  * USB ID:    1d6b:8030 (running), 4152:8030 (boot ROM)
  *

@@ -1,7 +1,7 @@
 /* Board profile: Ascent Lite+ (board_type 472)
  * Transport: SDIO (Hi3516CV610 host)
  * Firmware:  Ascent_H_Sky_18.21.10_bb_demo_sky_cx472.img
- * Role:      AP / air
+ * Role:      AP / air (set by the radio config, not the profile)
  * Sensor:    OS02K10 (1080p100, 864p144)
  * Notes:     Different FEM, no IMU, audio codec present
  *

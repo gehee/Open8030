@@ -1,7 +1,7 @@
 /* Board profile: SteadyView Digital VRX
  * Transport: SDIO (AR9311 host, artosyn_sdio.ko)
  * Firmware:  Ascent_G_Gnd_18.21.10_bb_demo_gnd_3v3.img
- * Role:      AP / ground
+ * Role:      DEV / ground (set by the radio config, not the profile)
  * SDIO ID:   4152:8031
  *
  * Pin records: from the stock firmware board pinmux init (offline). Flash chip TBD.
