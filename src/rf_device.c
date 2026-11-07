@@ -411,6 +411,12 @@ static struct ar_width_config bw_policy = {.min = 2, .max = 4, .narrow_mcs = 5, 
  * latency each. The host's ceiling holds under it. */
 #define CEILING_40 (8u + 2u)   /* internal = stock + 2 */
 static unsigned host_ceiling;   /* internal MCS the host asked for (0: none) */
+/* Wider to 40 MHz wanted from over CEILING_40: its cap first, on the width the
+ * link is on, and the switch once the AP sends under it. Widened at MCS 11
+ * the AP sent it on 40 MHz 4 dB down for 0.6 s - errored frames, a glitch
+ * (flight 2026-11-06). */
+static unsigned bw_precap;
+static uint32_t bw_precap_ms;
 /* MCS 8 and 10 by width. At 40 MHz MCS 8 down under 17 dB and up from 6 at
  * 18.5 (its row: 14.2 and 15.2) - under 19 the link is at 20 MHz anyway. At
  * 20 MHz MCS 8 on its row's own values (flight 2026-10-30, beta4: clean to
@@ -442,7 +448,7 @@ static void apply_ceiling(void)
 	mcs_rows_for_width();
 	unsigned c = host_ceiling;
 #ifndef AR_NO_CEILING_40   /* test builds: every MCS at 40 MHz (how far the link goes) */
-	if (bw_code == 5 && (!c || c > CEILING_40)) { c = CEILING_40; }
+	if ((bw_code == 5 || bw_precap) && (!c || c > CEILING_40)) { c = CEILING_40; }
 #endif
 	ar_dev_mcs_set_ceiling(&dev_mcs, c);
 }
@@ -1350,7 +1356,7 @@ static void bandwidth_poll(void)
 	 * the next request undid it (bench: tens of switches in 5 s). */
 	unsigned switching = bw_settle_step || bw_at_sweep || bw_due_code;
 	if (bw_state == 2 && !switching) { bw_state = 0; bw_info.requests = 0; }
-	if (bw_automatic && bw_state == 0 && dev_active && receiver.dev_state == 2 && receiver.assigned_slot == 0 &&
+	if (bw_automatic && bw_state == 0 && !bw_precap && dev_active && receiver.dev_state == 2 && receiver.assigned_slot == 0 &&
 	    !switching && dev_mcs.current < dev_mcs.config.count) {
 		/* A stock AP drops and re-forms the link at every step to or from
 		 * 40 MHz: up to 20 until a frame stamp says the AP is Open8030 (one
@@ -1372,6 +1378,23 @@ static void bandwidth_poll(void)
 			if (!dev_command_request(8, 5, word, 4)) { frame_request = 0; }
 		}
 	}
+#ifndef AR_NO_CEILING_40
+	/* Held, the width decision would say "stay" again for widen_ms: the target
+	 * is kept until the switch is asked for, or for a second at most. */
+	if (bw_precap && bw_state == 0 && (uint32_t)(now - bw_precap_ms) > 1000) {
+		bw_precap = 0; apply_ceiling();
+		if (bw_automatic) { bw_target = bw_code; }   /* decided again, not capped again at once */
+	}
+	if (bw_precap && (bw_target != 5 || bw_code == 5 || !dev_active || receiver.dev_state != 2)) {
+		bw_precap = 0; apply_ceiling();
+	}
+	if (!bw_precap && bw_state == 0 && bw_target == 5 && bw_code < 5 && dev_mcs.current < dev_mcs.config.count &&
+	    dev_mcs.config.rows[dev_mcs.current].mcs > CEILING_40) { bw_precap = 1; bw_precap_ms = now; apply_ceiling(); }
+	const unsigned under_cap = !bw_precap || (!dev_mcs.pending && dev_mcs.current < dev_mcs.config.count &&
+		dev_mcs.config.rows[dev_mcs.current].mcs <= CEILING_40);
+#else
+	const unsigned under_cap = 1;
+#endif
 	if (bw_state == 0) {
 		if (bw_info.requests >= 4 && bw_code != bw_target && (uint32_t)(now - bw_retry_ms) > 10000) {
 			/* Four quick tries went unanswered: keep asking every 10 s rather
@@ -1387,7 +1410,7 @@ static void bandwidth_poll(void)
 		 * one MCS: ~15 s at 5 MHz after a link-up. Narrower at once. */
 		(void)settled_ms;
 		if (dev_active && receiver.dev_state == 2 && receiver.assigned_slot == 0 && bw_code != bw_target && !switching &&
-		    (bw_target < bw_code || dev_mcs.acknowledgements) &&
+		    (bw_target < bw_code || dev_mcs.acknowledgements) && under_cap &&
 		    bw_info.requests < 4 && (uint32_t)(now - receiver.connected_elapsed_us / 1000) > 1000) {
 			uint8_t code = (uint8_t)bw_target;
 			(void)ar_dev_command_encode(dev_bw_request, sizeof dev_bw_request, 9, &code, 1);

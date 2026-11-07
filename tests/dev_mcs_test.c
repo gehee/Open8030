@@ -114,9 +114,14 @@ int main(void)
 		while (b.current == 1 && guard++ < 100) { samples(&b, &t, 1, 500, 0); }
 		assert(b.current == 2 && ar_dev_mcs_observe(&b, 12));
 		ar_dev_mcs_set_ceiling(&b, 1);
+		const unsigned asked = b.requests;
 		guard = 0;
-		while (b.current != 0 && guard++ < 20) { samples(&b, &t, 1, 500, 0); if (b.pending) { assert(ar_dev_mcs_observe(&b, bc.rows[b.current].mcs)); } }
-		assert(b.current == 0 && guard < 20);   /* two rows down, a sample or so each */
+		while (!b.pending && guard++ < 20) { samples(&b, &t, 1, 500, 0); }
+		/* Two rows down in one request, from the next sample on. */
+		assert(b.pending && b.current == 0 && b.previous == 2 && b.requests == asked + 1 && guard <= 1);
+		assert(ar_dev_mcs_observe(&b, 1) == AR_DEV_MCS_APPLY_BUFFER && !b.pending);
+		samples(&b, &t, 50, 500, 0);
+		assert(b.current == 0 && !b.pending);   /* and no row above the ceiling again */
 	}
 	/* Explicit config -1 becomes internal MCS1: high SNR must not bypass it. */
 	cfg = config(); start(&ctx, &cfg, &now);

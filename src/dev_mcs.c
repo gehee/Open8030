@@ -198,8 +198,16 @@ unsigned ar_dev_mcs_sample(struct ar_dev_mcs *ctx, uint32_t now_ms,
 			direction = -1; forced = 1;
 		}
 	}
-	/* Above the host's ceiling (it was lowered): down at once. */
-	if (over) { direction = -1; forced = 1; }
+	/* Above the host's ceiling (it was lowered): straight to the highest row
+	 * under it, in one request - row by row took a request each while the
+	 * link ran over it (MCS 11 at 40 MHz for 0.6 s, flight 2026-11-06). */
+	if (over) {
+		unsigned row = ctx->current;
+		while (row && ctx->config.rows[row].mcs > ctx->ceiling) { row--; }
+		ctx->previous = ctx->current; ctx->current = row;
+		ctx->direction = 0;
+		return request(ctx, now_ms);
+	}
 	/* 21fd74..21fd86: an LDPC down decision bypasses SNR. Otherwise
 	 * low SNR may force down and the middle region suppresses promotion.
 	 * High SNR alone does not override an LDPC neutral decision. */
