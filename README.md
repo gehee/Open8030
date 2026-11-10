@@ -42,12 +42,17 @@ sudo apt-get install build-essential cmake git python3 python3-venv \
   device-tree-compiler zlib1g-dev xz-utils file wget openssh-client
 ```
 
-The board profiles are in [profiles/](profiles), reverse engineered from the
-stock radio firmware: `board-profile.c` (the build's default, VRX Pro),
-`ascent-vrx-pro.c`, `ascent-lite.c`, `ascent-lite-plus.c` and `steadyview-vrx.c`.
-Each defines `ar_boot_embedded_profile` from [ar_boot.h](include/ar_boot.h).
-[tools/extract_profile.py](tools/extract_profile.py) writes one from a stock
-`bb_demo_*.img`.
+Board profiles are included in [profiles/](profiles/README.md), including the
+matched regular Ascent VRX (`ascent-vrx.c`) configuration and gehee’s Lite VTX
+(`ascent-lite.c`), Lite Plus, VRX Pro and SteadyView profiles. A BETAFPV P1 Air
+profile (`betafpv-p1-air.c`) is also included from the fpvOS P1 build. This
+standalone checkout does not yet include fpvOS’s additional P1 transport patch;
+the profile alone does not reproduce that working integration.
+The legacy build default `board-profile.c` is labelled
+VRX Pro, not the regular VRX. See the [profile guide](profiles/README.md) for
+current-source build commands, role selection and compatibility differences.
+`tools/extract_profile.py` can extract profile data from stock images; extraction
+alone does not validate it on hardware.
 
 ## Build and run on the Ascent VRX
 
