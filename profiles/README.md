@@ -15,6 +15,7 @@ does not establish compatibility between products, transports or revisions.
 | `betafpv-p1-goggle.c` | BETAFPV P1 goggles, SDIO DEV; fpvOS RAM-boot reception and live-video tested |
 | `betafpv-p1-air.c` | BETAFPV P1 Air Unit, stock 1.0.44, SDIO AP; profile only, transport integration pending |
 | `ascent-vrx-pro.c` | Upstream VRX Pro profile, USB DEV |
+| `skyzone-steadydigital.c` | Skyzone SteadyDigital receiver, SDIO DEV (`-DAR_FACTORY_OPTIONAL`); fpvOS NAND image, bind and live video tested |
 | `steadyview-vrx.c` | Upstream SteadyView receiver profile |
 | `board-profile.c` | Upstream legacy default, labelled VRX Pro; not an alias for the regular VRX |
 
