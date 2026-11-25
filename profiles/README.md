@@ -13,6 +13,7 @@ does not establish compatibility between products, transports or revisions.
 | `ascent-lite.c` | Upstream Lite profile, SDIO AP |
 | `ascent-lite-plus.c` | Upstream Lite Plus profile, SDIO AP |
 | `betafpv-p1-goggle.c` | BETAFPV P1 goggles, SDIO DEV; fpvOS RAM-boot reception and live-video tested |
+| `betafpv-p1-nano-vrx.c` | BETAFPV P1 Nano VRX (stock board `c401`, 1TX = board type 4), SDIO DEV (`-DAR_FACTORY_OPTIONAL`); recovered offline from stock 2.0.8, not run on hardware |
 | `betafpv-p1-air.c` | BETAFPV P1 Air Unit, stock 1.0.44, SDIO AP; profile only, transport integration pending |
 | `ascent-vrx-pro.c` | Upstream VRX Pro profile, USB DEV |
 | `skyzone-steadydigital.c` | Skyzone SteadyDigital receiver, SDIO DEV (`-DAR_FACTORY_OPTIONAL`); fpvOS NAND image, bind and live video tested |
@@ -175,3 +176,18 @@ It passed startup, association to a P1 Air, ten control acknowledgements and
 validates that integrated build, not the standalone offline command above.
 Radio loss counters were nonzero; range, all RF modes, persistent pairing
 and operation without inherited stock initialization remain unqualified.
+
+## BETAFPV P1 Nano VRX
+
+`betafpv-p1-nano-vrx.c` comes from the receiver's own stock `bb_demo_gnd.img`
+(stock 2.0.8, SHA-256
+`372529a68b4d2847cec4f3de86316dd21cc641a2a8994226417d09860ab36e8c`), the same
+firmware generation as the SteadyDigital's. Its host config names board `c401`
+with `1TX`, which the board init maps to type 4; the SteadyDigital's
+`c401_pro` + `2TX_STBC` is type 5. The two pin lists differ in one record: C4
+is a GPIO (function 0x26) here, where the SteadyDigital has function 0x49.
+Stock also drives C4 low as an output, which a pin record cannot express; the
+host has to do that and does not yet. The 20 bank/pin/mux triples equal the P1
+goggles profile's. Register defaults are the shared `bb_defaults.inc`, the FCH
+keys match the other profiles and the I/O-domain mask is 2. No flash pins are
+muxed: build with `-DAR_FACTORY_OPTIONAL`. Nothing here has run on the unit.
