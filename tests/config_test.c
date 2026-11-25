@@ -136,6 +136,35 @@ int main(void)
 		"\"bw_auto\":{\"enable\":false,\"range\":{\"low\":\"5\",\"high\":\"40\"}}") && dev_parsed.bw_target == 5);
 	assert(dev_changed("\"bw_auto\":{\"enable\":false}",
 		"\"bw_auto\":{\"enable\":false,\"range\":{\"high\":\"30\"}}") == -22);
+	/* dev.mcs.slot.open8030 (ar_link_policy.h): every key optional, today's
+	 * values without the block. */
+	{
+		const struct ar_link_policy d = AR_LINK_POLICY_DEFAULTS;
+		assert(!dev_changed("\"init_chan\":-1", "\"init_chan\":-1"));
+		const struct ar_link_policy *l = &dev_parsed.policy;
+		assert(l->error_rule == 1 && l->error_frames == 256 && l->error_count == 2 && l->error_hold_ms == 10000 &&
+		       l->error_hold_max_ms == 80000 && l->wide_max_mcs == d.wide_max_mcs && l->mcs8_snr_40[1] == 2550 &&
+		       l->mcs10_snr_20[0] == 1805 && l->narrow_snr_40 == 2859 && l->widen_snr_40 == 4532 &&
+		       l->narrow_snr_40_hold == 1433 && l->hold_40_ms == 4000);
+		const char *at = "\"bw_auto\":{\"enable\":false}";
+		assert(!dev_changed(at, "\"bw_auto\":{\"enable\":false},\"open8030\":{\"error_rule\":{\"enable\":false,"
+			"\"errors\":6,\"hold_ms\":2000,\"hold_max_ms\":15000},\"wide\":{\"max_mcs\":10,\"mcs8_snr\":[1700,2400],"
+			"\"narrow_snr\":2500,\"widen_snr\":4000,\"narrow_snr_hold\":1400,\"hold_ms\":3000}}"));
+		assert(!l->error_rule && l->error_frames == 256 && l->error_count == 6 && l->error_hold_ms == 2000 &&
+		       l->error_hold_max_ms == 15000 && l->wide_max_mcs == 12 && l->mcs8_snr_40[0] == 1700 &&
+		       l->mcs8_snr_40[1] == 2400 && l->mcs10_snr_20[0] == 1805 && l->narrow_snr_40 == 2500 &&
+		       l->widen_snr_40 == 4000 && l->narrow_snr_40_hold == 1400 && l->hold_40_ms == 3000);
+		const char *bad[] = {
+			"{\"error_rule\":{\"enable\":1}}", "{\"error_rule\":{\"frames\":8}}",
+			"{\"error_rule\":{\"errors\":256}}", "{\"error_rule\":{\"hold_ms\":20000,\"hold_max_ms\":10000}}",
+			"{\"wide\":{\"max_mcs\":14}}", "{\"wide\":{\"mcs8_snr\":[2600,2500]}}",
+			"{\"wide\":{\"mcs8_snr\":[1805]}}", "{\"wide\":{\"mcs10_snr_20\":[1,2,3]}}",
+			"{\"wide\":{\"narrow_snr\":5000}}", "{\"wide\":{\"narrow_snr_hold\":3000}}", "7"};
+		for (unsigned i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+			char after[256]; snprintf(after, sizeof after, "\"bw_auto\":{\"enable\":false},\"open8030\":%s", bad[i]);
+			changed(at, after, -22);
+		}
+	}
 	changed("\"init_chan\":-1", "\"init_chan\":3", -22);
 	changed("5220000", "4915000", -22);
 	changed("\"role\":\"dev\"", "\"role\":\"ap\"", -22); /* an AP document needs its ap block */

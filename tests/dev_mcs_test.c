@@ -271,6 +271,39 @@ int main(void)
 	ar_dev_mcs_observe(&ctx, 5); ctx.current = 0; ctx.rate_frames = ctx.rate_errors = 0;
 	samples(&ctx, &now, 256, 10, 1); assert(ctx.rate_downs == 2);
 	ar_dev_mcs_connect(&ctx, 0); assert(!ctx.rate_frames && !ctx.rate_errors);
+	/* The rule's values from the configuration (ar_link_policy.h). Init
+	 * starts on the built-in ones; out of range leaves them. */
+	cfg = config(); start(&ctx, &cfg, &now);
+	assert(ctx.rule_enabled && ctx.rule_frames == 256 && ctx.rule_errors == 2 &&
+	       ctx.rule_hold_ms == 10000 && ctx.rule_hold_max_ms == 80000);
+	assert(ar_dev_mcs_set_error_rule(&ctx, 2, 256, 2, 0, 0) == -22);
+	assert(ar_dev_mcs_set_error_rule(&ctx, 1, 8, 2, 0, 0) == -22);
+	assert(ar_dev_mcs_set_error_rule(&ctx, 1, 256, 256, 0, 0) == -22);
+	assert(ar_dev_mcs_set_error_rule(&ctx, 1, 256, 2, 2000, 1000) == -22);
+	assert(ctx.rule_enabled && ctx.rule_errors == 2 && ctx.rule_hold_ms == 10000);
+	for (unsigned row = 1; row < 3; row++) {
+		samples(&ctx, &now, 20, 500, 0); assert(ctx.current == row && ctx.pending);
+		ar_dev_mcs_observe(&ctx, cfg.rows[row].mcs); assert(!ctx.pending);
+	}
+	/* Off: 4 of 256 errored (1.6%) is no reason to leave a row. */
+	assert(!ar_dev_mcs_set_error_rule(&ctx, 0, 256, 2, 10000, 80000));
+	for (unsigned i = 0; i < 512 && !ctx.pending; i++) { samples(&ctx, &now, 1, 500, i % 80 == 5); }
+	assert(ctx.current == 2 && !ctx.pending && !ctx.rate_downs);
+	/* Loose: up to 6 of 256 kept; 7 leave the row, barred 2 s, then 4 s. */
+	assert(!ar_dev_mcs_set_error_rule(&ctx, 1, 256, 6, 2000, 15000));
+	for (unsigned i = 0; i < 512 && !ctx.pending; i++) { samples(&ctx, &now, 1, 500, i % 50 == 5); }
+	assert(ctx.current == 2 && !ctx.pending && !ctx.rate_downs);
+	for (unsigned i = 0; i < 256 && !ctx.pending; i++) { samples(&ctx, &now, 1, 500, i % 36 == 5); }
+	assert(ctx.current == 1 && ctx.pending && ctx.rate_downs == 1 && ctx.blocked_hold_ms == 2000);
+	ar_dev_mcs_observe(&ctx, 5);
+	const uint32_t loose = now;
+	while (now - loose < 1900) { samples(&ctx, &now, 1, 500, 0); assert(ctx.current == 1); }
+	samples(&ctx, &now, 200, 500, 0); assert(ctx.current == 2 && ctx.pending);
+	ar_dev_mcs_observe(&ctx, 12);
+	for (unsigned i = 0; i < 256 && !ctx.pending; i++) { samples(&ctx, &now, 1, 500, i % 36 == 5); }
+	assert(ctx.current == 1 && ctx.rate_downs == 2 && ctx.blocked_hold_ms == 4000);
+	/* Turned off while a row is barred: the bar goes with it. */
+	assert(!ar_dev_mcs_set_error_rule(&ctx, 0, 256, 6, 2000, 15000) && !ctx.blocked_hold_ms);
 	puts("DEV receive MCS policy tests passed");
 	return 0;
 }

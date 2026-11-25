@@ -495,4 +495,8 @@ void ar_rf_set_hop_config(const struct ar_hop_config *hop);
  * narrowest and widest code (2..5), the internal MCS it narrows at or below
  * and widens above. A zero max keeps 5 to 20 MHz. */
 void ar_rf_set_bandwidth_policy(unsigned automatic, unsigned min, unsigned max, unsigned narrow_mcs, unsigned widen_mcs);
+/* The ground's errored-frame rule and 40 MHz limits (ar_link_policy.h); -22
+ * and nothing changed for values out of range. */
+struct ar_link_policy;
+int ar_rf_set_link_policy(const struct ar_link_policy *policy);
 #endif

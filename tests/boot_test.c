@@ -3,6 +3,7 @@
 #include "ar_rf_device.h"
 #include "ar_factory.h"
 #include "ar_power_config.h"
+#include "ar_link_policy.h"
 #include "config_fixture.h"
 #include <assert.h>
 #include <stdio.h>
@@ -27,6 +28,18 @@ void ar_rf_set_power_bands(const uint8_t (*high)[4], uint32_t edge_khz) { (void)
 void ar_rf_set_hop_config(const struct ar_hop_config *hop) { (void)hop; }
 void ar_rf_set_bandwidth_policy(unsigned automatic, unsigned min, unsigned max, unsigned narrow_mcs, unsigned widen_mcs)
 { (void)automatic; (void)min; (void)max; (void)narrow_mcs; (void)widen_mcs; }
+/* A configuration without dev.mcs.slot.open8030: today's rules, unchanged. */
+static unsigned link_policies;
+int ar_rf_set_link_policy(const struct ar_link_policy *policy)
+{
+	const struct ar_link_policy defaults = AR_LINK_POLICY_DEFAULTS;
+	assert(policy->error_rule == defaults.error_rule && policy->error_frames == defaults.error_frames &&
+	       policy->error_count == defaults.error_count && policy->error_hold_ms == defaults.error_hold_ms &&
+	       policy->error_hold_max_ms == defaults.error_hold_max_ms && policy->wide_max_mcs == defaults.wide_max_mcs &&
+	       policy->mcs8_snr_40[0] == 1805 && policy->mcs8_snr_40[1] == 2550 && policy->narrow_snr_40 == 2859 &&
+	       policy->widen_snr_40 == 4532 && policy->narrow_snr_40_hold == 1433 && policy->hold_40_ms == 4000);
+	link_policies++; return 0;
+}
 int ar_rf_probe(void) { radio.chip_profile = bad_chip ? 2 : 1; return step(1); }
 const struct ar_rf_info *ar_rf_information(void) { return &radio; }
 void ar_rf_set_io_domains(unsigned mask) { (void)mask; }

@@ -2,6 +2,7 @@
 /* Synthetic peripheral behavior: real RF acceptance still requires hardware. */
 #include "ar_pwr_auto.h"
 #include "ar_rf_device.h"
+#include "ar_link_policy.h"
 #include "ar_mac.h"
 #include <assert.h>
 #include <stdio.h>
@@ -2368,6 +2369,17 @@ int main(void)
 	*reg(0xe0801164)|=1; ar_rf_poll(); assert(writes==before);
 	assert(ar_rf_probe() == -110); /* Dead OTP does not hang or claim completion. */
 	assert(ar_rf_information()->phase == AR_RF_OFF);
+	/* The link policy (ar_link_policy.h): out of range refused whole. */
+	{
+		struct ar_link_policy l = AR_LINK_POLICY_DEFAULTS;
+		assert(!ar_rf_set_link_policy(&l));
+		l.wide_max_mcs = 0; assert(ar_rf_set_link_policy(&l) == -22); l.wide_max_mcs = 12;
+		l.mcs8_snr_40[0] = 3000; assert(ar_rf_set_link_policy(&l) == -22); l.mcs8_snr_40[0] = 1805;
+		l.narrow_snr_40_hold = 4000; assert(ar_rf_set_link_policy(&l) == -22); l.narrow_snr_40_hold = 1433;
+		l.error_frames = 4; assert(ar_rf_set_link_policy(&l) == -22); l.error_frames = 256;
+		l.error_rule = 0; assert(!ar_rf_set_link_policy(&l));
+		assert(ar_rf_set_link_policy(NULL) == -22);
+	}
 	puts("synthetic RF peripheral contracts passed");
 	return 0;
 }

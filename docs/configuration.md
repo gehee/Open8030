@@ -136,6 +136,36 @@ readiness. If `init` matches no configured row, initial selection uses the windo
 minimum SNR and the rows' downgrade thresholds. Configuring a value accepted by
 the parser does not prove that the peer or hardware supports the resulting mode.
 
+### Open8030's own rules: `open8030`
+
+`baseband.basic.dev.mcs.slot.open8030` holds the ground's rules that stock
+firmware does not have ([ar_link_policy.h](../include/ar_link_policy.h)). Every
+key is optional and the defaults below are the values built in before the block
+existed, so a configuration without it runs unchanged. A value out of range
+refuses the whole configuration, as for any other key. SNR values use the
+`mcs_tab` rows' raw scale (36 x 10^(dB/10)).
+
+| Field | Accepted input; default | Meaning |
+| --- | --- | --- |
+| `error_rule.enable` | Boolean; `true` | Leave a row that loses too many frames, whatever its SNR |
+| `error_rule.frames` | Integer 16–4,096; 256 | Frames counted per decision (about 1.2 s at 20 MHz) |
+| `error_rule.errors` | Integer 0 to `frames` - 1; 2 | Errored frames a row may lose per window and stay |
+| `error_rule.hold_ms` | Integer 0–600,000; 10,000 | How long a row left this way is not taken again; 0: not barred |
+| `error_rule.hold_max_ms` | Integer `hold_ms`–600,000; 80,000 | The bar doubles each time the row fails again within a minute, to this |
+| `wide.max_mcs` | Integer -1–13; 8 | Top MCS at 40 MHz (Max MCS from the host still applies) |
+| `wide.mcs8_snr` | `[down, up]`; `[1805, 2550]` | MCS 8's thresholds at 40 MHz in place of its row's |
+| `wide.mcs10_snr_20` | `[down, up]`; `[1805, 2550]` | MCS 10's thresholds at 20 MHz while 40 MHz is allowed |
+| `wide.narrow_snr` | Integer up to `widen_snr`; 2859 | 40 MHz narrows to 20 under this |
+| `wide.widen_snr` | Integer 0–65,535; 4532 | 20 MHz widens to 40 from this |
+| `wide.narrow_snr_hold` | Integer up to `narrow_snr`; 1433 | The narrowing point for `hold_ms` after a widening |
+| `wide.hold_ms` | Integer 0–600,000; 4,000 | See `narrow_snr_hold` |
+
+The errored-frame rule trades bitrate for clean frames. Strict (the default)
+keeps errored frames, and so resends and their latency, rare. Indoors, with
+reflections, it can hold the MCS at its lowest at a good SNR: ~1% errored frames
+at 20 dB took MCS 10 to -1 in a flight on 2026-11-16. Loosened or off, the MCS
+follows the SNR rows and resends repair the errored frames.
+
 ## Power and factory data
 
 `baseband.basic.power.manu_init` accepts 9–36. Calibration rows live under

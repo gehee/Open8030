@@ -6,6 +6,7 @@
 #include "ar_power_config.h"
 #define AR_CONFIG_PLAN_BYTES 452
 #include "ar_ap_hop.h"   /* struct ar_hop_config: an AP's channel policy */
+#include "ar_link_policy.h"
 struct ar_config {
 	uint8_t plan[AR_CONFIG_PLAN_BYTES];
 	size_t plan_length;
@@ -21,6 +22,8 @@ struct ar_config {
 	 * (internal) it narrows at or below / widens above, bw_auto.threshold
 	 * low/high (configuration values; 0/0: MCS 3 and 6). See ar_dev_width.h. */
 	uint8_t bw_min, bw_target, bw_narrow_mcs, bw_widen_mcs, bw_automatic;
+	/* DEV only: dev.mcs.slot.open8030, its defaults where a key is left out. */
+	struct ar_link_policy policy;
 };
 /* Parse loader JSON into the implemented DEV mode-0 configuration. Board
  * register defaults/pins and FCH encoding keys have separate provenance. */

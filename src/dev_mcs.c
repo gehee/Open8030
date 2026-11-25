@@ -48,6 +48,24 @@ int ar_dev_mcs_init(struct ar_dev_mcs *ctx, const struct ar_dev_mcs_config *conf
 	ctx->current = ctx->previous = 255;
 	ctx->observed = AR_DEV_MCS_NONE;
 	ctx->fch[0] = 0x1e;
+	ctx->rule_enabled = 1;
+	ctx->rule_frames = AR_DEV_MCS_RATE_FRAMES; ctx->rule_errors = AR_DEV_MCS_RATE_ERRORS;
+	ctx->rule_hold_ms = AR_DEV_MCS_BLOCK_MS; ctx->rule_hold_max_ms = AR_DEV_MCS_BLOCK_MAX_MS;
+	return 0;
+}
+
+int ar_dev_mcs_set_error_rule(struct ar_dev_mcs *ctx, unsigned enabled, unsigned frames,
+	unsigned errors, uint32_t hold_ms, uint32_t hold_max_ms)
+{
+	if (!ctx || enabled > 1 || frames < 16 || frames > 4096 || errors >= frames ||
+	    hold_ms > 600000u || hold_max_ms > 600000u || hold_max_ms < hold_ms) { return -22; }
+	ctx->rule_enabled = (uint8_t)enabled;
+	ctx->rule_frames = (uint16_t)frames; ctx->rule_errors = (uint16_t)errors;
+	ctx->rule_hold_ms = hold_ms; ctx->rule_hold_max_ms = hold_max_ms;
+	ctx->rate_frames = ctx->rate_errors = 0;
+	/* A bar set under the old values ends no later than the new hold. */
+	if (!enabled || !hold_ms) { ctx->blocked_hold_ms = 0; }
+	else if (ctx->blocked_hold_ms > hold_max_ms) { ctx->blocked_hold_ms = hold_max_ms; }
 	return 0;
 }
 
@@ -153,14 +171,14 @@ unsigned ar_dev_mcs_sample(struct ar_dev_mcs *ctx, uint32_t now_ms,
 	 * those frames is a picture late or lost. Such a row is left at once. */
 	if (ctx->pending) { ctx->rate_frames = ctx->rate_errors = 0; }
 	else { ctx->rate_frames++; ctx->rate_errors += !!errors; }
-	if (ctx->config.automatic && ctx->rate_frames >= AR_DEV_MCS_RATE_FRAMES) {
-		const unsigned failed = ctx->current && ctx->rate_errors > AR_DEV_MCS_RATE_ERRORS;
+	if (ctx->rule_enabled && ctx->config.automatic && ctx->rate_frames >= ctx->rule_frames) {
+		const unsigned failed = ctx->current && ctx->rate_errors > ctx->rule_errors;
 		ctx->rate_frames = ctx->rate_errors = 0;
 		if (failed) {
 			const uint32_t again = now_ms - ctx->blocked_until_ms;
 			ctx->blocked_hold_ms = ctx->blocked_hold_ms && ctx->blocked == ctx->current && again < 60000u ?
-				(ctx->blocked_hold_ms * 2 > AR_DEV_MCS_BLOCK_MAX_MS ? AR_DEV_MCS_BLOCK_MAX_MS : ctx->blocked_hold_ms * 2) :
-				AR_DEV_MCS_BLOCK_MS;
+				(ctx->blocked_hold_ms * 2 > ctx->rule_hold_max_ms ? ctx->rule_hold_max_ms : ctx->blocked_hold_ms * 2) :
+				ctx->rule_hold_ms;
 			ctx->blocked = ctx->current; ctx->blocked_until_ms = now_ms + ctx->blocked_hold_ms;
 			ctx->rate_downs++;
 			ctx->previous = ctx->current; ctx->current--;

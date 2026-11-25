@@ -22,6 +22,52 @@ int ar_config_resolve_power(struct ar_config *config, enum ar_power_factory_stat
 	return 0;
 }
 
+static int optional_boolean(struct ar_json root, const char *path, unsigned fallback, unsigned *out)
+{
+	struct ar_json v; int error = ar_json_path(root, path, &v);
+	if (error == -2) { *out = fallback; return 0; }
+	return error || ar_json_boolean(v, out) ? -22 : 0;
+}
+/* A [down, up] pair of SNR values; left out, the fallback. */
+static int optional_pair(struct ar_json root, const char *path, uint16_t pair[2])
+{
+	struct ar_json v, item; int error = ar_json_path(root, path, &v);
+	if (error == -2) { return 0; }
+	int32_t n[2];
+	if (error) { return -22; }
+	for (unsigned i = 0; i < 2; i++) {
+		if (ar_json_index(v, i, &item) || ar_json_integer(item, &n[i]) || n[i] < 0 || n[i] > 65535) { return -22; }
+	}
+	if (ar_json_index(v, 2, &item) != -2 || n[0] > n[1]) { return -22; }
+	pair[0] = (uint16_t)n[0]; pair[1] = (uint16_t)n[1]; return 0;
+}
+static int optional_number(struct ar_json root, const char *path, int32_t fallback, int32_t low, int32_t high, int32_t *out);
+/* dev.mcs.slot.open8030 (ar_link_policy.h): Open8030's own rules, each key
+ * optional. Out of range or ill-formed: the whole configuration is refused,
+ * as any other key. */
+static int parse_link_policy(struct ar_json slot, struct ar_link_policy *out)
+{
+	struct ar_json block;
+	int error = ar_json_path(slot, "open8030", &block);
+	if (error == -2) { return 0; }
+	if (error) { return -22; }
+	struct ar_link_policy l = *out;
+	unsigned flag; int32_t n;
+	if (optional_boolean(block, "error_rule.enable", l.error_rule, &flag)) { return -22; } l.error_rule = (uint8_t)flag;
+	if (optional_number(block, "error_rule.frames", l.error_frames, 16, 4096, &n)) { return -22; } l.error_frames = (uint16_t)n;
+	if (optional_number(block, "error_rule.errors", l.error_count, 0, 4095, &n)) { return -22; } l.error_count = (uint16_t)n;
+	if (optional_number(block, "error_rule.hold_ms", (int32_t)l.error_hold_ms, 0, 600000, &n)) { return -22; } l.error_hold_ms = (uint32_t)n;
+	if (optional_number(block, "error_rule.hold_max_ms", (int32_t)l.error_hold_max_ms, 0, 600000, &n)) { return -22; } l.error_hold_max_ms = (uint32_t)n;
+	if (l.error_count >= l.error_frames || l.error_hold_max_ms < l.error_hold_ms) { return -22; }
+	if (optional_number(block, "wide.max_mcs", (int32_t)l.wide_max_mcs - 2, -1, 13, &n)) { return -22; } l.wide_max_mcs = (uint8_t)(n + 2);
+	if (optional_pair(block, "wide.mcs8_snr", l.mcs8_snr_40) || optional_pair(block, "wide.mcs10_snr_20", l.mcs10_snr_20)) { return -22; }
+	if (optional_number(block, "wide.narrow_snr", l.narrow_snr_40, 0, 65535, &n)) { return -22; } l.narrow_snr_40 = (uint16_t)n;
+	if (optional_number(block, "wide.widen_snr", l.widen_snr_40, 0, 65535, &n)) { return -22; } l.widen_snr_40 = (uint16_t)n;
+	if (optional_number(block, "wide.narrow_snr_hold", l.narrow_snr_40_hold, 0, 65535, &n)) { return -22; } l.narrow_snr_40_hold = (uint16_t)n;
+	if (optional_number(block, "wide.hold_ms", (int32_t)l.hold_40_ms, 0, 600000, &n)) { return -22; } l.hold_40_ms = (uint32_t)n;
+	if (l.narrow_snr_40 > l.widen_snr_40 || l.narrow_snr_40_hold > l.narrow_snr_40) { return -22; }
+	*out = l; return 0;
+}
 static void put16(uint8_t *p, unsigned n) { p[0] = n; p[1] = n >> 8; }
 static void put32(uint8_t *p, uint32_t n) { for (unsigned i = 0; i < 4; i++) { p[i] = n >> (8 * i); } }
 static int number(struct ar_json root, const char *path, int32_t low, int32_t high, int32_t *out)
@@ -98,7 +144,7 @@ static int parse_ap(struct ar_config *out, struct ar_json root, struct ar_json b
 	struct ar_json channel, const uint8_t *keys)
 {
 	struct ar_json ap, policy, array, row, value;
-	struct ar_config c = {0}; uint8_t *plan = c.plan, *p = plan + 16;
+	struct ar_config c = {.policy = AR_LINK_POLICY_DEFAULTS}; uint8_t *plan = c.plan, *p = plan + 16;
 	int32_t n; unsigned flag;
 	if (ar_json_path(basic, "ap", &ap) || ar_json_path(ap, "mcs.slot", &policy)) { return -22; }
 	const struct { const char *path, *text; } required[] = {
@@ -207,7 +253,7 @@ int ar_config_parse(struct ar_config *out, const char *json, size_t length,
 		for (unsigned j = 0; j < i; j++) { if (!memcmp(keys + i * 4, keys + j * 4, 4)) { return -22; } }
 	}
 	struct ar_json root, basic, dev, channel, policy, array, row, value;
-	struct ar_config c = {0}; uint8_t *plan = c.plan, *p = plan + 16;
+	struct ar_config c = {.policy = AR_LINK_POLICY_DEFAULTS}; uint8_t *plan = c.plan, *p = plan + 16;
 	int32_t n; unsigned flag;
 	if (ar_json_parse(&root, json, length) ||
 	    ar_json_path(root, "baseband.basic", &basic) || ar_json_path(basic, "channel", &channel)) { return -22; }
@@ -315,6 +361,7 @@ int ar_config_parse(struct ar_config *out, const char *json, size_t length,
 	if (!m[2] || ar_json_index(array, m[2], &value) != -2) { return -22; }
 	struct ar_dev_mcs_config checked;
 	if (ar_dev_mcs_decode_config(&checked, m, AR_DEV_MCS_CONFIG_BYTES)) { return -22; }
+	if (parse_link_policy(policy, &c.policy)) { return -22; }
 	memcpy(p + 168, keys, 100);
 	*out = c; return 0;
 }

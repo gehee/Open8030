@@ -413,7 +413,10 @@ static struct ar_width_config bw_policy = {.min = 2, .max = 4, .narrow_mcs = 5, 
  * any SNR on the bench (sweep with 0xbac clear, 2026-10-27: MCS 10 2.2 and
  * MCS 11 23 blocks per 100 frames, MCS 8 and under ~0), a frame or more of
  * latency each. The host's ceiling holds under it. */
-#define CEILING_40 (8u + 2u)   /* internal = stock + 2 */
+/* The configuration's dev.mcs.slot.open8030 block (ar_link_policy.h): the
+ * values below are its defaults. */
+static struct ar_link_policy link_policy = AR_LINK_POLICY_DEFAULTS;
+#define CEILING_40 ((unsigned)link_policy.wide_max_mcs)   /* internal = stock + 2 */
 static unsigned host_ceiling;   /* internal MCS the host asked for (0: none) */
 /* Wider to 40 MHz wanted from over CEILING_40: its cap first, on the width the
  * link is on, and the switch once the AP sends under it. Widened at MCS 11
@@ -430,8 +433,6 @@ static uint32_t bw_precap_ms;
  * values (no data). */
 #define MCS_ROW_8 (8u + 2u)    /* internal */
 #define MCS_ROW_10 (10u + 2u)
-#define WIDE_DOWN 1805u        /* 36 x 10^1.7 */
-#define WIDE_UP 2550u          /* 36 x 10^1.85 */
 static uint16_t row_own[2][2];   /* MCS 8 / 10 rows' own down, up (0: not seen) */
 static void mcs_rows_for_width(void)
 {
@@ -439,11 +440,13 @@ static void mcs_rows_for_width(void)
 		struct ar_dev_mcs_row *row = &dev_mcs.config.rows[i];
 		const unsigned k = row->mcs == MCS_ROW_8 ? 0 : row->mcs == MCS_ROW_10 ? 1 : 2;
 		if (k > 1) { continue; }
-		if (row->snr_down != WIDE_DOWN || row->snr_up != WIDE_UP) { row_own[k][0] = row->snr_down; row_own[k][1] = row->snr_up; }
+		/* 40 MHz's values (MCS 8 at 40, MCS 10 at 20 with 40 allowed). */
+		const uint16_t *wide_snr = k == 0 ? link_policy.mcs8_snr_40 : link_policy.mcs10_snr_20;
+		if (row->snr_down != wide_snr[0] || row->snr_up != wide_snr[1]) { row_own[k][0] = row->snr_down; row_own[k][1] = row->snr_up; }
 		/* MCS 10's at 20 MHz only with 40 allowed: with Max Bandwidth 20 the
 		 * rows' own, as beta4 ran (16.1 / 17.1 dB). */
 		const int wide = k == 0 ? bw_code >= 5 : bw_code == 4 && bw_policy.max >= 5;
-		if (wide) { row->snr_down = WIDE_DOWN; row->snr_up = WIDE_UP; }
+		if (wide) { row->snr_down = wide_snr[0]; row->snr_up = wide_snr[1]; }
 		else if (row_own[k][0]) { row->snr_down = row_own[k][0]; row->snr_up = row_own[k][1]; }
 	}
 }
@@ -4352,6 +4355,8 @@ static int configure_monitor(uint32_t frequency, uint32_t milliseconds, uint8_t 
 		ar_dev_retx_init(&dev_retx, operation >= 61 ? channels[29] : 0);
 		if (operation >= 67) {
 			(void)ar_dev_mcs_init(&dev_mcs, &policy);
+			(void)ar_dev_mcs_set_error_rule(&dev_mcs, link_policy.error_rule, link_policy.error_frames,
+				link_policy.error_count, link_policy.error_hold_ms, link_policy.error_hold_max_ms);
 			bw_policy_rows();
 			/* An AP's own policy is the ground's uplink one; its channel
 			 * mode starts as the configuration's channel.mode. */
@@ -5713,6 +5718,26 @@ static void bw_policy_rows(void)
  * Every switch, 40 MHz included, waits for the frame both ends move on
  * (bw_at_sweep): across 40 MHz the frame itself changes with the width. */
 #define BW_WIDEST 5u
+int ar_rf_set_link_policy(const struct ar_link_policy *policy)
+{
+	if (!policy || policy->wide_max_mcs < 1 || policy->wide_max_mcs > 15 ||
+	    policy->mcs8_snr_40[0] > policy->mcs8_snr_40[1] || policy->mcs10_snr_20[0] > policy->mcs10_snr_20[1] ||
+	    policy->narrow_snr_40 > policy->widen_snr_40 || policy->narrow_snr_40_hold > policy->narrow_snr_40) { return -22; }
+	if (ar_dev_mcs_set_error_rule(&dev_mcs, policy->error_rule, policy->error_frames, policy->error_count,
+	    policy->error_hold_ms, policy->error_hold_max_ms)) { return -22; }
+	/* The rows hold the old 40 MHz values while at 40: their own come back
+	 * from row_own, the new ones at apply_ceiling's width pass below. */
+	for (unsigned i = 0; i < dev_mcs.config.count && i < AR_DEV_MCS_ROWS; i++) {
+		struct ar_dev_mcs_row *row = &dev_mcs.config.rows[i];
+		const unsigned k = row->mcs == MCS_ROW_8 ? 0 : row->mcs == MCS_ROW_10 ? 1 : 2;
+		if (k < 2 && row_own[k][0]) { row->snr_down = row_own[k][0]; row->snr_up = row_own[k][1]; }
+	}
+	link_policy = *policy;
+	bw_policy.narrow_snr_40 = policy->narrow_snr_40; bw_policy.widen_snr_40 = policy->widen_snr_40;
+	bw_policy.narrow_snr_40_hold = policy->narrow_snr_40_hold; bw_policy.hold_40_ms = policy->hold_40_ms;
+	apply_ceiling();
+	return 0;
+}
 void ar_rf_set_bandwidth_policy(unsigned automatic, unsigned min, unsigned max, unsigned narrow_mcs, unsigned widen_mcs)
 {
 	if (max < 2 || max > 5 || min < 2 || min > max) { return; }

@@ -46,11 +46,16 @@ struct ar_dev_mcs {
 	 * and down from one at once. */
 	uint8_t ceiling;
 	/* Open8030: the share of errored frames on the row in use, counted over
-	 * AR_DEV_MCS_RATE_FRAMES; a row that loses more than AR_DEV_MCS_RATE_ERRORS
-	 * of them is left and not taken again for blocked_hold_ms. */
+	 * rule_frames; a row that loses more than rule_errors of them is left and
+	 * not taken again for blocked_hold_ms (rule_hold_ms, doubled to
+	 * rule_hold_max_ms). rule_enabled 0: no such rule (stock). The rule's
+	 * values are the AR_DEV_MCS_RATE_ and _BLOCK_ ones until set. */
 	uint16_t rate_frames, rate_errors;
 	uint8_t blocked;
 	uint32_t blocked_until_ms, blocked_hold_ms, rate_downs;
+	uint8_t rule_enabled;
+	uint16_t rule_frames, rule_errors;
+	uint32_t rule_hold_ms, rule_hold_max_ms;
 };
 /* About 1 s of frames at 20 MHz (215/s), 0.8 s at 40 MHz. Up to 2 errored
  * of them (0.8%) is the row's to keep: a clean 20 MHz MCS 8 link loses
@@ -70,6 +75,11 @@ int ar_dev_mcs_init(struct ar_dev_mcs *ctx, const struct ar_dev_mcs_config *conf
  * sync-MMIO enable is consumed by the RF integration, not this policy. */
 int ar_dev_mcs_decode_config(struct ar_dev_mcs_config *config, const uint8_t *wire, size_t length);
 unsigned ar_dev_mcs_connect(struct ar_dev_mcs *ctx, unsigned connected);
+/* The errored-frame rule (ar_link_policy.h): on or off, the window, the
+ * errored frames it allows, and the bar's first and longest hold. Kept
+ * until the next init; values out of range leave the rule as it was. */
+int ar_dev_mcs_set_error_rule(struct ar_dev_mcs *ctx, unsigned enabled, unsigned frames,
+	unsigned errors, uint32_t hold_ms, uint32_t hold_max_ms);
 /* The highest internal MCS the policy may use (0: no limit). Kept across
  * links; the policy steps down to it at its next sample. */
 void ar_dev_mcs_set_ceiling(struct ar_dev_mcs *ctx, unsigned internal_mcs);
