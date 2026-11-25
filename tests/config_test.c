@@ -10,7 +10,7 @@ static uint8_t keys[100];
 static uint32_t le32(const uint8_t *p) { return p[0] | (uint32_t)p[1]<<8 | (uint32_t)p[2]<<16 | (uint32_t)p[3]<<24; }
 static void changed(const char *before, const char *after, int expected)
 {
-	char text[sizeof config_fixture + 256]; const char *p = strstr(config_fixture, before); assert(p);
+	char text[sizeof config_fixture + 1024]; const char *p = strstr(config_fixture, before); assert(p);
 	size_t prefix = p - config_fixture; memcpy(text, config_fixture, prefix);
 	strcpy(text + prefix, after); strcpy(text + prefix + strlen(after), p + strlen(before));
 	struct ar_config c; memset(&c, 0xa5, sizeof c); struct ar_config saved = c;
@@ -20,7 +20,7 @@ static void changed(const char *before, const char *after, int expected)
 static struct ar_config dev_parsed;
 static int dev_changed(const char *before, const char *after)
 {
-	char text[sizeof config_fixture + 256]; const char *p = strstr(config_fixture, before); assert(p);
+	char text[sizeof config_fixture + 1024]; const char *p = strstr(config_fixture, before); assert(p);
 	size_t prefix = p - config_fixture; memcpy(text, config_fixture, prefix);
 	strcpy(text + prefix, after); strcpy(text + prefix + strlen(after), p + strlen(before));
 	return ar_config_parse(&dev_parsed, text, strlen(text), keys, sizeof keys);
@@ -160,6 +160,26 @@ int main(void)
 			"{\"wide\":{\"max_mcs\":14}}", "{\"wide\":{\"mcs8_snr\":[2600,2500]}}",
 			"{\"wide\":{\"mcs8_snr\":[1805]}}", "{\"wide\":{\"mcs10_snr_20\":[1,2,3]}}",
 			"{\"wide\":{\"narrow_snr\":5000}}", "{\"wide\":{\"narrow_snr_hold\":3000}}", "7"};
+		/* Profiles: each from the block's keys, open8030.profile the one in use. */
+		assert(!dev_changed(at, "\"bw_auto\":{\"enable\":false},\"open8030\":{\"error_rule\":{\"hold_ms\":2000,"
+			"\"hold_max_ms\":15000},\"profile\":1,\"profiles\":[{\"name\":\"low latency\",\"error_rule\":{\"errors\":2,"
+			"\"hold_ms\":10000,\"hold_max_ms\":80000}},{\"name\":\"balanced\",\"error_rule\":{\"errors\":12}},"
+			"{\"name\":\"quality\",\"error_rule\":{\"enable\":false},\"wide\":{\"max_mcs\":10}}]}"));
+		const struct ar_link_profiles *t = &dev_parsed.profiles;
+		assert(t->count == 3 && t->current == 1);
+		assert(t->profile[0].error_count == 2 && t->profile[0].error_hold_ms == 10000 && t->profile[0].wide_max_mcs == 10);
+		assert(t->profile[1].error_count == 12 && t->profile[1].error_hold_ms == 2000 && t->profile[1].error_hold_max_ms == 15000);
+		assert(!t->profile[2].error_rule && t->profile[2].wide_max_mcs == 12 && t->profile[2].error_hold_ms == 2000);
+		assert(l->error_count == 12 && l->error_rule == 1);
+		/* No profiles: one, the block; no block: one, the defaults. */
+		assert(!dev_changed("\"init_chan\":-1", "\"init_chan\":-1") && t->count == 1 && !t->current &&
+		       t->profile[0].error_count == 2);
+		const char *bad_profiles[] = {"{\"profiles\":[]}", "{\"profiles\":[{},{},{},{},{}]}", "{\"profiles\":7}",
+			"{\"profiles\":[{}],\"profile\":1}", "{\"profile\":1}", "{\"profiles\":[{\"wide\":{\"max_mcs\":20}}]}"};
+		for (unsigned i = 0; i < sizeof bad_profiles / sizeof bad_profiles[0]; i++) {
+			char after[256]; snprintf(after, sizeof after, "\"bw_auto\":{\"enable\":false},\"open8030\":%s", bad_profiles[i]);
+			changed(at, after, -22);
+		}
 		for (unsigned i = 0; i < sizeof bad / sizeof bad[0]; i++) {
 			char after[256]; snprintf(after, sizeof after, "\"bw_auto\":{\"enable\":false},\"open8030\":%s", bad[i]);
 			changed(at, after, -22);

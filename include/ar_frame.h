@@ -58,6 +58,10 @@
 #define AR_REQ_RF_AP_RESET UINT32_C(0x0c5a0034)
 #define AR_REQ_RF_FRAME_INFO UINT32_C(0x0c5a0035)
 #define AR_REQ_RF_MCS_CEILING UINT32_C(0x0c5a0036)
+/* The ground's link profile (ar_link_policy.h): 1 byte sets, none reads;
+ * not 0x37, steady latency on branch bw40-smooth (kestrel-gnd sends it);
+ * the reply is {in use, count}. */
+#define AR_REQ_RF_LINK_PROFILE UINT32_C(0x0c5a0038)
 /* Project-only read diagnostics through the original Linux daemon. Its
  * 0x4030d0 dispatcher consumes group 0x0c locally; group 0x01 is forwarded.
  * These aliases are not vendor commands. Never alias configuration/start. */

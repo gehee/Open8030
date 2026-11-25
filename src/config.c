@@ -45,12 +45,8 @@ static int optional_number(struct ar_json root, const char *path, int32_t fallba
 /* dev.mcs.slot.open8030 (ar_link_policy.h): Open8030's own rules, each key
  * optional. Out of range or ill-formed: the whole configuration is refused,
  * as any other key. */
-static int parse_link_policy(struct ar_json slot, struct ar_link_policy *out)
+static int parse_rules(struct ar_json block, struct ar_link_policy *out)
 {
-	struct ar_json block;
-	int error = ar_json_path(slot, "open8030", &block);
-	if (error == -2) { return 0; }
-	if (error) { return -22; }
 	struct ar_link_policy l = *out;
 	unsigned flag; int32_t n;
 	if (optional_boolean(block, "error_rule.enable", l.error_rule, &flag)) { return -22; } l.error_rule = (uint8_t)flag;
@@ -67,6 +63,35 @@ static int parse_link_policy(struct ar_json slot, struct ar_link_policy *out)
 	if (optional_number(block, "wide.hold_ms", (int32_t)l.hold_40_ms, 0, 600000, &n)) { return -22; } l.hold_40_ms = (uint32_t)n;
 	if (l.narrow_snr_40 > l.widen_snr_40 || l.narrow_snr_40_hold > l.narrow_snr_40) { return -22; }
 	*out = l; return 0;
+}
+/* The block's own keys, then each of open8030.profiles from them;
+ * open8030.profile the one in use (0 without it). */
+static int parse_link_policy(struct ar_json slot, struct ar_link_policy *out, struct ar_link_profiles *profiles)
+{
+	struct ar_json block, array, item;
+	struct ar_link_policy base = *out;
+	struct ar_link_profiles table = {.count = 1, .current = 0};
+	int error = ar_json_path(slot, "open8030", &block);
+	if (error == -2) { table.profile[0] = base; *profiles = table; return 0; }
+	if (error || parse_rules(block, &base)) { return -22; }
+	table.profile[0] = base;
+	error = ar_json_path(block, "profiles", &array);
+	if (!error) {
+		table.count = 0;
+		for (unsigned i = 0;; i++) {
+			int got = ar_json_index(array, i, &item);
+			if (got == -2) { break; }
+			if (got || i >= AR_LINK_PROFILES) { return -22; }
+			table.profile[i] = base;
+			if (parse_rules(item, &table.profile[i])) { return -22; }
+			table.count++;
+		}
+		if (!table.count) { return -22; }
+	} else if (error != -2) { return -22; }
+	int32_t n;
+	if (optional_number(block, "profile", 0, 0, table.count - 1, &n)) { return -22; }
+	table.current = (uint8_t)n;
+	*out = table.profile[n]; *profiles = table; return 0;
 }
 static void put16(uint8_t *p, unsigned n) { p[0] = n; p[1] = n >> 8; }
 static void put32(uint8_t *p, uint32_t n) { for (unsigned i = 0; i < 4; i++) { p[i] = n >> (8 * i); } }
@@ -361,7 +386,7 @@ int ar_config_parse(struct ar_config *out, const char *json, size_t length,
 	if (!m[2] || ar_json_index(array, m[2], &value) != -2) { return -22; }
 	struct ar_dev_mcs_config checked;
 	if (ar_dev_mcs_decode_config(&checked, m, AR_DEV_MCS_CONFIG_BYTES)) { return -22; }
-	if (parse_link_policy(policy, &c.policy)) { return -22; }
+	if (parse_link_policy(policy, &c.policy, &c.profiles)) { return -22; }
 	memcpy(p + 168, keys, 100);
 	*out = c; return 0;
 }

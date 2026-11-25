@@ -160,6 +160,26 @@ refuses the whole configuration, as for any other key. SNR values use the
 | `wide.narrow_snr_hold` | Integer up to `narrow_snr`; 1433 | The narrowing point for `hold_ms` after a widening |
 | `wide.hold_ms` | Integer 0–600,000; 4,000 | See `narrow_snr_hold` |
 
+`open8030.profiles` lists up to four sets of the keys above (a `name` is
+allowed and ignored); each starts from the block's own values. `open8030.profile`
+(default 0) is the one in use at start. The host switches between them at any
+time, with no restart, with request `0x0c5a0038`: one byte, the profile's index
+(refused past the list); with no payload it only reads. The reply is two bytes,
+the profile in use and how many there are. Without `profiles` there is one: the
+block itself.
+
+```json
+"open8030": {
+  "error_rule": {"hold_ms": 2000, "hold_max_ms": 15000},
+  "profile": 1,
+  "profiles": [
+    {"name": "low latency", "error_rule": {"errors": 2, "hold_ms": 10000, "hold_max_ms": 80000}},
+    {"name": "balanced", "error_rule": {"errors": 12}},
+    {"name": "quality", "error_rule": {"enable": false}, "wide": {"max_mcs": 10}}
+  ]
+}
+```
+
 The errored-frame rule trades bitrate for clean frames. Strict (the default)
 keeps errored frames, and so resends and their latency, rare. Indoors, with
 reflections, it can hold the MCS at its lowest at a good SNR: ~1% errored frames

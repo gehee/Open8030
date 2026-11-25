@@ -2379,6 +2379,18 @@ int main(void)
 		l.error_frames = 4; assert(ar_rf_set_link_policy(&l) == -22); l.error_frames = 256;
 		l.error_rule = 0; assert(!ar_rf_set_link_policy(&l));
 		assert(ar_rf_set_link_policy(NULL) == -22);
+		/* The host picks a profile live; out of the table refused. */
+		struct ar_link_profiles t = {.count = 3, .current = 1};
+		for (unsigned i = 0; i < 3; i++) { t.profile[i] = (struct ar_link_policy)AR_LINK_POLICY_DEFAULTS; }
+		t.profile[0].error_count = 3; t.profile[2].error_rule = 0; t.profile[2].wide_max_mcs = 12;
+		assert(!ar_rf_set_link_profiles(&t));
+		uint8_t r[2];
+		assert(!ar_rf_host_link_profile(NULL, 0, r) && r[0] == 1 && r[1] == 3);
+		assert(!ar_rf_host_link_profile((const uint8_t[]){2}, 1, r) && r[0] == 2);
+		assert(ar_rf_host_link_profile((const uint8_t[]){3}, 1, r) == -22);
+		assert(!ar_rf_host_link_profile(NULL, 0, r) && r[0] == 2 && r[1] == 3);
+		assert(ar_rf_host_link_profile((const uint8_t[]){0, 0}, 2, r) == -22);
+		t.current = 3; assert(ar_rf_set_link_profiles(&t) == -22);
 	}
 	puts("synthetic RF peripheral contracts passed");
 	return 0;

@@ -5718,6 +5718,25 @@ static void bw_policy_rows(void)
  * Every switch, 40 MHz included, waits for the frame both ends move on
  * (bw_at_sweep): across 40 MHz the frame itself changes with the width. */
 #define BW_WIDEST 5u
+/* The configuration's profiles (ar_link_policy.h); the host picks one with
+ * AR_REQ_RF_LINK_PROFILE. */
+static struct ar_link_profiles link_profiles;
+int ar_rf_set_link_profiles(const struct ar_link_profiles *profiles)
+{
+	if (!profiles || !profiles->count || profiles->count > AR_LINK_PROFILES || profiles->current >= profiles->count) { return -22; }
+	int error = ar_rf_set_link_policy(&profiles->profile[profiles->current]);
+	if (!error) { link_profiles = *profiles; }
+	return error;
+}
+int ar_rf_host_link_profile(const uint8_t *payload, size_t length, uint8_t reply[2])
+{
+	if (reply) { reply[0] = link_profiles.current; reply[1] = link_profiles.count; }
+	if (!length) { return 0; }
+	if (!payload || length != 1 || payload[0] >= link_profiles.count) { return -22; }
+	int error = ar_rf_set_link_policy(&link_profiles.profile[payload[0]]);
+	if (!error) { link_profiles.current = payload[0]; if (reply) { reply[0] = payload[0]; } }
+	return error;
+}
 int ar_rf_set_link_policy(const struct ar_link_policy *policy)
 {
 	if (!policy || policy->wide_max_mcs < 1 || policy->wide_max_mcs > 15 ||

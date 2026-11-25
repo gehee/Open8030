@@ -23,6 +23,15 @@ struct ar_link_policy {
 	uint16_t narrow_snr_40, widen_snr_40, narrow_snr_40_hold;
 	uint32_t hold_40_ms;
 };
+/* open8030.profiles: up to AR_LINK_PROFILES named sets of the keys above,
+ * each starting from the block's own values; open8030.profile the one in use
+ * at start. The host picks another at any time (AR_REQ_RF_LINK_PROFILE), with
+ * no restart. Without profiles: one, the block itself. */
+#define AR_LINK_PROFILES 4
+struct ar_link_profiles {
+	uint8_t count, current;
+	struct ar_link_policy profile[AR_LINK_PROFILES];
+};
 #define AR_LINK_POLICY_DEFAULTS { .error_rule = 1, .error_frames = 256, .error_count = 2, \
 	.error_hold_ms = 10000u, .error_hold_max_ms = 80000u, \
 	.wide_max_mcs = 8 + 2, .mcs8_snr_40 = {1805, 2550}, .mcs10_snr_20 = {1805, 2550}, \

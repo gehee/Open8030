@@ -99,7 +99,8 @@ static int initialize(const struct ar_boot_profile *profile, unsigned loader)
 		ar_rf_set_hop_config(&configured.hop);
 		ar_rf_set_bandwidth_policy(configured.bw_automatic, configured.bw_min, configured.bw_target,
 			configured.bw_narrow_mcs, configured.bw_widen_mcs);
-		if (ar_rf_set_link_policy(&configured.policy)) { result = -22; goto fail; }
+		if (configured.profiles.count ? ar_rf_set_link_profiles(&configured.profiles) :
+		    ar_rf_set_link_policy(&configured.policy)) { result = -22; goto fail; }
 		boot.power_offsets[0] = configured.power.path_offset[0];
 		boot.power_offsets[1] = configured.power.path_offset[1];
 	}

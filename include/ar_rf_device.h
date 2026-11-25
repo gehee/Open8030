@@ -499,4 +499,11 @@ void ar_rf_set_bandwidth_policy(unsigned automatic, unsigned min, unsigned max, 
  * and nothing changed for values out of range. */
 struct ar_link_policy;
 int ar_rf_set_link_policy(const struct ar_link_policy *policy);
+/* Every profile of the configuration, the current one applied. */
+struct ar_link_profiles;
+int ar_rf_set_link_profiles(const struct ar_link_profiles *profiles);
+/* AR_REQ_RF_LINK_PROFILE: one byte, the profile to use from now on (no
+ * restart; a row barred under the old rule is free again if the new one has
+ * no bar); none, a read. reply: the profile in use and how many there are. */
+int ar_rf_host_link_profile(const uint8_t *payload, size_t length, uint8_t reply[2]);
 #endif

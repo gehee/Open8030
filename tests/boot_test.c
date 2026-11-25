@@ -40,6 +40,11 @@ int ar_rf_set_link_policy(const struct ar_link_policy *policy)
 	       policy->widen_snr_40 == 4532 && policy->narrow_snr_40_hold == 1433 && policy->hold_40_ms == 4000);
 	link_policies++; return 0;
 }
+int ar_rf_set_link_profiles(const struct ar_link_profiles *profiles)
+{
+	assert(profiles->count == 1 && profiles->current == 0);
+	return ar_rf_set_link_policy(&profiles->profile[0]);
+}
 int ar_rf_probe(void) { radio.chip_profile = bad_chip ? 2 : 1; return step(1); }
 const struct ar_rf_info *ar_rf_information(void) { return &radio; }
 void ar_rf_set_io_domains(unsigned mask) { (void)mask; }

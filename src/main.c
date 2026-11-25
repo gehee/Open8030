@@ -213,6 +213,14 @@ static void receive(const struct ar_frame *frame, void *context)
 		size_t size = ar_encode(reply, sizeof reply, &response);
 		(void)bus->send(reply, size); return;
 	}
+	if (diagnostic_reqid == AR_REQ_RF_LINK_PROFILE && !frame->status && frame->length <= 1) {
+		uint8_t profile[2];
+		int status = ar_rf_host_link_profile(frame->payload, frame->length, profile);
+		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid,
+			.status = status, .payload = profile, .length = status ? 0 : sizeof profile};
+		size_t size = ar_encode(reply, sizeof reply, &response);
+		(void)bus->send(reply, size); return;
+	}
 	if (diagnostic_reqid == AR_REQ_RF_FRAME_INFO && !frame->status && !frame->length) {
 		struct ar_frame response = {.reqid = frame->reqid, .msgid = frame->msgid,
 			.payload = (const uint8_t *)ar_rf_frame_information(), .length = sizeof(struct ar_rf_frame_info)};
